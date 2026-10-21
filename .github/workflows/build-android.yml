@@ -42,8 +42,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: buildozer-ndk23b-${{ hashFiles('android_app/buildozer.spec') }}
-          restore-keys: buildozer-ndk23b-
+          key: buildozer-webview-${{ hashFiles('android_app/buildozer.spec') }}
+          restore-keys: buildozer-webview-
 
       # ── 5. Install Buildozer & Cython ────────────────────────────────────
       - name: Install Buildozer

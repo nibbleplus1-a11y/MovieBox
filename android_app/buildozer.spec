@@ -20,10 +20,8 @@ source.include_patterns =
 source.exclude_dirs = tests,bin,__pycache__,.git,scratch
 
 # ── Requirements ──────────────────────────────────────────────────────────────
-# NOTE: curl_cffi does NOT work on Android; httpx is used as fallback.
 requirements =
     python3,
-    kivy==2.2.1,
     fastapi,
     uvicorn,
     httpx,
@@ -38,14 +36,19 @@ requirements =
     click,
     typing-extensions
 
+# ── Native Android WebView Bootstrap ──────────────────────────────────────────
+# Uses native Android WebView container that serves local FastAPI backend
+p4a.bootstrap = webview
+p4a.port = 8000
+
 # ── Android config ────────────────────────────────────────────────────────────
 android.minapi = 21
 android.api = 33
-android.ndk = 23b
+android.ndk = 25b
 android.sdk = 33
 android.accept_sdk_license = True
 
-android.archs = arm64-v8a, armeabi-v7a
+android.archs = arm64-v8a
 
 # Permissions
 android.permissions =
@@ -56,13 +59,9 @@ android.permissions =
     FOREGROUND_SERVICE
 
 # ── Orientation & display ─────────────────────────────────────────────────────
-orientation = portrait
+orientation = sensor
 fullscreen = 0
 android.wakelock = True
-
-# ── Icons & presplash ─────────────────────────────────────────────────────────
-# icon.filename = %(source.dir)s/icon.png
-# presplash.filename = %(source.dir)s/presplash.png
 
 # ── Build settings ────────────────────────────────────────────────────────────
 [buildozer]
