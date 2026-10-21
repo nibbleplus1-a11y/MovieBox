@@ -52,7 +52,7 @@ android.accept_sdk_license = True
 android.archs = arm64-v8a
 
 # Allow HTTP localhost traffic on Android 9+ (API 28+)
-android.extra_manifest_application_arguments = android:usesCleartextTraffic="true"
+android.extra_manifest_application_arguments = extra_manifest_application_arguments.xml
 
 # Permissions
 android.permissions =

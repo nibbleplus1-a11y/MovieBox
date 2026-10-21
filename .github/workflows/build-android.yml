@@ -64,6 +64,7 @@ jobs:
           mkdir -p android_app/build_workspace/static
           cp android_app/main.py   android_app/build_workspace/
           cp android_app/buildozer.spec android_app/build_workspace/
+          cp android_app/extra_manifest_application_arguments.xml android_app/build_workspace/
           cp api.py                android_app/build_workspace/
           cp -r static/.           android_app/build_workspace/static/
 
