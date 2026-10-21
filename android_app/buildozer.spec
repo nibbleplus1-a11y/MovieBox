@@ -22,7 +22,8 @@ source.exclude_dirs = tests,bin,__pycache__,.git,scratch
 # ── Requirements ──────────────────────────────────────────────────────────────
 requirements =
     python3,
-    fastapi,
+    pydantic<2.0.0,
+    fastapi==0.99.1,
     uvicorn,
     httpx,
     starlette,
