@@ -23,7 +23,7 @@ source.exclude_dirs = tests,bin,__pycache__,.git,scratch
 # NOTE: curl_cffi does NOT work on Android; httpx is used as fallback.
 requirements =
     python3,
-    kivy==2.3.0,
+    kivy==2.2.1,
     fastapi,
     uvicorn,
     httpx,
@@ -41,7 +41,7 @@ requirements =
 # ── Android config ────────────────────────────────────────────────────────────
 android.minapi = 21
 android.api = 33
-android.ndk = 25b
+android.ndk = 23b
 android.sdk = 33
 android.accept_sdk_license = True
 
