@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+
+# Scratch / test files
+scratch/
+
+# Buildozer artifacts
+android_app/build_workspace/
+android_app/.buildozer/
+android_app/bin/
+*.apk
+*.aab
+
+# OS
+.DS_Store
+Thumbs.db
