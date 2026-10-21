@@ -59,7 +59,7 @@ android.permissions =
     FOREGROUND_SERVICE
 
 # ── Orientation & display ─────────────────────────────────────────────────────
-orientation = sensor
+orientation = portrait
 fullscreen = 0
 android.wakelock = True
 
