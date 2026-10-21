@@ -34,7 +34,8 @@ requirements =
     idna,
     urllib3,
     click,
-    typing-extensions
+    typing-extensions,
+    aiofiles
 
 # ── Native Android WebView Bootstrap ──────────────────────────────────────────
 # Uses native Android WebView container that serves local FastAPI backend
@@ -49,6 +50,9 @@ android.sdk = 33
 android.accept_sdk_license = True
 
 android.archs = arm64-v8a
+
+# Allow HTTP localhost traffic on Android 9+ (API 28+)
+android.extra_manifest_application_arguments = android:usesCleartextTraffic="true"
 
 # Permissions
 android.permissions =
