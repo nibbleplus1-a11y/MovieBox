@@ -1890,14 +1890,21 @@ function isNoticeStream(s) {
 async function quickPlay(subjectId, title, startTime = 0) {
     showToast(`Loading "${title}"…`);
     currentPlayingSubjectId = subjectId;
-    currentSeason = 0;
-    currentEpisode = 0;
     _drawerEpisodeData = null; // Clear episode cache for new title
+
+    const isKnownSeries = Boolean(
+        (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2)) ||
+        (currentSeason > 0 || currentEpisode > 0)
+    );
+    const targetSe = isKnownSeries ? (currentSeason || 1) : 0;
+    const targetEp = isKnownSeries ? (currentEpisode || 1) : 0;
+    currentSeason = targetSe;
+    currentEpisode = targetEp;
 
     try {
         const [streamRes, captionRes, detailRes] = await Promise.allSettled([
-            fetch(`/api/stream/${subjectId}?se=0&ep=0`).then(r => r.json()),
-            fetch(`/api/stream/${subjectId}/captions?se=0&ep=0`).then(r => r.json()),
+            fetch(`/api/stream/${subjectId}?se=${targetSe}&ep=${targetEp}`).then(r => r.json()),
+            fetch(`/api/stream/${subjectId}/captions?se=${targetSe}&ep=${targetEp}`).then(r => r.json()),
             fetch(`/detail/${subjectId}`).then(r => r.json())
         ]);
 
@@ -2475,7 +2482,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         setCinemaVideoSource(src, stream, titleText);
     }
 
-    modal.style.display = '';
+    modal.style.display = 'flex';
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
 
@@ -2954,9 +2961,10 @@ async function renderPlayerSeriesRibbon() {
     if (epWrap) {
         const curSeasonObj = seasonList.find(s => Number(s.season ?? s.season_number ?? 1) === curSeNum);
         const maxEp = (curSeasonObj && curSeasonObj.episode_count) ? curSeasonObj.episode_count : ((activeMediaMeta && activeMediaMeta.episode_count) ? activeMediaMeta.episode_count : 24);
+        const curEpNum = Number(currentEpisode || 1);
         let epHtml = '';
         for (let ep = 1; ep <= maxEp; ep++) {
-            const isPlaying = ep === currentEpisode;
+            const isPlaying = ep === curEpNum;
             epHtml += `<button class="ribbon-ep-btn ${isPlaying ? 'active' : ''}" onclick="playDetailEpisode('${currentPlayingSubjectId}', ${curSeNum}, ${ep})">
                 Ep ${ep} ${isPlaying ? '▶' : ''}
             </button>`;
@@ -3287,29 +3295,38 @@ async function openDetailsModal(subjectId) {
         const streamBtn = document.getElementById('detailStreamBtn');
         // Watch Trailer button — declared here so coming_soon block can reference it
         const trailerBtn = document.getElementById('detailTrailerBtn');
+        const seasons = ep ? ep.seasons : null;
 
         if (d.coming_soon) {
-            streamBtn.innerHTML = `
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                <span>Coming Soon</span>
-            `;
-            streamBtn.className = 'btn btn-secondary btn-block btn-coming-soon';
-            streamBtn.style.background = '';
-            streamBtn.onclick = () => {
-                showToast(`"${d.title}" is an upcoming title and has not been released yet.`, 'info');
-            };
+            if (streamBtn) {
+                streamBtn.innerHTML = `
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>Coming Soon</span>
+                `;
+                streamBtn.className = 'btn btn-secondary btn-block btn-coming-soon';
+                streamBtn.style.background = '';
+                streamBtn.onclick = () => {
+                    showToast(`"${d.title}" is an upcoming title and has not been released yet.`, 'info');
+                };
+            }
             if (trailerBtn) trailerBtn.style.display = 'none';
         } else {
-            streamBtn.innerHTML = `
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                <span>Stream Now</span>
-            `;
-            streamBtn.className = 'btn btn-primary btn-block';
-            streamBtn.style.background = '';
-            streamBtn.onclick = () => {
-                closeDetailModal(true);
-                quickPlay(subjectId, d.title);
-            };
+            if (streamBtn) {
+                streamBtn.innerHTML = `
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    <span>Stream Now</span>
+                `;
+                streamBtn.className = 'btn btn-primary btn-block';
+                streamBtn.style.background = '';
+                streamBtn.onclick = () => {
+                    closeDetailModal(true);
+                    if (seasons && seasons.length > 0) {
+                        playDetailEpisode(subjectId, currentSeason || 1, currentEpisode || 1);
+                    } else {
+                        quickPlay(subjectId, d.title);
+                    }
+                };
+            }
         }
 
         if (trailerBtn) {
@@ -3330,9 +3347,6 @@ async function openDetailsModal(subjectId) {
             subsEl.textContent = d.subtitles_available;
             if (subsBlock) subsBlock.style.display = 'block';
         } else if (subsBlock) subsBlock.style.display = 'none';
-
-        // TV seasons
-        const seasons = ep ? ep.seasons : null;
         
         // Set activeMediaMeta so the player ribbon has all data when playback starts
         activeMediaMeta = {

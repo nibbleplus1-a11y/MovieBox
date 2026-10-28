@@ -826,21 +826,21 @@ class MovieBoxEngine:
             title = (op.get("title") or "").lower()
             subs = op.get("subjects") or []
             target_key = None
-            if "trending now" in title or ("trending" in title and "punjabi" not in title):
+            if "trending now" in title or ("trending" in title and "punjabi" not in title) or "popular" in title:
                 target_key = "trending"
-            elif "cinema" in title:
+            elif "cinema" in title or "theater" in title:
                 target_key = "cinema"
-            elif "hollywood" in title:
+            elif "hollywood" in title or "western movies" in title:
                 target_key = "hollywood"
-            elif "bollywood" in title:
+            elif "bollywood" in title or "hindi" in title or "punjabi" in title:
                 target_key = "bollywood"
-            elif "south indian" in title:
+            elif "south indian" in title or "tamil" in title or "telugu" in title:
                 target_key = "south_indian"
-            elif "top series" in title or "western tv" in title:
+            elif "top series" in title or "western tv" in title or "tv series" in title:
                 target_key = "series"
-            elif "anime" in title:
+            elif "anime" in title or "animation" in title:
                 target_key = "anime"
-            elif "asian drama" in title or "indian drama" in title:
+            elif "asian drama" in title or "indian drama" in title or "turkish drama" in title or "k-drama" in title:
                 target_key = "asian_drama"
 
             if target_key:
@@ -862,9 +862,8 @@ class MovieBoxEngine:
                     if not any(x["subject_id"] == item["subject_id"] for x in feed[target_key]):
                         feed[target_key].append(item)
 
-        # Fallback backfill: if any movie shelf has fewer than 6 items, backfill from /subject/filter
-        fallback_needed = any(len(feed[k]) < 6 for k in ["trending", "cinema", "hollywood", "bollywood", "south_indian"])
-        if fallback_needed:
+        # Fallback backfill for movie shelves (trending, cinema, hollywood)
+        if any(len(feed[k]) < 8 for k in ["trending", "cinema", "hollywood"]):
             try:
                 filter_url = f"{API_BASE}/subject/filter"
                 payload = {
@@ -873,7 +872,7 @@ class MovieBoxEngine:
                     "page": 1,
                     "perPage": 36
                 }
-                f_resp = self.session.post(filter_url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://movieboxhd.net/"}, json=payload, timeout=8)
+                f_resp = self.session.post(filter_url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://movieboxhd.net/"}, json=payload, timeout=10)
                 if f_resp.status_code == 200:
                     raw_items = f_resp.json().get("data", {}).get("items") or []
                     for s in raw_items:
@@ -896,6 +895,53 @@ class MovieBoxEngine:
                                 feed[k].append(item)
             except Exception:
                 pass
+
+        # Targeted backfill for Bollywood if shelf is sparse (< 6 items)
+        if len(feed["bollywood"]) < 6:
+            for b_kw in ["Kalki", "Jawan", "Animal", "Fighter", "Stree 2", "Pathaan", "Dunki"]:
+                if len(feed["bollywood"]) >= 12:
+                    break
+                try:
+                    for it in self.search(b_kw, per_page=2):
+                        if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed["bollywood"]):
+                            feed["bollywood"].append(it)
+                except Exception:
+                    pass
+
+        # Targeted backfill for South Indian if shelf is sparse (< 6 items)
+        if len(feed["south_indian"]) < 6:
+            for si_kw in ["Pushpa", "Salaar", "Devara", "Leo", "KGF", "RRR", "Kantara"]:
+                if len(feed["south_indian"]) >= 12:
+                    break
+                try:
+                    for it in self.search(si_kw, per_page=2):
+                        if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed["south_indian"]):
+                            feed["south_indian"].append(it)
+                except Exception:
+                    pass
+
+        # Targeted backfill for Series & Asian Drama if sparse (< 6 items)
+        if len(feed["series"]) < 6:
+            for ser_kw in ["Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys", "Prison Break", "Loki"]:
+                if len(feed["series"]) >= 12:
+                    break
+                try:
+                    for it in self.search(ser_kw, per_page=2):
+                        if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed["series"]):
+                            feed["series"].append(it)
+                except Exception:
+                    pass
+
+        if len(feed["asian_drama"]) < 6:
+            for kd_kw in ["Queen of Tears", "Squid Game", "Crash Landing on You", "All of Us Are Dead", "Vincenzo"]:
+                if len(feed["asian_drama"]) >= 12:
+                    break
+                try:
+                    for it in self.search(kd_kw, per_page=2):
+                        if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed["asian_drama"]):
+                            feed["asian_drama"].append(it)
+                except Exception:
+                    pass
 
         total_items = sum(len(v) for v in feed.values())
         if total_items >= 20:
@@ -1000,7 +1046,7 @@ _STREAM_PROXY_CLIENT: Optional[httpx.AsyncClient] = None
 def get_stream_proxy_client() -> httpx.AsyncClient:
     global _STREAM_PROXY_CLIENT
     if _STREAM_PROXY_CLIENT is None or _STREAM_PROXY_CLIENT.is_closed:
-        timeout = httpx.Timeout(connect=8.0, read=None, write=30.0, pool=30.0)
+        timeout = httpx.Timeout(connect=4.5, read=None, write=30.0, pool=30.0)
         limits = httpx.Limits(max_keepalive_connections=120, max_connections=350, keepalive_expiry=60.0)
         _STREAM_PROXY_CLIENT = httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True)
     return _STREAM_PROXY_CLIENT
@@ -1107,7 +1153,7 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     async def content_iterator():
         try:
-            async for chunk in resp.aiter_bytes(chunk_size=524288):
+            async for chunk in resp.aiter_bytes(chunk_size=262144):
                 yield chunk
         except Exception:
             pass
@@ -1535,9 +1581,10 @@ async def trigger_server_deploy(secret: Optional[str] = Query(None)):
             log_lines.append(f"reset: {r2.stdout.strip()} {r2.stderr.strip()}")
             r3 = subprocess.run(["./venv/bin/pip", "install", "-r", "requirements.txt"], cwd="/home/ubuntu/MovieBox", capture_output=True, text=True, timeout=60)
             log_lines.append(f"pip: {r3.stdout.strip()} {r3.stderr.strip()}")
-            # Schedule restart in 1 second so current HTTP response finishes cleanly
-            subprocess.Popen(["bash", "-c", "sleep 1 && sudo systemctl restart moviebox"])
-            log_lines.append("Service restart scheduled in 1s")
+            # Schedule service restart cleanly
+            pid = os.getpid()
+            subprocess.Popen(["bash", "-c", f"sleep 1 && (sudo -n systemctl restart moviebox || kill -9 {pid})"])
+            log_lines.append(f"Service restart scheduled (pid: {pid})")
         except Exception as e:
             log_lines.append(f"error: {str(e)}")
         return "\n".join(log_lines)
@@ -1545,6 +1592,8 @@ async def trigger_server_deploy(secret: Optional[str] = Query(None)):
     loop = asyncio.get_event_loop()
     res = await loop.run_in_executor(_bg_executor, _pull_and_restart)
     app_cache.delete("feed:home_curated")
+    app_cache.delete_prefix("feed:")
+    app_cache.delete_prefix("streams:")
     return {"status": "success", "message": "Deployed latest GitHub commit", "log": res}
 
 
