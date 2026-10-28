@@ -1,0 +1,37 @@
+# Add this file to .gitignore — never commit it!
+# Get your own google-services.json from Firebase Console:
+# 1. Go to https://console.firebase.google.com
+# 2. Create project → "CineScope"
+# 3. Add Android app → package: com.cinescope.guide
+# 4. Download google-services.json → place it here (same folder as this file)
+
+# PLACEHOLDER — replace with real google-services.json from Firebase Console
+{
+  "project_info": {
+    "project_number": "YOUR_PROJECT_NUMBER",
+    "project_id": "cinescope-guide",
+    "storage_bucket": "cinescope-guide.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:YOUR_PROJECT_NUMBER:android:XXXXXXXXXXXXXXXX",
+        "android_client_info": {
+          "package_name": "com.cinescope.guide"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "YOUR_API_KEY_HERE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CineScope logo: film clapperboard style icon -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+
+    <!-- Outer circle bg -->
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M60,10 a50,50 0 1,0 0.001,0 Z"/>
+
+    <!-- Film strip top bar -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,38 L92,38 L92,46 L28,46 Z"/>
+
+    <!-- Film holes top -->
+    <path android:fillColor="#E50914" android:pathData="M34,39 L40,39 L40,45 L34,45 Z"/>
+    <path android:fillColor="#E50914" android:pathData="M48,39 L54,39 L54,45 L48,45 Z"/>
+    <path android:fillColor="#E50914" android:pathData="M62,39 L68,39 L68,45 L62,45 Z"/>
+    <path android:fillColor="#E50914" android:pathData="M76,39 L82,39 L82,45 L76,45 Z"/>
+
+    <!-- Main clapperboard body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,48 L92,48 L92,86 Q92,88 90,88 L30,88 Q28,88 28,86 Z"/>
+
+    <!-- Play button triangle -->
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M50,58 L50,78 L74,68 Z"/>
+
+    <!-- Diagonal lines on clapperboard top -->
+    <path
+        android:strokeColor="#E50914"
+        android:strokeWidth="3"
+        android:pathData="M36,38 L44,46"
+        android:fillColor="#00000000"/>
+    <path
+        android:strokeColor="#E50914"
+        android:strokeWidth="3"
+        android:pathData="M50,38 L58,46"
+        android:fillColor="#00000000"/>
+    <path
+        android:strokeColor="#E50914"
+        android:strokeWidth="3"
+        android:pathData="M64,38 L72,46"
+        android:fillColor="#00000000"/>
+    <path
+        android:strokeColor="#E50914"
+        android:strokeWidth="3"
+        android:pathData="M78,38 L86,46"
+        android:fillColor="#00000000"/>
+
+</vector>

@@ -16,6 +16,24 @@ android_app/bin/
 *.apk
 *.aab
 
+# Android Studio & Gradle
+.gradle/
+build/
+app/build/
+moviebox_android/.gradle/
+moviebox_android/build/
+moviebox_android/app/build/
+moviebox_android/local.properties
+*.keystore
+*.jks
+
+# React Native / Node
+node_modules/
+cinescope/node_modules/
+cinescope/.expo/
+cinescope/dist/
+
 # OS
 .DS_Store
 Thumbs.db
+
