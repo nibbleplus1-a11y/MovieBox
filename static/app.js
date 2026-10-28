@@ -460,7 +460,11 @@ async function loadHomeFeed() {
     if (homeSeriesGrid) renderSkeletons(homeSeriesGrid, 6);
 
     try {
-        const res = await fetch('/api/feed/home-curated');
+        // Bust server-side cache on first page visit per session so new movies always appear fresh
+        const bustOnce = !sessionStorage.getItem('home_feed_loaded');
+        if (bustOnce) sessionStorage.setItem('home_feed_loaded', '1');
+        const feedUrl = bustOnce ? `/api/feed/home-curated?_bust=${Date.now()}` : '/api/feed/home-curated';
+        const res = await fetch(feedUrl);
         const feed = await res.json();
 
         // 1. Trending & Fresh Cinema
@@ -2268,7 +2272,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         safeText('playerCodecStat', 'Auto Adaptive');
         safeAttr('playerExternalLink', 'href', srv.url);
 
-        modal.style.display = 'flex';
+        modal.style.display = '';
         modal.classList.add('active');
         document.body.style.overflow = 'hidden';
         renderPlayerSeriesRibbon();
@@ -2471,6 +2475,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         setCinemaVideoSource(src, stream, titleText);
     }
 
+    modal.style.display = '';
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
 
@@ -2833,6 +2838,7 @@ function closePlayerModal() {
         stage.classList.remove('is-fullscreen');
         stage.classList.remove('is-iframe-mode');
         stage.classList.remove('hide-cursor');
+        stage.classList.remove('hud-hidden');
     }
     if (window._clearStreamWatchdog) window._clearStreamWatchdog();
     if (hlsInstance) {
@@ -2854,20 +2860,27 @@ function closePlayerModal() {
     if (video) {
         video.style.display = 'block';
         try { video.pause(); } catch {}
-        video.src = '';
+        try { video.removeAttribute('src'); video.load(); } catch {}
     }
     const quickBar = document.getElementById('inPlayerQuickBar');
     if (quickBar) quickBar.style.display = 'flex';
     currentSelectedServer = 'direct';
+
+    // Clear next-episode countdown
+    if (nextEpTimer) { clearInterval(nextEpTimer); nextEpTimer = null; }
+    const nextEpBox = document.getElementById('nextEpCountdownBox');
+    if (nextEpBox) nextEpBox.style.display = 'none';
 
     // Close any open in-player popovers that may block clicks on search
     document.querySelectorAll('.in-player-popover.open').forEach(p => p.classList.remove('open'));
 
     if (modal) {
         modal.classList.remove('active');
-        modal.style.display = 'none';
+        // Do NOT set style.display = 'none' — CSS opacity/pointer-events controls visibility
+        // Resetting inline display here would prevent the modal from being shown again via classList.add('active')
+        modal.style.display = '';
         // Ensure no child element retains focus (blocks search input)
-        try { modal.blur(); } catch {}
+        try { modal.blur(); document.activeElement && document.activeElement.blur(); } catch {}
     }
     document.body.style.overflow = '';
 
@@ -2877,6 +2890,9 @@ function closePlayerModal() {
         searchInput.style.pointerEvents = 'auto';
         searchInput.removeAttribute('disabled');
     }
+
+    // Reset stream state so next open is fresh
+    currentPlayingStream = null;
 
     // Show exit interstitial if eligible
     if (typeof AdEngine !== 'undefined') {
@@ -2977,7 +2993,7 @@ function toggleMiniPlayer() {
     const dock = document.getElementById('miniPlayerDock');
     if (modal) {
         modal.classList.remove('active');
-        modal.style.display = 'none';
+        modal.style.display = '';
     }
     document.body.style.overflow = '';
     if (dock) dock.style.display = 'block';
@@ -2989,7 +3005,7 @@ function expandMiniPlayer() {
     if (dock) dock.style.display = 'none';
     const modal = document.getElementById('playerModal');
     if (modal) {
-        modal.style.display = 'flex';
+        modal.style.display = '';
         modal.classList.add('active');
     }
     document.body.style.overflow = 'hidden';
@@ -3332,7 +3348,10 @@ async function openDetailsModal(subjectId) {
                 <button class="season-tab-btn ${s.season === 1 ? 'active' : ''}" onclick="selectDetailSeason('${subjectId}', ${s.season}, ${s.episode_count}, this)">
                     Season ${s.season}
                 </button>`).join('');
-            renderDetailEpisodes(subjectId, 1, seasons[0].episode_count);
+            // Auto-select Season 1, Episode 1 so user sees which episode will play
+            currentSeason = 1;
+            currentEpisode = 1;
+            renderDetailEpisodes(subjectId, 1, seasons[0].episode_count, 1);
         }
 
     } catch (err) {
@@ -3367,17 +3386,19 @@ function playTrailer(trailerUrl, title, poster) {
 function selectDetailSeason(subjectId, seasonNum, epCount, btn) {
     document.querySelectorAll('#detailSeasonTabs .season-tab-btn').forEach(b => b.classList.remove('active'));
     if (btn) btn.classList.add('active');
-    // Update currentSeason so playDetailEpisode uses the correct season
+    // Update currentSeason and reset episode to 1 so playDetailEpisode uses the correct season
     currentSeason = seasonNum;
-    renderDetailEpisodes(subjectId, seasonNum, epCount);
+    currentEpisode = 1;
+    renderDetailEpisodes(subjectId, seasonNum, epCount, 1);
 }
 
-function renderDetailEpisodes(subjectId, seasonNum, epCount) {
+function renderDetailEpisodes(subjectId, seasonNum, epCount, activeEp = 1) {
     const grid = document.getElementById('detailEpisodesGrid');
     let html = '';
     for (let i = 1; i <= epCount; i++) {
+        const isActive = i === activeEp;
         html += `
-            <div class="episode-btn" onclick="playDetailEpisode('${subjectId}', ${seasonNum}, ${i})">
+            <div class="episode-btn ${isActive ? 'active' : ''}" onclick="playDetailEpisode('${subjectId}', ${seasonNum}, ${i})">
                 <span class="ep-num">Ep ${i}</span>
                 <span class="ep-res-badge">
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -3385,9 +3406,21 @@ function renderDetailEpisodes(subjectId, seasonNum, epCount) {
             </div>`;
     }
     grid.innerHTML = html;
+    // Auto-scroll active episode button into view
+    if (grid && activeEp > 1) {
+        const activeBtn = grid.querySelector('.episode-btn.active');
+        if (activeBtn) activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
 }
 
 function playDetailEpisode(subjectId, seasonNum, episodeNum) {
+    // Update active state in episode grid before closing modal
+    const detailGrid = document.getElementById('detailEpisodesGrid');
+    if (detailGrid) {
+        detailGrid.querySelectorAll('.episode-btn').forEach((btn, idx) => {
+            btn.classList.toggle('active', idx + 1 === Number(episodeNum));
+        });
+    }
     closeDetailModal(true);
     currentPlayingSubjectId = subjectId;
     currentSeason = Number(seasonNum);

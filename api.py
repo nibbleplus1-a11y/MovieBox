@@ -899,7 +899,7 @@ class MovieBoxEngine:
 
         total_items = sum(len(v) for v in feed.values())
         if total_items >= 20:
-            app_cache.set(cache_key, feed, ttl=1800)
+            app_cache.set(cache_key, feed, ttl=600)  # 10-min cache for fresh movie rotation
         return feed
 
 
