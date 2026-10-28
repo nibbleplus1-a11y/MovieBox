@@ -2,16 +2,16 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MovieBox — 1080p Cinema & Stream Hub</title>
-    <meta name="description" content="MovieBox 1080p Stream Hub with multi-audio dubbing, adaptive streaming, season explorer, and integrated cinema player.">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>CineScope — 1080p Cinema & Stream Hub</title>
+    <meta name="description" content="CineScope 1080p Cinema Hub with multi-audio dubbing, adaptive streaming, season explorer, and integrated cinema player.">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <!-- Plyr Modern Cinema Player CSS -->
     <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
-    <link rel="stylesheet" href="/static/style.css?v=2.6.2">
+    <link rel="stylesheet" href="/static/style.css?v=4.0.0-phase2">
 </head>
 <body>
     <div id="ambientGlow" class="ambient-glow"></div>
@@ -27,9 +27,9 @@
                             <polyline points="17 2 12 7 7 2"/>
                         </svg>
                     </div>
-                    <span class="brand-title">Movie<span class="gradient-text">Box</span></span>
+                    <span class="brand-title">Cine<span class="gradient-text">Scope</span></span>
                 </a>
-                <span class="badge badge-glow">1080p Engine Active</span>
+                <span class="badge badge-glow">1080p Cinema Active</span>
             </div>
 
             <button class="mobile-menu-btn" onclick="toggleMobileNav()" aria-label="Toggle navigation menu">
@@ -53,29 +53,29 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
                     Watchlist (<span id="watchlistCountBadge">0</span>)
                 </button>
-                <button class="nav-btn" id="tabBtn-resolver" onclick="switchTab('resolver')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                    Stream Resolver
-                </button>
-                <button class="nav-btn" id="tabBtn-api" onclick="switchTab('api')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-                    API Endpoints
-                </button>
             </nav>
 
             <div class="nav-right">
                 <div class="search-container">
                     <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                    <input type="text" id="globalSearchInput" class="global-search-input" placeholder="Search movies, series, or ID..." autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
+                    <input type="text" id="globalSearchInput" class="global-search-input" placeholder="Search movies, series..." autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off">
                     <span class="search-shortcut">/</span>
                     <div id="autocompleteDropdown" class="autocomplete-dropdown"></div>
                 </div>
-                <a href="/docs" target="_blank" class="icon-btn" title="Open Swagger API Explorer">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-                </a>
             </div>
         </div>
     </header>
+
+    <!-- Mobile Quick Category Scroll Bar -->
+    <nav class="mobile-quick-categories" id="mobileQuickCategories" aria-label="Quick Categories">
+        <button class="quick-cat-chip active" onclick="switchTab('home')">Home</button>
+        <button class="quick-cat-chip" onclick="switchTab('movies')">Movies</button>
+        <button class="quick-cat-chip" onclick="switchTab('series')">TV Series</button>
+        <button class="quick-cat-chip" onclick="browseMoviesByCategory('hollywood')">Hollywood</button>
+        <button class="quick-cat-chip" onclick="browseMoviesByCategory('bollywood')">Bollywood</button>
+        <button class="quick-cat-chip" onclick="browseMoviesByCategory('south_indian')">South Indian</button>
+        <button class="quick-cat-chip" onclick="switchTab('watchlist')">Watchlist</button>
+    </nav>
 
     <!-- Main Container -->
     <main class="main-content">
@@ -138,6 +138,21 @@
                 <span class="section-subtitle">Fresh 2026 releases • 1080p signed CDN verified</span>
             </div>
             <div class="cards-grid" id="curatedGrid"></div>
+
+            <!-- In-Feed Native Ad Banner Slot -->
+            <div id="inFeedAdBanner" class="in-feed-ad-banner" style="display: none;">
+                <div class="ad-pill-badge">Sponsored</div>
+                <div id="inFeedAdContainer" class="in-feed-ad-content">
+                    <div class="ad-banner-mock">
+                        <div class="ad-banner-icon">⚡</div>
+                        <div class="ad-banner-text">
+                            <strong>CineScope Ultra HD Network</strong>
+                            <span>High-speed 1080p cloud streaming with crystal-clear 5.1 audio dubs.</span>
+                        </div>
+                        <a href="https://monetag.com" id="adBannerCta" class="ad-banner-button" target="_blank" rel="noopener">Explore →</a>
+                    </div>
+                </div>
+            </div>
 
             <div class="section-divider"></div>
 
@@ -205,11 +220,11 @@
             <!-- Movie Category Pills (Real Cinema Categories, 0 songs) -->
             <div class="category-pills-bar" id="moviesCategoryBar">
                 <button class="cat-pill active" onclick="filterMoviesCategory('all', this)">All Movies</button>
-                <button class="cat-pill" onclick="filterMoviesCategory('trending', this)">🔥 Trending Now</button>
-                <button class="cat-pill" onclick="filterMoviesCategory('cinema', this)">🍿 Cinema / In Theaters</button>
-                <button class="cat-pill" onclick="filterMoviesCategory('hollywood', this)">🎬 Hollywood</button>
-                <button class="cat-pill" onclick="filterMoviesCategory('bollywood', this)">🌟 Bollywood</button>
-                <button class="cat-pill" onclick="filterMoviesCategory('south_indian', this)">⚡ South Indian</button>
+                <button class="cat-pill" onclick="filterMoviesCategory('trending', this)">Trending Now</button>
+                <button class="cat-pill" onclick="filterMoviesCategory('cinema', this)">Cinema / In Theaters</button>
+                <button class="cat-pill" onclick="filterMoviesCategory('hollywood', this)">Hollywood</button>
+                <button class="cat-pill" onclick="filterMoviesCategory('bollywood', this)">Bollywood</button>
+                <button class="cat-pill" onclick="filterMoviesCategory('south_indian', this)">South Indian</button>
             </div>
 
             <!-- Genre Scroll Bar -->
@@ -252,9 +267,9 @@
             <!-- Series Category Pills -->
             <div class="category-pills-bar" id="seriesCategoryBar">
                 <button class="cat-pill active" onclick="filterSeriesCategory('all', this)">All Series</button>
-                <button class="cat-pill" onclick="filterSeriesCategory('series', this)">📺 Top TV Shows</button>
-                <button class="cat-pill" onclick="filterSeriesCategory('anime', this)">⚡ Top Anime</button>
-                <button class="cat-pill" onclick="filterSeriesCategory('asian_drama', this)">🌸 Asian & K-Drama</button>
+                <button class="cat-pill" onclick="filterSeriesCategory('series', this)">Top TV Shows</button>
+                <button class="cat-pill" onclick="filterSeriesCategory('anime', this)">Top Anime</button>
+                <button class="cat-pill" onclick="filterSeriesCategory('asian_drama', this)">Asian & K-Drama</button>
             </div>
 
             <div class="cards-grid" id="seriesCatalogGrid"></div>
@@ -280,104 +295,6 @@
             </div>
         </section>
 
-        <!-- TAB: STREAM RESOLVER -->
-        <section id="tab-resolver" class="tab-pane">
-            <div class="shelf-header">
-                <div>
-                    <h1 class="page-title">Stream & Subtitle Resolver</h1>
-                    <p class="page-subtitle">Extract signed CloudFront/Edge CDN URLs, DASH manifests, and multi-language captions</p>
-                </div>
-            </div>
-
-            <div class="resolver-card">
-                <div class="resolver-inputs">
-                    <div class="input-group flex-3">
-                        <label>Subject ID or Title</label>
-                        <input type="text" id="resolverSubjectInput" class="custom-input" placeholder="e.g. 6391474290696802080 or Inception" value="6391474290696802080">
-                    </div>
-                    <div class="input-group flex-1">
-                        <label>Season (0 = Movie)</label>
-                        <input type="number" id="resolverSeasonInput" class="custom-input" placeholder="0" value="0" min="0">
-                    </div>
-                    <div class="input-group flex-1">
-                        <label>Episode</label>
-                        <input type="number" id="resolverEpisodeInput" class="custom-input" placeholder="0" value="0" min="0">
-                    </div>
-                    <div class="input-group btn-col">
-                        <label>&nbsp;</label>
-                        <button class="btn btn-primary" onclick="executeResolver()">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                            Resolve Streams
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Quick Preset Pills -->
-                <div class="presets-row">
-                    <span class="presets-label">Popular Presets:</span>
-                    <button class="preset-pill" onclick="setResolverPreset('6391474290696802080', 0, 0, 'Inception (Movie)')">Inception (1080p Movie)</button>
-                    <button class="preset-pill" onclick="setResolverPreset('8906247916759695608', 0, 0, 'Avatar (Movie)')">Avatar (Movie)</button>
-                    <button class="preset-pill" onclick="setResolverPreset('6207982430134357800', 1, 1, 'Breaking Bad S1 E1')">Breaking Bad S1E1</button>
-                    <button class="preset-pill" onclick="setResolverPreset('6207982430134357800', 1, 2, 'Breaking Bad S1 E2')">Breaking Bad S1E2</button>
-                </div>
-            </div>
-
-            <!-- Resolver Output -->
-            <div id="resolverResults" class="resolver-results-container" style="display: none;">
-                <div class="media-overview-card" id="resolverMediaHeader">
-                    <img id="resolverPoster" class="overview-poster" src="" alt="Poster">
-                    <div class="overview-info">
-                        <div class="overview-tags">
-                            <span class="badge badge-primary" id="resolverMediaType">Movie</span>
-                            <span class="badge badge-gold" id="resolverMediaRating">★ 8.8</span>
-                            <span class="badge badge-outline" id="resolverMediaYear">2010</span>
-                        </div>
-                        <h2 id="resolverMediaTitle" class="overview-title">Title</h2>
-                        <p id="resolverMediaDesc" class="overview-desc">Description</p>
-                        <div id="resolverMediaMeta" class="overview-meta"></div>
-
-                        <!-- Audio Dubs Row in Resolver -->
-                        <div id="resolverAudioDubsRow" class="resolver-dubs-row" style="display: none;">
-                            <span class="dubs-label">Available Audio Tracks:</span>
-                            <div class="dubs-pills" id="resolverDubsPills"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Series Episode Navigator if available -->
-                <div id="seriesNavigatorContainer" class="series-navigator-card" style="display: none;">
-                    <div class="navigator-header">
-                        <h3>TV Seasons & Episodes</h3>
-                        <span id="seriesTotalSeasons" class="navigator-subtitle"></span>
-                    </div>
-                    <div class="season-tabs" id="seasonTabsContainer"></div>
-                    <div class="episodes-grid" id="episodesGridContainer"></div>
-                </div>
-
-                <!-- Streams List -->
-                <div class="streams-section">
-                    <div class="section-header">
-                        <div class="section-title-wrap">
-                            <div class="section-dot dot-emerald"></div>
-                            <h3>Extracted Stream Tracks (<span id="streamCount">0</span>)</h3>
-                        </div>
-                    </div>
-                    <div class="streams-table" id="streamsList"></div>
-                </div>
-
-                <!-- Captions List -->
-                <div class="captions-section">
-                    <div class="section-header">
-                        <div class="section-title-wrap">
-                            <div class="section-dot dot-violet"></div>
-                            <h3>Multi-language Subtitles (<span id="captionCount">0</span>)</h3>
-                        </div>
-                    </div>
-                    <div class="captions-grid" id="captionsList"></div>
-                </div>
-            </div>
-        </section>
-
         <!-- TAB: SEARCH RESULTS -->
         <section id="tab-search" class="tab-pane">
             <div class="shelf-header">
@@ -393,47 +310,9 @@
                     Recent:
                 </span>
                 <div class="recent-chips-wrap" id="recentSearchChips"></div>
-                <button class="btn-link" onclick="localStorage.removeItem('moviebox_recent_searches'); renderRecentSearchChips();" style="margin-left:auto; font-size:12px;">Clear</button>
+                <button class="btn-link" onclick="localStorage.removeItem('cinescope_recent_searches'); renderRecentSearchChips();" style="margin-left:auto; font-size:12px;">Clear</button>
             </div>
             <div class="cards-grid" id="searchResultsGrid"></div>
-        </section>
-
-        <!-- TAB: API PLAYGROUND -->
-        <section id="tab-api" class="tab-pane">
-            <div class="shelf-header">
-                <div>
-                    <h1 class="page-title">REST API Endpoints</h1>
-                    <p class="page-subtitle">Interactive developer playground with signed stream extraction</p>
-                </div>
-                <a href="/docs" target="_blank" class="btn btn-secondary">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                    Swagger UI / OpenAPI
-                </a>
-            </div>
-
-            <div class="api-card">
-                <table class="api-table">
-                    <thead>
-                        <tr>
-                            <th>Method</th>
-                            <th>Endpoint Route</th>
-                            <th>Description</th>
-                            <th>Target</th>
-                            <th>Test Raw</th>
-                        </tr>
-                    </thead>
-                    <tbody id="apiEndpointsTableBody"></tbody>
-                </table>
-            </div>
-
-            <!-- Raw JSON Response Viewer -->
-            <div class="json-inspector-card" id="jsonInspectorCard">
-                <div class="inspector-header">
-                    <span class="inspector-title" id="inspectorTitle">Response Inspector</span>
-                    <button class="btn btn-ghost" onclick="copyInspectorJson()">Copy JSON</button>
-                </div>
-                <pre class="json-code" id="inspectorCode">// Click "Inspect" next to any endpoint above to preview its live response.</pre>
-            </div>
         </section>
     </main>
 
@@ -441,39 +320,215 @@
     <div id="playerModal" class="player-modal">
         <div class="player-modal-backdrop" onclick="closePlayerModal()"></div>
         <div class="player-modal-content">
-            <div class="player-header">
-                <div class="player-info">
-                    <span class="badge badge-glow" id="playerQualityTag">1080p</span>
-                    <h3 id="playerMediaTitle" class="player-title">Movie Title</h3>
-                    <span id="playerMediaSub" class="player-sub"></span>
-                </div>
-                <div class="player-controls-right">
-                    <button class="btn btn-ghost" id="playerNextEpBtn" onclick="playNextEpisode()" style="display: none;" title="Play next episode">
-                        Next Ep →
-                    </button>
-                    <button class="btn btn-ghost" onclick="toggleMiniPlayer()" title="Dock as Mini-Player">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><rect width="6" height="6" x="13" y="13" rx="1"/></svg>
-                        Mini
-                    </button>
-                    <button class="btn btn-ghost" onclick="copyCurrentStreamUrl()">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-                        Copy URL
-                    </button>
-                    <a id="playerExternalLink" href="#" target="_blank" class="btn btn-ghost">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                        Raw Link
-                    </a>
-                    <button class="btn-close" onclick="closePlayerModal()">✕</button>
-                </div>
-            </div>
-
-            <!-- Video Wrapper with Plyr -->
+            <!-- Video Stage with Plyr -->
             <div class="video-stage" id="videoStage">
                 <div id="playerAmbientGlow" class="player-ambient-glow"></div>
                 <video id="cinemaVideo" playsinline poster=""></video>
                 <iframe id="cinemaIframe" class="cinema-iframe" style="display:none; width:100%; height:100%; border:0; position:absolute; inset:0; z-index:3; border-radius: var(--r-md);" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
-                <div class="seek-ripple left" id="seekRippleLeft"><span>⏪ 10s</span></div>
-                <div class="seek-ripple right" id="seekRippleRight"><span>10s ⏩</span></div>
+                <div class="seek-ripple left" id="seekRippleLeft">
+                    <span>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>
+                        10s
+                    </span>
+                </div>
+                <div class="seek-ripple right" id="seekRippleRight">
+                    <span>
+                        10s
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 19 22 12 13 5 13 19"/><polygon points="2 19 11 12 2 5 2 19"/></svg>
+                    </span>
+                </div>
+
+                <!-- CINEMA PRE-ROLL AD OVERLAY -->
+                <div id="cinemaPrerollOverlay" class="cinema-preroll-overlay" style="display: none;">
+                    <div class="preroll-card">
+                        <div class="preroll-top">
+                            <span class="preroll-sponsor-badge">
+                                <span class="preroll-pulse"></span>
+                                Sponsored • 1080p Cinema
+                            </span>
+                            <div class="preroll-countdown-box">
+                                <span id="prerollTimerText" class="preroll-timer-text">Movie starts in 5s</span>
+                                <button id="prerollSkipBtn" class="preroll-skip-btn" onclick="skipPrerollAd()" disabled>
+                                    Skip in 5s
+                                </button>
+                            </div>
+                        </div>
+                        <div class="preroll-ad-body" id="prerollAdBody">
+                            <div class="preroll-spotlight">
+                                <div class="preroll-icon">🎬</div>
+                                <div class="preroll-info">
+                                    <h4 class="preroll-ad-title" id="prerollAdTitle">Experience 1080p Cinema Streaming</h4>
+                                    <p class="preroll-ad-desc" id="prerollAdDesc">Ultra HD resolution with multi-language audio dubs & zero buffering on CineScope.</p>
+                                    <a id="prerollAdLink" href="https://monetag.com" target="_blank" rel="noopener" class="preroll-ad-cta">
+                                        Learn More ↗
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="preroll-bottom-bar">
+                            <div class="preroll-progress-track">
+                                <div id="prerollProgressBar" class="preroll-progress-bar"></div>
+                            </div>
+                            <span class="preroll-footer-note">Ads support our high-speed 1080p stream servers</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- IN-PLAYER FLOATING TOP HUD (Visible in both normal & fullscreen, auto-hides on inactivity) -->
+                <div class="in-player-top-bar" id="inPlayerTopBar">
+                    <div class="in-player-title-row">
+                        <button class="in-player-hud-btn" onclick="handleInPlayerBack()" title="Back / Exit Fullscreen">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" style="margin-right:4px;"><path d="m15 18-6-6 6-6"/></svg>
+                            Back
+                        </button>
+                        <span class="in-player-title" id="inPlayerTitle">Movie Title</span>
+                        <span class="in-player-badge" id="inPlayerDubBadge">Hindi dub</span>
+                        <span class="in-player-badge badge-quality" id="inPlayerQualityBadge">1080p FHD</span>
+                    </div>
+                    <div class="in-player-top-actions">
+                        <!-- Server Selector in Top Bar (Accessible in both Direct and Iframe modes) -->
+                        <div class="in-player-dropdown-wrap">
+                            <button class="in-player-hud-btn" onclick="toggleInPlayerMenu('server', event)" id="inPlayerServerBtn" title="Change Streaming Server">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+                                <span id="inPlayerCurrentServerText">Server 1 (Direct)</span>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
+                            </button>
+                            <div class="in-player-popover" id="inPlayerServerMenu">
+                                <div class="popover-header">Streaming Server</div>
+                                <div class="popover-list" id="inPlayerServerList"></div>
+                            </div>
+                        </div>
+                        <button class="in-player-hud-btn" id="inPlayerEpisodesBtn" onclick="togglePlayerEpisodesDrawer()" style="display: none;" title="View & select episodes">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+                            Episodes
+                        </button>
+                        <button class="in-player-hud-btn" id="playerNextEpBtn" onclick="playNextEpisode()" style="display: none;" title="Play next episode">
+                            Next Ep
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-left:4px;"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" x2="19" y1="5" y2="19"/></svg>
+                        </button>
+                        <button class="in-player-hud-btn" onclick="toggleMiniPlayer()" title="Dock as Mini-Player">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><rect width="18" height="14" x="3" y="5" rx="2"/><rect width="6" height="4" x="13" y="13" rx="1"/></svg>
+                            Mini
+                        </button>
+                        <button class="in-player-hud-btn" id="playerScreenLockBtn" onclick="toggleScreenLock()" title="Lock / Unlock Controls">
+                            <span id="screenLockIcon">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+                            </span>
+                        </button>
+                        <button class="in-player-hud-btn" id="inPlayerFullscreenBtn" onclick="toggleCinemaFullscreen()" title="Fullscreen (F)">
+                            <span id="inPlayerFullscreenIcon">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="margin-right:5px;"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                            </span>
+                            Fullscreen
+                        </button>
+                        <button class="in-player-hud-btn btn-close-inplayer" onclick="closePlayerModal()" title="Close Player">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- IN-PLAYER QUICK SETTINGS CONTROLS (Floating directly above timeline, auto-hides when watching) -->
+                <div class="in-player-quick-bar" id="inPlayerQuickBar">
+                    <div class="in-player-quick-left">
+                        <!-- Audio Dubs In-Player Menu -->
+                        <div class="in-player-dropdown-wrap">
+                            <button class="in-player-pill-btn" onclick="toggleInPlayerMenu('audio', event)" id="inPlayerAudioBtn" title="Switch Audio Dub">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                                <span id="inPlayerCurrentAudioText">Audio: Hindi dub</span>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
+                            </button>
+                            <div class="in-player-popover" id="inPlayerAudioMenu">
+                                <div class="popover-header">Select Audio Dub / Language</div>
+                                <div class="popover-list" id="inPlayerAudioList"></div>
+                            </div>
+                        </div>
+
+                        <!-- Video Quality In-Player Menu -->
+                        <div class="in-player-dropdown-wrap">
+                            <button class="in-player-pill-btn" onclick="toggleInPlayerMenu('quality', event)" id="inPlayerQualityBtn" title="Select Video Quality">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                                <span id="inPlayerCurrentQualityText">Quality: 1080p FHD</span>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
+                            </button>
+                            <div class="in-player-popover" id="inPlayerQualityMenu">
+                                <div class="popover-header">Stream Resolution</div>
+                                <div class="popover-list" id="inPlayerQualityList"></div>
+                            </div>
+                        </div>
+
+                        <!-- Subtitles In-Player Menu -->
+                        <div class="in-player-dropdown-wrap">
+                            <button class="in-player-pill-btn" onclick="toggleInPlayerMenu('subs', event)" id="inPlayerSubBtn" title="Subtitles & Timing">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                <span id="inPlayerCurrentSubText">Subtitles: English</span>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
+                            </button>
+                            <div class="in-player-popover" id="inPlayerSubMenu">
+                                <div class="popover-header">Subtitles & Timing</div>
+                                <div class="popover-actions-bar">
+                                    <label class="popover-action-chip" title="Upload a .srt or .vtt subtitle file from your device">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Upload File (.srt)
+                                        <input type="file" id="localSubFileInput" accept=".srt,.vtt,.txt" style="display:none;" onchange="handleLocalSubtitleUpload(event)">
+                                    </label>
+                                    <button class="popover-action-chip" onclick="openOnlineSubtitlesModal(event)" title="Find & download subtitles online">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg>
+                                        Search Online
+                                    </button>
+                                </div>
+                                <div class="popover-list" id="inPlayerSubList"></div>
+                                <div class="popover-sync-row">
+                                    <span style="font-size:11px; color:#94a3b8; font-weight:700;">Sync:</span>
+                                    <button class="btn-xs-sync" onclick="adjustSubtitleSync(-0.5); event.stopPropagation();">-0.5s</button>
+                                    <span id="inPlayerSubSyncVal" style="color:#00e599; font-weight:800; font-size:11px;">0.0s</span>
+                                    <button class="btn-xs-sync" onclick="adjustSubtitleSync(0.5); event.stopPropagation();">+0.5s</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Playback Speed In-Player Menu -->
+                        <div class="in-player-dropdown-wrap">
+                            <button class="in-player-pill-btn" onclick="toggleInPlayerMenu('speed', event)" id="inPlayerSpeedBtn" title="Playback Speed">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                <span id="inPlayerCurrentSpeedText">1.0x</span>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
+                            </button>
+                            <div class="in-player-popover" id="inPlayerSpeedMenu">
+                                <div class="popover-header">Playback Speed</div>
+                                <div class="popover-list">
+                                    <button class="popover-item" onclick="selectInPlayerSpeed(0.75, event)">0.75x</button>
+                                    <button class="popover-item active" onclick="selectInPlayerSpeed(1.0, event)">1.0x (Normal)</button>
+                                    <button class="popover-item" onclick="selectInPlayerSpeed(1.25, event)">1.25x</button>
+                                    <button class="popover-item" onclick="selectInPlayerSpeed(1.5, event)">1.5x</button>
+                                    <button class="popover-item" onclick="selectInPlayerSpeed(2.0, event)">2.0x</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="in-player-quick-right">
+                        <button class="in-player-pill-btn btn-highlight" onclick="downloadCurrentStream()" title="Download MP4 stream">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                            Download
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Smart Resume Prompt (Prime Video style) -->
+                <div id="resumePromptBox" class="resume-prompt-box" style="display: none;">
+                    <div class="resume-prompt-content">
+                        <span class="resume-icon">⏱</span>
+                        <div class="resume-prompt-text">
+                            <span class="resume-title">Resume Watching?</span>
+                            <span id="resumeTimestampText" class="resume-time">at 00:00</span>
+                        </div>
+                    </div>
+                    <div class="resume-actions">
+                        <button class="btn btn-primary btn-sm" onclick="confirmResumePlayback()">Resume</button>
+                        <button class="btn btn-ghost btn-sm" onclick="dismissResumePlayback()">From Start</button>
+                    </div>
+                </div>
+
                 <!-- Episode countdown prompt -->
                 <div id="nextEpCountdownBox" class="next-ep-countdown" style="display: none;">
                     <div class="countdown-text">Next Episode in <span id="nextEpSec">5</span>s</div>
@@ -484,89 +539,77 @@
                 </div>
             </div>
 
-            <!-- Player Auxiliary Bar -->
-            <div class="player-toolbar">
-                <div class="toolbar-left">
-                    <!-- Server / Source Selector -->
-                    <div class="control-group" id="playerServerGroup">
-                        <label title="Select Streaming Server / Provider">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
-                            Server:
-                        </label>
-                        <select id="playerServerSelect" class="custom-select custom-select-server" onchange="changePlayerServer(this.value)">
-                            <option value="direct">Server 1 (MovieBox Direct)</option>
-                        </select>
-                    </div>
+            <!-- In-Player Episode Selector Drawer (Netflix/Apple TV+ style) -->
+            <div id="playerEpisodesDrawer" class="player-episodes-drawer" style="display: none;">
+                <div class="drawer-header">
+                    <h4>Episodes</h4>
+                    <button class="btn-close" onclick="togglePlayerEpisodesDrawer()">✕</button>
+                </div>
+                <div class="drawer-season-tabs" id="playerDrawerSeasonTabs"></div>
+                <div class="drawer-episodes-grid" id="playerDrawerEpisodesGrid"></div>
+            </div>
 
-                    <!-- Audio Track / Dub Selector -->
-                    <div class="control-group" id="playerAudioGroup">
-                        <label title="Select Audio Dub / Language">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-                            Audio Track:
-                        </label>
-                        <select id="playerAudioSelect" class="custom-select custom-select-audio" onchange="changePlayerAudioDub(this.value)">
-                            <option value="">Original Audio</option>
-                        </select>
-                    </div>
-
-                    <!-- Stream Quality Selector -->
-                    <div class="control-group">
-                        <label>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
-                            Quality:
-                        </label>
-                        <select id="playerQualitySelect" class="custom-select" onchange="changePlayerQuality(this.value)">
-                            <option value="">Auto / 1080p</option>
-                        </select>
-                    </div>
-
-                    <!-- Subtitles Selector -->
-                    <div class="control-group">
-                        <label>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="6" y1="15" x2="6" y2="15"/><line x1="10" y1="15" x2="18" y2="15"/></svg>
-                            Subtitles:
-                        </label>
-                        <select id="playerCaptionSelect" class="custom-select" onchange="changePlayerSubtitle(this.value)">
-                            <option value="">Subtitles Off</option>
-                        </select>
-                    </div>
-
-                    <!-- Playback Speed Selector -->
-                    <div class="control-group">
-                        <label>Speed:</label>
-                        <select id="playerSpeedSelect" class="custom-select" onchange="changePlayerSpeed(this.value)">
-                            <option value="0.75">0.75x</option>
-                            <option value="1" selected>1.0x</option>
-                            <option value="1.25">1.25x</option>
-                            <option value="1.5">1.5x</option>
-                            <option value="2">2.0x</option>
-                        </select>
-                    </div>
-
-                    <!-- Playback Mode Selector -->
-                    <div class="control-group">
-                        <label>Route:</label>
-                        <select id="playbackModeSelect" class="custom-select" onchange="changePlaybackMode(this.value)">
-                            <option value="proxy" selected>Fast Proxy</option>
-                            <option value="direct">Direct CDN</option>
-                        </select>
+            <!-- Cinema Player Lower Deck: Clean Info, Server Strip & Series Ribbon -->
+            <div class="player-cinema-footer">
+                <!-- Dedicated 1-Click Server Selector Strip -->
+                <div class="player-server-strip" id="playerServerStrip">
+                    <div class="server-strip-header">
+                        <span class="server-strip-label">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+                            Servers:
+                        </span>
+                        <div class="server-strip-pills" id="playerServerPills"></div>
+                        <a id="playerExternalLinkBtn" href="#" target="_blank" rel="noopener" class="btn-external-stream" title="Open current stream in a new tab" style="display: none;">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            Popout Player ↗
+                        </a>
                     </div>
                 </div>
 
-                <div class="toolbar-right">
-                    <button class="btn btn-ghost btn-sm" onclick="downloadCurrentStream()" title="Download MP4 stream">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        Download
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="openShortcutsModal()" title="Keyboard Shortcuts">
-                        ⌨ Shortcuts
-                    </button>
-                    <button class="btn btn-ghost btn-sm" onclick="copyMpvCommand()" title="Copy CLI command for MPV or VLC">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-                        MPV / VLC
-                    </button>
-                    <span class="stream-stat" id="playerSizeStat">Size: ~2.3 GB</span>
-                    <span class="stream-stat" id="playerCodecStat">H.264 / AAC</span>
+                <!-- TV Series Quick Episode Ribbon -->
+                <div class="player-series-ribbon" id="playerSeriesRibbon" style="display: none;">
+                    <div class="series-ribbon-header">
+                        <span class="ribbon-title">📺 Episodes:</span>
+                        <div class="ribbon-seasons" id="playerRibbonSeasons"></div>
+                    </div>
+                    <div class="ribbon-episodes" id="playerRibbonEpisodes"></div>
+                </div>
+
+                <div class="player-meta-strip">
+                    <div class="meta-strip-left">
+                        <span class="meta-stream-title" id="playerMediaTitle">Movie Title</span>
+                        <span class="meta-stream-badge" id="playerQualityTag">1080p</span>
+                        <span class="meta-stream-sub" id="playerMediaSub">Direct MP4</span>
+                    </div>
+                    <div class="meta-strip-right">
+                        <button id="audioBoostBtn" class="btn btn-ghost btn-sm" onclick="toggleAudioBoost()" title="Dialogue & Volume Booster (160%)">
+                            <span id="audioBoostIcon">🔊</span>
+                            <span id="audioBoostText">Boost (150%)</span>
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="downloadCurrentStream()" title="Download MP4 stream">
+                            📥 Download
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="openShortcutsModal()" title="Keyboard Shortcuts">
+                            ⌨ Shortcuts
+                        </button>
+                        <span class="stream-stat" id="playerSizeStat">Size: ~2.3 GB</span>
+                        <span class="stream-stat" id="playerCodecStat">H.264 / AAC</span>
+                    </div>
+                </div>
+
+                <!-- Hidden legacy controls for JS compatibility -->
+                <div style="display:none;" aria-hidden="true">
+                    <select id="playerServerSelect" onchange="changePlayerServer(this.value)"><option value="direct">Direct</option></select>
+                    <select id="playerAudioSelect" onchange="changePlayerAudioDub(this.value)"><option value="">Original</option></select>
+                    <select id="playerQualitySelect" onchange="changePlayerQuality(this.value)"><option value="">Auto / 1080p</option></select>
+                    <select id="playerCaptionSelect" onchange="changePlayerSubtitle(this.value)"><option value="">Off</option></select>
+                    <select id="playerSpeedSelect" onchange="changePlayerSpeed(this.value)"><option value="1">1.0x</option></select>
+                    <div id="playerAudioGroup"></div>
+                    <div id="playerServerGroup"></div>
+                    <div id="subSyncGroup"></div>
+                    <span id="subSyncLabel">0.0s</span>
+                    <a id="playerExternalLink" href="#"></a>
+                    <button id="playerEpisodesDrawerBtn" onclick="togglePlayerEpisodesDrawer()"></button>
                 </div>
             </div>
         </div>
@@ -588,6 +631,7 @@
     <div id="detailModal" class="detail-modal">
         <div class="detail-modal-backdrop" onclick="closeDetailModal()"></div>
         <div class="detail-modal-card">
+            <div class="sheet-drag-handle"></div>
             <button class="btn-close detail-close" onclick="closeDetailModal()">✕</button>
             <div class="detail-layout">
                 <div class="detail-poster-wrap">
@@ -649,10 +693,6 @@
                             <span class="info-label">Subtitles</span>
                             <span class="info-value" id="detailSubtitlesText"></span>
                         </div>
-                        <div class="info-block">
-                            <span class="info-label">Subject ID</span>
-                            <span class="info-value mono" id="detailSubjectIdText"></span>
-                        </div>
                     </div>
 
                     <!-- TV Series Seasons Container if TV show -->
@@ -662,6 +702,64 @@
                         <div class="episodes-grid" id="detailEpisodesGrid"></div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ONLINE SUBTITLES FINDER MODAL -->
+    <div id="onlineSubsModal" class="online-subs-modal" style="display: none;">
+        <div class="online-subs-backdrop" onclick="closeOnlineSubtitlesModal()"></div>
+        <div class="online-subs-card">
+            <div class="online-subs-header">
+                <div>
+                    <h3 class="online-subs-title">🌐 Find Online Subtitles</h3>
+                    <p class="online-subs-sub" id="onlineSubsMovieTitle">Inception (2010)</p>
+                </div>
+                <button class="btn-close" onclick="closeOnlineSubtitlesModal()">✕</button>
+            </div>
+
+            <!-- Search & Language Filter Row -->
+            <div class="online-subs-search-row">
+                <div class="subs-search-input-wrap">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="text" id="onlineSubQueryInput" placeholder="Search title or keyword…" onkeydown="if(event.key==='Enter') executeOnlineSubSearch()">
+                </div>
+                <select id="onlineSubLangSelect" onchange="executeOnlineSubSearch()" class="subs-lang-select">
+                    <option value="all">All Languages</option>
+                    <option value="eng" selected>English</option>
+                    <option value="spa">Spanish (Español)</option>
+                    <option value="fre">French (Français)</option>
+                    <option value="ger">German (Deutsch)</option>
+                    <option value="ita">Italian (Italiano)</option>
+                    <option value="por">Portuguese</option>
+                    <option value="hin">Hindi</option>
+                    <option value="ara">Arabic</option>
+                    <option value="rus">Russian</option>
+                    <option value="tur">Turkish</option>
+                    <option value="ind">Indonesian</option>
+                    <option value="chi">Chinese</option>
+                    <option value="jpn">Japanese</option>
+                    <option value="kor">Korean</option>
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="executeOnlineSubSearch()">
+                    Search
+                </button>
+            </div>
+
+            <!-- Quick Language Filter Pills -->
+            <div class="online-subs-chips-row">
+                <button class="online-chip active" onclick="filterOnlineSubLang('all', this)">All</button>
+                <button class="online-chip" onclick="filterOnlineSubLang('English', this)">English</button>
+                <button class="online-chip" onclick="filterOnlineSubLang('Spanish', this)">Spanish</button>
+                <button class="online-chip" onclick="filterOnlineSubLang('French', this)">French</button>
+                <button class="online-chip" onclick="filterOnlineSubLang('Hindi', this)">Hindi</button>
+                <button class="online-chip" onclick="filterOnlineSubLang('Arabic', this)">Arabic</button>
+                <button class="online-chip" onclick="filterOnlineSubLang('German', this)">German</button>
+            </div>
+
+            <!-- Subtitle Results List -->
+            <div class="online-subs-list" id="onlineSubsList">
+                <div class="subs-empty-state">Click Search to query OpenSubtitles database…</div>
             </div>
         </div>
     </div>
@@ -693,8 +791,52 @@
     <!-- TOAST NOTIFICATION CONTAINER -->
     <div id="toastContainer" class="toast-container"></div>
 
+    <!-- CINEMA EXIT INTERSTITIAL MODAL -->
+    <div id="exitInterstitialModal" class="exit-interstitial-modal" style="display: none;">
+        <div class="interstitial-backdrop" onclick="closeExitInterstitial()"></div>
+        <div class="interstitial-card">
+            <button class="btn-close interstitial-close" onclick="closeExitInterstitial()">✕</button>
+            <div class="interstitial-header">
+                <span class="interstitial-badge">✨ Sponsored Recommendation</span>
+                <h3 class="interstitial-title">Enjoying CineScope?</h3>
+                <p class="interstitial-desc">Discover more trending releases, Hollywood blockbusters, and 1080p downloads.</p>
+            </div>
+            <div id="interstitialAdSlot" class="interstitial-ad-slot">
+                <div class="interstitial-mock-box">
+                    <div class="interstitial-mock-icon">🍿</div>
+                    <div class="interstitial-mock-details">
+                        <h4>Unlimited Streaming on Any Device</h4>
+                        <p>Fast CDN servers, zero subscription fees, multi-language audio dubs.</p>
+                    </div>
+                    <a href="https://monetag.com" id="interstitialMockLink" target="_blank" rel="noopener" class="btn btn-primary btn-sm">Explore Sponsor ↗</a>
+                </div>
+            </div>
+            <div class="interstitial-actions">
+                <button class="btn btn-secondary btn-block" onclick="closeExitInterstitial()">Back to Movies</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADSTERRA SOCIAL BAR (Floating non-intrusive bottom-right pill) -->
+    <div id="adsterraSocialBar" class="adsterra-social-bar" style="display: none;">
+        <button class="social-bar-close" onclick="dismissSocialBar(event)" title="Dismiss">✕</button>
+        <a href="https://adsterra.com" id="socialBarLink" target="_blank" rel="noopener" class="social-bar-content">
+            <div class="social-bar-icon-wrap">
+                <span class="social-bar-pulse"></span>
+                <span class="social-bar-emoji">🔥</span>
+            </div>
+            <div class="social-bar-text">
+                <span class="social-bar-headline">Stream in 1080p Ultra HD</span>
+                <span class="social-bar-sub">Fast servers • Multi-audio dubs</span>
+            </div>
+            <span class="social-bar-action">Watch ↗</span>
+        </a>
+    </div>
+
+    <!-- HLS.js for direct M3U8 adaptive streaming across all browsers -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
     <!-- Plyr Library JS -->
     <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
-    <script src="/static/app.js?v=2.6.5"></script>
+    <script src="/static/app.js?v=4.0.0-phase2"></script>
 </body>
 </html>

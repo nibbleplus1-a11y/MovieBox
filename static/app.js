@@ -1,7 +1,6 @@
 /**
- * MovieBox Premium — v3.0 Client Logic
- * Fixes: Slow loading, bad posters, songs in movies, new movies sorting,
- *        audio track switching, video player improvements, UI/UX overhaul
+ * CineScope Cinema — v3.0 Client Logic
+ * Modern, adaptive cinema streaming with multi-audio dubs and 1080p player
  */
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
@@ -32,6 +31,17 @@ let nextEpTimer = null;
 let nextEpSecondsLeft = 5;
 
 let plyrInstance = null;
+let hlsInstance = null;
+
+function safeText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+}
+
+function safeAttr(id, attr, val) {
+    const el = document.getElementById(id);
+    if (el) el[attr] = val;
+}
 
 // ─── HERO CAROUSEL DATA (Verified 2026 / 1080p Cinema with HD Posters) ──────
 const HERO_SLIDES = [
@@ -99,18 +109,240 @@ const API_ENDPOINTS = [
     { method: 'GET', path: '/api/proxy/caption?url={srt_url}', desc: 'SRT → WebVTT subtitle converter proxy', example: '/api/proxy/caption' }
 ];
 
+// ─── 💰 AD MONETIZATION ENGINE (Monetag + Adsterra + Frequency Capping) ────────
+const AdEngine = {
+    config: {
+        enabled: true,
+        test_mode: true,
+        monetag: {
+            enabled: true,
+            zone_id: '',
+            direct_link: '',
+            preroll_enabled: true,
+            preroll_duration_seconds: 5,
+            preroll_cooldown_seconds: 60,
+            exit_interstitial_enabled: true,
+            exit_cooldown_seconds: 15
+        },
+        adsterra: {
+            enabled: true,
+            social_bar_enabled: true,
+            social_bar_script_url: '',
+            native_banner_enabled: true
+        }
+    },
+    prerollTimer: null,
+    prerollSecondsLeft: 5,
+    playbackStartTime: 0,
+    onPrerollCompleteCallback: null,
+
+    async init() {
+        try {
+            const res = await fetch('/api/ads/config');
+            if (res.ok) {
+                this.config = await res.json();
+            }
+        } catch (e) {
+            console.warn('AdEngine: Could not fetch config, using local defaults', e);
+        }
+
+        // Initialize Adsterra Social Bar if enabled
+        if (this.config.enabled && this.config.adsterra && this.config.adsterra.social_bar_enabled) {
+            setTimeout(() => this.showSocialBar(), 3500);
+        }
+
+        // Initialize In-Feed Native Banner if enabled
+        if (this.config.enabled && this.config.adsterra && this.config.adsterra.native_banner_enabled) {
+            const banner = document.getElementById('inFeedAdBanner');
+            if (banner) banner.style.display = 'block';
+        }
+    },
+
+    canShowPreroll() {
+        if (!this.config || !this.config.enabled) return false;
+        if (!this.config.monetag || !this.config.monetag.preroll_enabled) return false;
+
+        const cooldown = (this.config.monetag.preroll_cooldown_seconds || 300) * 1000;
+        const lastPreroll = parseInt(localStorage.getItem('cinescope_last_preroll_time') || '0', 10);
+        const now = Date.now();
+
+        // If cooldown has not elapsed, skip preroll to keep UX snappy
+        if (now - lastPreroll < cooldown) {
+            return false;
+        }
+
+        return true;
+    },
+
+    runPrerollIfEligible(onComplete) {
+        this.playbackStartTime = Date.now();
+        if (!this.canShowPreroll()) {
+            if (typeof onComplete === 'function') onComplete();
+            return;
+        }
+
+        const overlay = document.getElementById('cinemaPrerollOverlay');
+        if (!overlay) {
+            if (typeof onComplete === 'function') onComplete();
+            return;
+        }
+
+        this.onPrerollCompleteCallback = onComplete;
+        const totalDuration = (this.config.monetag && this.config.monetag.preroll_duration_seconds) || 5;
+        this.prerollSecondsLeft = totalDuration;
+
+        // Record timestamp for frequency capping
+        localStorage.setItem('cinescope_last_preroll_time', Date.now().toString());
+
+        // Setup UI
+        const skipBtn = document.getElementById('prerollSkipBtn');
+        const timerText = document.getElementById('prerollTimerText');
+        const progressBar = document.getElementById('prerollProgressBar');
+
+        if (skipBtn) {
+            skipBtn.disabled = true;
+            skipBtn.classList.remove('can-skip');
+            skipBtn.textContent = `Skip in ${this.prerollSecondsLeft}s`;
+        }
+        if (timerText) timerText.textContent = `Movie starts in ${this.prerollSecondsLeft}s`;
+        if (progressBar) progressBar.style.width = '0%';
+
+        // Setup Ad Sponsor Link
+        const adLink = document.getElementById('prerollAdLink');
+        if (adLink && this.config.monetag && this.config.monetag.direct_link) {
+            adLink.href = this.config.monetag.direct_link;
+        }
+
+        overlay.style.display = 'flex';
+
+        // Clear any existing timer
+        if (this.prerollTimer) clearInterval(this.prerollTimer);
+
+        let elapsedTenths = 0;
+        const totalTenths = totalDuration * 10;
+
+        this.prerollTimer = setInterval(() => {
+            elapsedTenths++;
+            const pct = Math.min(100, (elapsedTenths / totalTenths) * 100);
+            if (progressBar) progressBar.style.width = `${pct}%`;
+
+            if (elapsedTenths % 10 === 0) {
+                this.prerollSecondsLeft--;
+                if (this.prerollSecondsLeft > 0) {
+                    if (skipBtn && !skipBtn.classList.contains('can-skip')) {
+                        skipBtn.textContent = `Skip in ${this.prerollSecondsLeft}s`;
+                    }
+                    if (timerText) timerText.textContent = `Movie starts in ${this.prerollSecondsLeft}s`;
+                } else {
+                    // Timer finished, allow skip or auto-proceed
+                    if (skipBtn) {
+                        skipBtn.disabled = false;
+                        skipBtn.classList.add('can-skip');
+                        skipBtn.textContent = 'Skip Ad ⏭';
+                    }
+                    if (timerText) timerText.textContent = 'Ready to stream!';
+                    clearInterval(this.prerollTimer);
+                    this.prerollTimer = null;
+                    // Auto-start after a brief pause if user hasn't clicked skip
+                    setTimeout(() => {
+                        this.dismissPreroll();
+                    }, 800);
+                }
+            }
+        }, 100);
+    },
+
+    dismissPreroll() {
+        if (this.prerollTimer) {
+            clearInterval(this.prerollTimer);
+            this.prerollTimer = null;
+        }
+        const overlay = document.getElementById('cinemaPrerollOverlay');
+        if (overlay) overlay.style.display = 'none';
+
+        if (typeof this.onPrerollCompleteCallback === 'function') {
+            const cb = this.onPrerollCompleteCallback;
+            this.onPrerollCompleteCallback = null;
+            cb();
+        }
+    },
+
+    canShowExitInterstitial() {
+        if (!this.config || !this.config.enabled) return false;
+        if (!this.config.monetag || !this.config.monetag.exit_interstitial_enabled) return false;
+
+        const lastExit = parseInt(localStorage.getItem('cinescope_last_exit_ad_time') || '0', 10);
+        const now = Date.now();
+
+        // In test mode, allow exit ads to appear without long cooldown lockout
+        if (this.config.test_mode) {
+            if (now - lastExit < 1500) return false; // 1.5s debounce
+            return true;
+        }
+
+        const cooldown = (this.config.monetag.exit_cooldown_seconds || 60) * 1000;
+        if (now - lastExit < cooldown) {
+            return false;
+        }
+
+        return true;
+    },
+
+    showExitInterstitial() {
+        if (!this.canShowExitInterstitial()) return;
+
+        localStorage.setItem('cinescope_last_exit_ad_time', Date.now().toString());
+        const modal = document.getElementById('exitInterstitialModal');
+        if (modal) {
+            modal.style.display = 'flex';
+            modal.classList.add('active');
+        }
+    },
+
+    closeExitInterstitial() {
+        const modal = document.getElementById('exitInterstitialModal');
+        if (modal) {
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+        }
+    },
+
+    showSocialBar() {
+        if (sessionStorage.getItem('cinescope_social_bar_dismissed')) return;
+        const bar = document.getElementById('adsterraSocialBar');
+        if (bar) bar.style.display = 'flex';
+    },
+
+    dismissSocialBar() {
+        sessionStorage.setItem('cinescope_social_bar_dismissed', 'true');
+        const bar = document.getElementById('adsterraSocialBar');
+        if (bar) bar.style.display = 'none';
+    }
+};
+
+window.skipPrerollAd = () => AdEngine.dismissPreroll();
+window.closeExitInterstitial = () => AdEngine.closeExitInterstitial();
+window.dismissSocialBar = (e) => {
+    if (e) e.stopPropagation();
+    AdEngine.dismissSocialBar();
+};
+
 // ─── INIT ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    initNavigation();
-    initGlobalSearch();
-    initPlyr();
-    initHeroCarousel();
-    renderContinueWatching();
-    loadHomeFeed();
-    renderApiPlayground();
-    updateWatchlistBadge();
-    initKeyboardShortcuts();
-    renderRecentSearchChips();
+    const safeRun = (fn, name) => {
+        try { fn(); } catch (err) { console.warn(`Error running ${name}:`, err); }
+    };
+    safeRun(initNavigation, 'initNavigation');
+    safeRun(initGlobalSearch, 'initGlobalSearch');
+    safeRun(initPlyr, 'initPlyr');
+    safeRun(initHeroCarousel, 'initHeroCarousel');
+    safeRun(renderContinueWatching, 'renderContinueWatching');
+    safeRun(loadHomeFeed, 'loadHomeFeed');
+    safeRun(renderApiPlayground, 'renderApiPlayground');
+    safeRun(updateWatchlistBadge, 'updateWatchlistBadge');
+    safeRun(initKeyboardShortcuts, 'initKeyboardShortcuts');
+    safeRun(renderRecentSearchChips, 'renderRecentSearchChips');
+    safeRun(() => AdEngine.init(), 'AdEngine.init');
 });
 
 // ─── MOBILE NAV ─────────────────────────────────────────────────────────────
@@ -406,7 +638,7 @@ function changeSeriesPage(delta) {
 
 // ─── MEDIA CARD HTML ─────────────────────────────────────────────────────────
 function createMediaCardHtml(item) {
-    const fallback = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="100%" height="100%" fill="%230d1020"/><text x="50%" y="44%" fill="%238b5cf6" font-family="sans-serif" font-size="16" font-weight="bold" text-anchor="middle">MovieBox</text><text x="50%" y="54%" fill="%235a6480" font-family="sans-serif" font-size="11" text-anchor="middle">${encodeURIComponent((item.title || 'Cinema').slice(0, 22))}</text></svg>`;
+    const fallback = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="100%" height="100%" fill="%230d1020"/><text x="50%" y="44%" fill="%238b5cf6" font-family="sans-serif" font-size="16" font-weight="bold" text-anchor="middle">CineScope</text><text x="50%" y="54%" fill="%235a6480" font-family="sans-serif" font-size="11" text-anchor="middle">${encodeURIComponent((item.title || 'Cinema').slice(0, 22))}</text></svg>`;
 
     const poster = item.cover || fallback;
     const rating = item.rating || item.imdb_rating || '';
@@ -545,14 +777,14 @@ async function performFullSearch(query) {
 
 // ─── RECENT SEARCHES ──────────────────────────────────────────────────────────
 function getRecentSearches() {
-    try { return JSON.parse(localStorage.getItem('moviebox_recent_searches') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem('cinescope_recent_searches') || '[]'); } catch { return []; }
 }
 
 function saveRecentSearch(query) {
     if (!query || query.length < 2) return;
     let recent = getRecentSearches().filter(q => q.toLowerCase() !== query.toLowerCase());
     recent.unshift(query);
-    localStorage.setItem('moviebox_recent_searches', JSON.stringify(recent.slice(0, 8)));
+    localStorage.setItem('cinescope_recent_searches', JSON.stringify(recent.slice(0, 8)));
     renderRecentSearchChips();
 }
 
@@ -810,10 +1042,118 @@ function selectAndResolveEpisode(subjectId, seasonNum, episodeNum) {
     executeResolver();
 }
 
-// ─── PLYR INIT ────────────────────────────────────────────────────────────────
+// ─── PLYR & IN-PLAYER CINEMA ENGINE ──────────────────────────────────────────
+function getCinemaVideoElement() {
+    let video = document.getElementById('cinemaVideo');
+    if (!video) {
+        video = document.querySelector('#videoStage video');
+    }
+    if (!video && plyrInstance && plyrInstance.media) {
+        video = plyrInstance.media;
+    }
+    if (!video) {
+        const stage = document.getElementById('videoStage');
+        if (stage) {
+            video = document.createElement('video');
+            video.id = 'cinemaVideo';
+            video.setAttribute('playsinline', '');
+            const ambient = document.getElementById('playerAmbientGlow');
+            if (ambient && ambient.nextSibling) {
+                stage.insertBefore(video, ambient.nextSibling);
+            } else {
+                stage.prepend(video);
+            }
+            if (typeof initPlyr === 'function') {
+                try { initPlyr(); } catch {}
+            }
+        }
+    }
+    return video;
+}
+
+function setCinemaVideoSource(src, stream, titleText) {
+    const video = getCinemaVideoElement();
+    if (!video || !src) return;
+
+    if (hlsInstance) {
+        try { hlsInstance.destroy(); } catch {}
+        hlsInstance = null;
+    }
+
+    const isHls = Boolean((src && (src.includes('.m3u8') || src.includes('hls'))) || (stream && stream.format === 'HLS'));
+
+    if (isHls && typeof Hls !== 'undefined' && Hls.isSupported()) {
+        try {
+            hlsInstance = new Hls({
+                enableWorker: true,
+                lowLatencyMode: false,
+                backBufferLength: 90
+            });
+            hlsInstance.loadSource(src);
+            hlsInstance.attachMedia(video);
+            hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+                if (plyrInstance) {
+                    try { plyrInstance.play().catch(() => {}); } catch {}
+                }
+            });
+            hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+                if (data.fatal) {
+                    switch (data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            try { hlsInstance.startLoad(); } catch {}
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            try { hlsInstance.recoverMediaError(); } catch {}
+                            break;
+                        default:
+                            try { hlsInstance.destroy(); } catch {}
+                            hlsInstance = null;
+                            break;
+                    }
+                }
+            });
+            return;
+        } catch (e) {
+            console.warn('Hls.js initialization error, falling back:', e);
+        }
+    }
+
+    // Direct MP4 playback via Plyr API & HTML5 video element
+    if (plyrInstance) {
+        try {
+            plyrInstance.source = {
+                type: 'video',
+                title: titleText || (activeMediaMeta && activeMediaMeta.title) || 'CineScope Stream',
+                sources: [
+                    {
+                        src: src,
+                        type: isHls ? 'application/x-mpegURL' : 'video/mp4',
+                        size: stream ? (stream.quality_value || 1080) : 1080
+                    }
+                ]
+            };
+        } catch (e) {
+            console.warn('Plyr source setter warning:', e);
+        }
+    }
+    if (video.src !== src) {
+        video.src = src;
+        try { video.load(); } catch {}
+    }
+    // Automatically trigger watchdog to auto-switch if stream fails or stalls on start
+    if (window._startStreamWatchdog) {
+        window._startStreamWatchdog(7500);
+    }
+}
+
 function initPlyr() {
-    const video = document.getElementById('cinemaVideo');
+    const video = getCinemaVideoElement();
     if (!video || typeof Plyr === 'undefined') return;
+
+    if (plyrInstance) {
+        try { plyrInstance.destroy(); } catch {}
+        plyrInstance = null;
+    }
 
     plyrInstance = new Plyr(video, {
         controls: [
@@ -826,7 +1166,38 @@ function initPlyr() {
         settings: ['captions', 'speed'],
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
         tooltips: { controls: true, seek: true },
-        keyboard: { focused: true, global: false }
+        keyboard: { focused: true, global: true },
+        fullscreen: {
+            enabled: true,
+            fallback: true,
+            iosNative: false,
+            container: '#videoStage'
+        }
+    });
+
+    // Fullscreen state listeners (both browser and Plyr events)
+    document.addEventListener('fullscreenchange', handleFullscreenStateChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenStateChange);
+    plyrInstance.on('enterfullscreen', handleFullscreenStateChange);
+    plyrInstance.on('exitfullscreen', handleFullscreenStateChange);
+
+    // Auto-hide in-player HUD on inactivity during playback
+    plyrInstance.on('play', resetInPlayerHudTimer);
+    plyrInstance.on('pause', resetInPlayerHudTimer);
+
+    // Keyboard shortcuts for cinema player
+    window.addEventListener('keydown', (e) => {
+        const modal = document.getElementById('playerModal');
+        if (!modal || !modal.classList.contains('active')) return;
+        const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+        if (e.key === 'f' || e.key === 'F') {
+            e.preventDefault();
+            toggleCinemaFullscreen();
+        } else if (e.key === 'Escape') {
+            closeAllInPlayerMenus();
+        }
     });
 
     plyrInstance.on('timeupdate', () => {
@@ -844,74 +1215,569 @@ function initPlyr() {
         }
     });
 
-    // Handle load errors with single-attempt guard (prevents popup loops)
-    let hasAttemptedFallback = false;
-    window._resetFallbackFlag = () => { hasAttemptedFallback = false; };
+    // Smart Buffer & Stall Watchdog Engine
+    let streamWatchdogTimer = null;
+    let fallbackAttemptIndex = 0;
+    window._resetFallbackFlag = () => { fallbackAttemptIndex = 0; };
 
-    video.addEventListener('error', async () => {
-        const modal = document.getElementById('playerModal');
-        if (!modal || !modal.classList.contains('active') || !video.src) return;
+    function clearStreamWatchdog() {
+        if (streamWatchdogTimer) {
+            clearTimeout(streamWatchdogTimer);
+            streamWatchdogTimer = null;
+        }
+    }
+    window._clearStreamWatchdog = clearStreamWatchdog;
 
-        // Probe the proxy URL to detect 429 vs real errors
-        let upstreamStatus = 0;
-        try {
-            const probe = await fetch(video.src, { method: 'HEAD' });
-            upstreamStatus = probe.status;
-        } catch {}
-
-        if (upstreamStatus === 429 || upstreamStatus === 403) {
-            showToast('CDN rate-limited (429) — fetching fresh stream URLs…', 'warning');
-            // Bust cache and reload fresh signed URLs from backend
-            try {
-                const freshData = await fetch(`/api/stream/${currentPlayingSubjectId}?se=${currentSeason}&ep=${currentEpisode}&_bust=${Date.now()}`).then(r => r.json());
-                const freshStreams = (freshData.streams || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
-                if (freshStreams.length > 0) {
-                    activeStreamList = freshData.streams || [];
-                    if (window._resetFallbackFlag) window._resetFallbackFlag();
-                    playInCinemaModal(encodeURIComponent(JSON.stringify(freshStreams[0])));
-                    showToast('Fresh stream URLs loaded — retrying playback…', 'warning');
-                    return;
+    function startStreamWatchdog(timeoutMs = 7500) {
+        clearStreamWatchdog();
+        streamWatchdogTimer = setTimeout(() => {
+            const modal = document.getElementById('playerModal');
+            const v = getCinemaVideoElement();
+            if (!modal || !modal.classList.contains('active')) return;
+            // Trigger auto-fallback if direct server is struggling to buffer or start
+            if (currentSelectedServer === 'direct' && v) {
+                if (v.currentTime < 0.5 || v.readyState < 2) {
+                    showToast('Direct stream is buffering slowly — auto-switching to Backup Server…', 'warning');
+                    window.triggerAutoStreamFallback('stall');
                 }
-            } catch {}
-            showToast('CDN is temporarily rate-limiting. Please wait 1-2 min or switch network/VPN.', 'error');
+            }
+        }, timeoutMs);
+    }
+    window._startStreamWatchdog = startStreamWatchdog;
+
+    window.triggerAutoStreamFallback = async function(reason = 'error') {
+        clearStreamWatchdog();
+        const modal = document.getElementById('playerModal');
+        if (!modal || !modal.classList.contains('active')) return;
+
+        // If fallback servers are not yet loaded in memory, fetch them on-demand
+        if (!activeFallbackServers || activeFallbackServers.length === 0) {
+            const title = (activeMediaMeta && activeMediaMeta.title) || document.getElementById('playerMediaTitle')?.textContent || '';
+            const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+            const isSer = Boolean(currentEpisode > 0 || (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series')));
+            if (title) {
+                try {
+                    showToast('Switching to Backup Stream Server…', 'info');
+                    const fbRes = await fetch(`/api/fallback-sources?title=${encodeURIComponent(title)}&year=${year}&is_series=${isSer}&season=${currentSeason || 1}&episode=${currentEpisode || 1}`).then(r => r.json());
+                    if (fbRes.servers && fbRes.servers.length > 0) {
+                        activeFallbackServers = fbRes.servers;
+                        updatePlayerServerSelect();
+                    }
+                } catch {}
+            }
+        }
+
+        // Auto-switch to backup servers if direct fails or stalls
+        if (activeFallbackServers && activeFallbackServers.length > 0) {
+            let nextServer = null;
+            if (currentSelectedServer === 'direct') {
+                nextServer = activeFallbackServers[0];
+            } else {
+                const curIdx = activeFallbackServers.findIndex(s => s.id === currentSelectedServer);
+                if (curIdx >= 0 && curIdx + 1 < activeFallbackServers.length) {
+                    nextServer = activeFallbackServers[curIdx + 1];
+                }
+            }
+            if (nextServer) {
+                const srvName = nextServer.name.split('(')[1]?.replace(')', '') || nextServer.name;
+                showToast(`Auto-switching to ${srvName}…`, 'info');
+                changePlayerServer(nextServer.id);
+                return;
+            }
+        }
+
+        // Alternative MP4 streams fallback
+        const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd') && s.url !== currentPlayingStream?.url);
+        if (playableStreams.length > 0) {
+            const altStream = playableStreams[0];
+            showToast(`Auto-switching to mirror (${altStream.quality || 'Alt'})…`, 'warning');
+            setTimeout(() => changePlayerQuality(encodeURIComponent(JSON.stringify(altStream))), 350);
             return;
         }
 
-        if (hasAttemptedFallback) {
-            showToast('Unable to play stream. Try another quality or title.', 'error');
-            return;
-        }
-        hasAttemptedFallback = true;
+        // All options exhausted — re-fetch fresh streams from API with cache-bust
+        try {
+            const freshData = await fetch(`/api/stream/${currentPlayingSubjectId}?se=${currentSeason}&ep=${currentEpisode}&_bust=${Date.now()}`).then(r => r.json());
+            if (freshData.fallback_servers && freshData.fallback_servers.length > 0) {
+                activeFallbackServers = freshData.fallback_servers;
+                updatePlayerServerSelect();
+            }
+            const freshStreams = (freshData.streams || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
+            if (freshStreams.length > 0) {
+                activeStreamList = freshData.streams;
+                window._resetFallbackFlag();
+                playInCinemaModal(encodeURIComponent(JSON.stringify(freshStreams[0])));
+                showToast('Fresh stream URLs loaded.', 'success');
+                return;
+            }
+            if (activeFallbackServers && activeFallbackServers.length > 0) {
+                changePlayerServer(activeFallbackServers[0].id);
+                return;
+            }
+        } catch {}
+        showToast('All streaming options exhausted. Please select another server from the top bar.', 'error');
+    };
 
-        // Try an alternative MP4 mirror (excluding raw DASH mpd files)
-        const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
-        const altStream = playableStreams.find(s => s.url !== currentPlayingStream?.url);
-        if (altStream) {
-            showToast(`Trying alternative mirror (${altStream.quality || 'Mirror'})…`, 'warning');
-            setTimeout(() => {
-                changePlayerQuality(encodeURIComponent(JSON.stringify(altStream)));
-            }, 600);
-        } else {
-            showToast('Unable to load stream. Upstream CDN may be temporarily unavailable.', 'error');
-        }
+    video.addEventListener('error', () => {
+        window.triggerAutoStreamFallback('error');
     });
 
-    // Video Stage Double Click / Tap for 10s Seek
+    video.addEventListener('waiting', () => {
+        if (currentSelectedServer === 'direct') startStreamWatchdog(6000);
+    });
+
+    video.addEventListener('stalled', () => {
+        if (currentSelectedServer === 'direct') startStreamWatchdog(6000);
+    });
+
+    video.addEventListener('playing', () => {
+        clearStreamWatchdog();
+    });
+
+    video.addEventListener('timeupdate', () => {
+        if (video.currentTime > 0.5) clearStreamWatchdog();
+    });
+
+    if (plyrInstance) {
+        plyrInstance.on('error', () => window.triggerAutoStreamFallback('plyr_error'));
+        plyrInstance.on('playing', () => clearStreamWatchdog());
+    }
+
+    // Video Stage Double Click & Mobile Touch Double-Tap for 10s Seek (Netflix style)
     const stage = document.getElementById('videoStage');
     if (stage) {
         stage.addEventListener('dblclick', (e) => {
+            if (isScreenLocked) return;
             const rect = stage.getBoundingClientRect();
             const clickX = e.clientX - rect.left;
             const width = rect.width;
-            if (clickX < width * 0.4) {
+            if (clickX < width * 0.42) {
                 if (plyrInstance) plyrInstance.rewind(10);
                 triggerSeekRipple('left');
-            } else if (clickX > width * 0.6) {
+            } else if (clickX > width * 0.58) {
                 if (plyrInstance) plyrInstance.forward(10);
                 triggerSeekRipple('right');
             }
         });
+
+        // Mobile touch double-tap handler
+        let lastTouchTapTime = 0;
+        let lastTouchTapX = 0;
+        stage.addEventListener('touchend', (e) => {
+            if (isScreenLocked) return;
+            const now = Date.now();
+            const touch = e.changedTouches && e.changedTouches[0];
+            if (!touch) return;
+            const rect = stage.getBoundingClientRect();
+            const clickX = touch.clientX - rect.left;
+            const timeDiff = now - lastTouchTapTime;
+            const distDiff = Math.abs(clickX - lastTouchTapX);
+
+            if (timeDiff > 40 && timeDiff < 320 && distDiff < 60) {
+                // Detected rapid double tap on mobile screen!
+                const width = rect.width;
+                if (clickX < width * 0.45) {
+                    if (plyrInstance) plyrInstance.rewind(10);
+                    triggerSeekRipple('left');
+                } else if (clickX > width * 0.55) {
+                    if (plyrInstance) plyrInstance.forward(10);
+                    triggerSeekRipple('right');
+                }
+                lastTouchTapTime = 0;
+            } else {
+                lastTouchTapTime = now;
+                lastTouchTapX = clickX;
+            }
+        }, { passive: true });
     }
+}
+
+let isScreenLocked = false;
+function toggleScreenLock() {
+    isScreenLocked = !isScreenLocked;
+    const stage = document.getElementById('videoStage');
+    const icon = document.getElementById('screenLockIcon');
+    if (stage) stage.classList.toggle('screen-locked', isScreenLocked);
+    if (icon) icon.textContent = isScreenLocked ? '🔒' : '🔓';
+    showToast(isScreenLocked ? 'Screen Locked (Controls hidden)' : 'Screen Unlocked', 'info');
+}
+
+// ─── IN-PLAYER FULLSCREEN & HUD CONTROLLER ────────────────────────────────────
+function toggleCinemaFullscreen() {
+    const stage = document.getElementById('videoStage');
+    if (!stage) return;
+    const isFs = Boolean(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        stage.classList.contains('is-fullscreen') ||
+        (plyrInstance && plyrInstance.fullscreen && plyrInstance.fullscreen.active)
+    );
+
+    if (!isFs) {
+        try {
+            if (screen.orientation && screen.orientation.lock) {
+                screen.orientation.lock('landscape').catch(() => {});
+            }
+        } catch {}
+
+        const req = stage.requestFullscreen || stage.webkitRequestFullscreen || stage.msRequestFullscreen;
+        if (req) {
+            req.call(stage).then(() => {
+                stage.classList.add('is-fullscreen');
+                handleFullscreenStateChange();
+            }).catch(() => {
+                stage.classList.add('is-fullscreen');
+                handleFullscreenStateChange();
+                if (plyrInstance && plyrInstance.fullscreen && !plyrInstance.fullscreen.active) {
+                    try { plyrInstance.fullscreen.enter(); } catch {}
+                }
+            });
+        } else {
+            stage.classList.add('is-fullscreen');
+            handleFullscreenStateChange();
+        }
+    } else {
+        try {
+            if (screen.orientation && screen.orientation.unlock) {
+                screen.orientation.unlock();
+            }
+        } catch {}
+
+        const exit = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+        if (exit && (document.fullscreenElement || document.webkitFullscreenElement)) {
+            exit.call(document).catch(() => {});
+        }
+        if (plyrInstance && plyrInstance.fullscreen && plyrInstance.fullscreen.active) {
+            try { plyrInstance.fullscreen.exit(); } catch {}
+        }
+        stage.classList.remove('is-fullscreen');
+        handleFullscreenStateChange();
+    }
+}
+
+function handleFullscreenStateChange() {
+    const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement || (plyrInstance && plyrInstance.fullscreen && plyrInstance.fullscreen.active));
+    const stage = document.getElementById('videoStage');
+    const fsIcon = document.getElementById('inPlayerFullscreenIcon');
+    const modal = document.getElementById('playerModal');
+
+    if (stage) stage.classList.toggle('is-fullscreen', isFs);
+    if (modal) modal.classList.toggle('stage-fullscreen', isFs);
+    if (fsIcon) fsIcon.textContent = isFs ? '⤓' : '⤢';
+    resetInPlayerHudTimer();
+}
+
+function handleInPlayerBack() {
+    if (document.fullscreenElement || document.webkitFullscreenElement || (plyrInstance && plyrInstance.fullscreen && plyrInstance.fullscreen.active)) {
+        toggleCinemaFullscreen();
+    } else {
+        closePlayerModal();
+    }
+}
+
+// In-Player Popover Menus
+function closeAllInPlayerMenus() {
+    document.querySelectorAll('.in-player-popover').forEach(el => el.classList.remove('open'));
+}
+
+function toggleInPlayerMenu(type, event) {
+    if (event) event.stopPropagation();
+    const idMap = {
+        audio: 'inPlayerAudioMenu',
+        quality: 'inPlayerQualityMenu',
+        subs: 'inPlayerSubMenu',
+        server: 'inPlayerServerMenu',
+        speed: 'inPlayerSpeedMenu',
+    };
+    const targetId = idMap[type];
+    const target = document.getElementById(targetId);
+    if (!target) return;
+    const isOpen = target.classList.contains('open');
+    closeAllInPlayerMenus();
+    if (!isOpen) {
+        target.classList.add('open');
+    }
+}
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.in-player-dropdown-wrap')) {
+        closeAllInPlayerMenus();
+    }
+});
+
+function selectInPlayerAudio(dubId, dubName) {
+    closeAllInPlayerMenus();
+    const audioSelect = document.getElementById('playerAudioSelect');
+    if (audioSelect) {
+        audioSelect.value = dubId;
+        changePlayerAudioDub(dubId);
+    }
+    safeText('inPlayerCurrentAudioText', `Audio: ${dubName}`);
+    safeText('inPlayerDubBadge', dubName);
+}
+
+function selectInPlayerQuality(encodedStream, qualityLabel) {
+    closeAllInPlayerMenus();
+    const qualitySelect = document.getElementById('playerQualitySelect');
+    if (qualitySelect) {
+        qualitySelect.value = encodedStream;
+        changePlayerQuality(encodedStream);
+    }
+    safeText('inPlayerCurrentQualityText', `Quality: ${qualityLabel}`);
+    safeText('inPlayerQualityBadge', qualityLabel);
+}
+
+function selectInPlayerSub(subUrl, langLabel) {
+    closeAllInPlayerMenus();
+    const capSelect = document.getElementById('playerCaptionSelect');
+    if (capSelect) {
+        capSelect.value = subUrl;
+    }
+    changePlayerSubtitle(subUrl);
+    safeText('inPlayerCurrentSubText', `Subtitles: ${langLabel}`);
+    refreshInPlayerSubMenu(subUrl);
+}
+
+function selectInPlayerServer(serverId, srvName) {
+    closeAllInPlayerMenus();
+    const srvSelect = document.getElementById('playerServerSelect');
+    if (srvSelect) {
+        srvSelect.value = serverId;
+        changePlayerServer(serverId);
+    }
+    safeText('inPlayerCurrentServerText', `Server: ${srvName}`);
+}
+
+function selectInPlayerSpeed(speed, event) {
+    if (event) event.stopPropagation();
+    closeAllInPlayerMenus();
+    const speedSelect = document.getElementById('playerSpeedSelect');
+    if (speedSelect) {
+        speedSelect.value = String(speed);
+        changePlayerSpeed(speed);
+    }
+    if (plyrInstance) plyrInstance.speed = speed;
+    safeText('inPlayerCurrentSpeedText', `${speed}x`);
+    document.querySelectorAll('#inPlayerSpeedMenu .popover-item').forEach(btn => {
+        btn.classList.toggle('active', btn.textContent.startsWith(String(speed)));
+    });
+}
+
+// In-Player HUD Inactivity Auto-Hide
+let inPlayerHudTimer = null;
+function resetInPlayerHudTimer() {
+    const stage = document.getElementById('videoStage');
+    if (!stage) return;
+    stage.classList.remove('hud-hidden');
+    stage.classList.remove('hide-cursor');
+    clearTimeout(inPlayerHudTimer);
+
+    const hasOpenMenu = Boolean(document.querySelector('.in-player-popover.open'));
+    if (!hasOpenMenu && plyrInstance && plyrInstance.playing && !isScreenLocked) {
+        inPlayerHudTimer = setTimeout(() => {
+            stage.classList.add('hud-hidden');
+            stage.classList.add('hide-cursor');
+        }, 2600);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const stage = document.getElementById('videoStage');
+    if (stage) {
+        stage.addEventListener('mousemove', resetInPlayerHudTimer);
+        stage.addEventListener('touchstart', resetInPlayerHudTimer, { passive: true });
+    }
+});
+
+// ─── AUDIO DIALOGUE BOOSTER (Prime Video style) ──────────────────────────────
+let audioCtx = null;
+let audioGainNode = null;
+let isAudioBoosted = false;
+
+function toggleAudioBoost() {
+    const video = getCinemaVideoElement();
+    if (!video) return;
+
+    try {
+        if (!audioCtx) {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContext();
+            const source = audioCtx.createMediaElementSource(video);
+            audioGainNode = audioCtx.createGain();
+            source.connect(audioGainNode);
+            audioGainNode.connect(audioCtx.destination);
+        }
+
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+
+        isAudioBoosted = !isAudioBoosted;
+        if (audioGainNode) {
+            audioGainNode.gain.value = isAudioBoosted ? 1.6 : 1.0;
+        }
+
+        const btn = document.getElementById('audioBoostBtn');
+        const text = document.getElementById('audioBoostText');
+        if (btn) btn.classList.toggle('boost-active', isAudioBoosted);
+        if (text) text.textContent = isAudioBoosted ? 'Boost (160% ON)' : 'Boost (150%)';
+        showToast(isAudioBoosted ? '🔊 Dialogue Audio Boosted (160%)' : 'Audio returned to normal', 'info');
+    } catch (e) {
+        showToast('Audio Boost not supported on this browser/stream', 'warning');
+    }
+}
+
+// ─── SUBTITLE SYNC OFFSET ADJUSTMENT (Stremio style) ─────────────────────────
+let currentSubtitleSyncOffset = 0;
+
+function adjustSubtitleSync(delta) {
+    currentSubtitleSyncOffset += delta;
+    currentSubtitleSyncOffset = Math.max(-5, Math.min(5, Math.round(currentSubtitleSyncOffset * 10) / 10));
+    const label = document.getElementById('subSyncLabel');
+    if (label) {
+        label.textContent = (currentSubtitleSyncOffset >= 0 ? '+' : '') + currentSubtitleSyncOffset.toFixed(1) + 's';
+    }
+
+    const video = getCinemaVideoElement();
+    if (video && video.textTracks) {
+        for (let i = 0; i < video.textTracks.length; i++) {
+            const track = video.textTracks[i];
+            if (track.cues) {
+                for (let j = 0; j < track.cues.length; j++) {
+                    const cue = track.cues[j];
+                    if (cue._origStart === undefined) {
+                        cue._origStart = cue.startTime;
+                        cue._origEnd = cue.endTime;
+                    }
+                    cue.startTime = Math.max(0, cue._origStart + currentSubtitleSyncOffset);
+                    cue.endTime = Math.max(0, cue._origEnd + currentSubtitleSyncOffset);
+                }
+            }
+        }
+    }
+    showToast(`Subtitle sync: ${(currentSubtitleSyncOffset >= 0 ? '+' : '') + currentSubtitleSyncOffset.toFixed(1)}s`);
+}
+
+// ─── SMART RESUME PROMPT (Prime Video style) ─────────────────────────────────
+let pendingResumeTimestamp = 0;
+let resumePromptTimer = null;
+
+function confirmResumePlayback() {
+    const prompt = document.getElementById('resumePromptBox');
+    if (prompt) prompt.style.display = 'none';
+    clearTimeout(resumePromptTimer);
+    if (pendingResumeTimestamp > 0 && plyrInstance) {
+        plyrInstance.currentTime = pendingResumeTimestamp;
+        plyrInstance.play().catch(() => {});
+        showToast(`Resumed at ${formatTime(pendingResumeTimestamp)}`);
+    }
+}
+
+function dismissResumePlayback() {
+    const prompt = document.getElementById('resumePromptBox');
+    if (prompt) prompt.style.display = 'none';
+    clearTimeout(resumePromptTimer);
+    pendingResumeTimestamp = 0;
+    if (plyrInstance) {
+        plyrInstance.currentTime = 0;
+        plyrInstance.play().catch(() => {});
+    }
+}
+
+// ─── IN-PLAYER EPISODES DRAWER ───────────────────────────────────────────────
+function togglePlayerEpisodesDrawer() {
+    const drawer = document.getElementById('playerEpisodesDrawer');
+    if (!drawer) return;
+    const isVisible = drawer.style.display === 'block';
+    drawer.style.display = isVisible ? 'none' : 'block';
+
+    if (!isVisible) {
+        renderPlayerDrawerEpisodes();
+    }
+}
+
+// Cached drawer episode data to avoid repeated fetches
+let _drawerEpisodeData = null;
+
+async function renderPlayerDrawerEpisodes() {
+    const seasonTabs = document.getElementById('playerDrawerSeasonTabs');
+    const episodesGrid = document.getElementById('playerDrawerEpisodesGrid');
+    if (!currentPlayingSubjectId || !episodesGrid) return;
+
+    try {
+        // Use cached data if subject matches, otherwise fetch fresh
+        let seasons;
+        if (_drawerEpisodeData && _drawerEpisodeData.subject_id === currentPlayingSubjectId) {
+            seasons = _drawerEpisodeData.seasons;
+        } else {
+            const res = await fetch(`/episodes/${currentPlayingSubjectId}`);
+            const data = await res.json();
+            seasons = data.seasons || [];
+            _drawerEpisodeData = { subject_id: currentPlayingSubjectId, seasons };
+        }
+
+        if (!seasons.length) {
+            episodesGrid.innerHTML = '<div style="color:var(--text-muted);padding:10px;">No episodes available.</div>';
+            return;
+        }
+
+        // Use 'season' key (not 'season_num') — matches what api.py returns
+        const activeSe = seasons.find(s => s.season === currentSeason) || seasons[0];
+        const activeSeNum = activeSe.season;
+
+        if (seasonTabs) {
+            seasonTabs.innerHTML = seasons.map(s => `
+                <button class="filter-pill ${s.season === activeSeNum ? 'active' : ''}" onclick="switchPlayerDrawerSeason(${s.season})">
+                    Season ${s.season}
+                </button>
+            `).join('');
+        }
+
+        const eps = activeSe.episodes || [];
+        episodesGrid.innerHTML = eps.map(e => `
+            <button class="episode-btn ${e.episode === currentEpisode && e.season === currentSeason ? 'active' : ''}" onclick="selectDrawerEpisode(${e.season}, ${e.episode})">
+                <span class="ep-num">EP ${e.episode}</span>
+                <span class="ep-res-badge">▶</span>
+            </button>
+        `).join('');
+    } catch (err) {
+        if (episodesGrid) episodesGrid.innerHTML = '<div style="color:var(--rose);padding:10px;">Failed to load episodes.</div>';
+    }
+}
+
+function switchPlayerDrawerSeason(seasonNum) {
+    currentSeason = seasonNum;
+    // Update active tab UI immediately
+    document.querySelectorAll('#playerDrawerSeasonTabs .filter-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.textContent.trim() === `Season ${seasonNum}`);
+    });
+    // Re-render only the episodes grid for the new season (no re-fetch needed)
+    const seasonTabs = document.getElementById('playerDrawerSeasonTabs');
+    const episodesGrid = document.getElementById('playerDrawerEpisodesGrid');
+    if (_drawerEpisodeData && episodesGrid) {
+        const seasons = _drawerEpisodeData.seasons || [];
+        const activeSe = seasons.find(s => s.season === seasonNum);
+        if (activeSe) {
+            const eps = activeSe.episodes || [];
+            episodesGrid.innerHTML = eps.map(e => `
+                <button class="episode-btn ${e.episode === currentEpisode && e.season === currentSeason ? 'active' : ''}" onclick="selectDrawerEpisode(${e.season}, ${e.episode})">
+                    <span class="ep-num">EP ${e.episode}</span>
+                    <span class="ep-res-badge">▶</span>
+                </button>
+            `).join('');
+            return;
+        }
+    }
+    // If cache miss, fall back to full re-render
+    renderPlayerDrawerEpisodes();
+}
+
+function selectDrawerEpisode(seasonNum, episodeNum) {
+    currentSeason = seasonNum;
+    currentEpisode = episodeNum;
+    const drawer = document.getElementById('playerEpisodesDrawer');
+    if (drawer) drawer.style.display = 'none';
+    playDetailEpisode(currentPlayingSubjectId, seasonNum, episodeNum);
 }
 
 function triggerSeekRipple(direction) {
@@ -959,18 +1825,20 @@ function playNextEpisodeImmediately() {
 }
 
 function getEffectiveStreamUrl(stream) {
-    if (currentPlaybackMode === 'direct') return stream.url;
+    if (!stream || !stream.url) return '';
     const sidParam = currentPlayingSubjectId ? `&subject_id=${encodeURIComponent(currentPlayingSubjectId)}` : '';
-    return `/api/proxy/stream?url=${encodeURIComponent(stream.url)}&referer=${encodeURIComponent(stream.headers?.Referer || 'https://api3.aoneroom.com/')}${sidParam}`;
+    const ref = (stream.headers && stream.headers.Referer) ? stream.headers.Referer : 'https://movieboxonline.net/';
+    return `/api/proxy/stream?url=${encodeURIComponent(stream.url)}&referer=${encodeURIComponent(ref)}${sidParam}`;
 }
 
 function switchToDirectMode() {
     currentPlaybackMode = 'direct';
     const modeSelect = document.getElementById('playbackModeSelect');
     if (modeSelect) modeSelect.value = 'direct';
-    if (currentPlayingStream && plyrInstance) {
-        const t = plyrInstance.currentTime;
-        document.getElementById('cinemaVideo').src = getEffectiveStreamUrl(currentPlayingStream);
+    if (currentPlayingStream) {
+        const t = plyrInstance ? plyrInstance.currentTime : 0;
+        const src = getEffectiveStreamUrl(currentPlayingStream);
+        setCinemaVideoSource(src, currentPlayingStream, activeMediaMeta?.title);
         setTimeout(() => { if (plyrInstance) { plyrInstance.currentTime = t; plyrInstance.play().catch(() => {}); } }, 500);
     }
 }
@@ -993,6 +1861,7 @@ async function quickPlay(subjectId, title, startTime = 0) {
     currentPlayingSubjectId = subjectId;
     currentSeason = 0;
     currentEpisode = 0;
+    _drawerEpisodeData = null; // Clear episode cache for new title
 
     try {
         const [streamRes, captionRes, detailRes] = await Promise.allSettled([
@@ -1021,6 +1890,20 @@ async function quickPlay(subjectId, title, startTime = 0) {
         const streamToPlay = playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0];
         if (streamToPlay) {
             playInCinemaModal(encodeURIComponent(JSON.stringify(streamToPlay)), startTime);
+            // If fallback servers not yet resolved (background IMDB lookup still running), fetch them in background
+            if (activeFallbackServers.length === 0 && title) {
+                setTimeout(async () => {
+                    try {
+                        const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+                        const isSer = Boolean(activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series'));
+                        const fbRes = await fetch(`/api/fallback-sources?title=${encodeURIComponent(title)}&year=${year}&is_series=${isSer}`).then(r => r.json());
+                        if (fbRes.servers && fbRes.servers.length > 0 && activeFallbackServers.length === 0) {
+                            activeFallbackServers = fbRes.servers;
+                            updatePlayerServerSelect();
+                        }
+                    } catch {}
+                }, 1200);
+            }
         } else {
             // Check if this title is a TV Series (Season 1 Episode 1)
             const s1Res = await fetch(`/api/stream/${subjectId}?se=1&ep=1`).then(r => r.json()).catch(() => null);
@@ -1049,7 +1932,7 @@ async function quickPlay(subjectId, title, startTime = 0) {
             // Check if backup servers are available (from streamData or on-demand resolution)
             if (activeFallbackServers && activeFallbackServers.length > 0) {
                 const srvName = activeFallbackServers[0].name.split('(')[1]?.replace(')', '') || 'Cloud';
-                showToast(`MovieBox Direct has no stream — playing from Backup Server (${srvName})…`, 'info');
+                showToast(`CineScope Direct has no stream — playing from Backup Server (${srvName})…`, 'info');
                 playInCinemaModal(null, startTime, activeFallbackServers[0]);
                 return;
             }
@@ -1062,7 +1945,7 @@ async function quickPlay(subjectId, title, startTime = 0) {
                 if (fbRes.servers && fbRes.servers.length > 0) {
                     activeFallbackServers = fbRes.servers;
                     const srvName = fbRes.servers[0].name.split('(')[1]?.replace(')', '') || 'Cloud';
-                    showToast(`MovieBox Direct has no stream — playing from Backup Server (${srvName})…`, 'info');
+                    showToast(`CineScope Direct has no stream — playing from Backup Server (${srvName})…`, 'info');
                     playInCinemaModal(null, startTime, fbRes.servers[0]);
                     return;
                 }
@@ -1077,27 +1960,96 @@ async function quickPlay(subjectId, title, startTime = 0) {
 
 function updatePlayerServerSelect() {
     const serverSelect = document.getElementById('playerServerSelect');
-    if (!serverSelect) return;
+    if (serverSelect) {
+        let optionsHtml = '';
+        if (activeStreamList && activeStreamList.length > 0) {
+            optionsHtml += `<option value="direct" ${currentSelectedServer === 'direct' ? 'selected' : ''}>Server 1 (CineScope Direct 1080p)</option>`;
+        } else {
+            optionsHtml += `<option value="direct" disabled>Server 1 (CineScope Direct - No Streams)</option>`;
+        }
 
-    let optionsHtml = '';
-    if (activeStreamList && activeStreamList.length > 0) {
-        optionsHtml += `<option value="direct" ${currentSelectedServer === 'direct' ? 'selected' : ''}>Server 1 (MovieBox Direct 1080p)</option>`;
-    } else {
-        optionsHtml += `<option value="direct" disabled>Server 1 (MovieBox Direct - No Streams)</option>`;
+        if (activeFallbackServers && activeFallbackServers.length > 0) {
+            optionsHtml += activeFallbackServers.map(s =>
+                `<option value="${s.id}" ${currentSelectedServer === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`
+            ).join('');
+        }
+        serverSelect.innerHTML = optionsHtml;
     }
 
-    if (activeFallbackServers && activeFallbackServers.length > 0) {
-        optionsHtml += activeFallbackServers.map(s =>
-            `<option value="${s.id}" ${currentSelectedServer === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`
-        ).join('');
+    // Populate In-Player Popover Menu (Top HUD dropdown)
+    const inPlayerServerList = document.getElementById('inPlayerServerList');
+    if (inPlayerServerList) {
+        let srvHtml = '';
+        if (activeStreamList && activeStreamList.length > 0) {
+            srvHtml += `<button class="popover-item ${currentSelectedServer === 'direct' ? 'active' : ''}" onclick="selectInPlayerServer('direct', 'Server 1 (Direct)')">
+                <span>⚡ Server 1 (MovieBox Direct 1080p)</span>
+                ${currentSelectedServer === 'direct' ? '<span>✓</span>' : ''}
+            </button>`;
+        }
+        if (activeFallbackServers && activeFallbackServers.length > 0) {
+            srvHtml += activeFallbackServers.map(s => {
+                const isSel = currentSelectedServer === s.id;
+                const shortName = s.name.replace('Server ', 'S').replace(' (', ' - ').replace(')', '');
+                return `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerServer('${s.id}', '${escapeHtml(shortName)}')">
+                    <span>☁️ ${escapeHtml(s.name)}</span>
+                    ${isSel ? '<span>✓</span>' : ''}
+                </button>`;
+            }).join('');
+        }
+        inPlayerServerList.innerHTML = srvHtml;
     }
-    serverSelect.innerHTML = optionsHtml;
+
+    // Populate 1-Click Server Selector Strip (Below video stage)
+    const pillsWrap = document.getElementById('playerServerPills');
+    if (pillsWrap) {
+        let pillsHtml = '';
+        if (activeStreamList && activeStreamList.length > 0) {
+            const isDirectSel = currentSelectedServer === 'direct';
+            pillsHtml += `<button class="server-pill-tab ${isDirectSel ? 'active' : ''}" onclick="changePlayerServer('direct')">
+                <span class="server-pill-icon">⚡</span>
+                <span class="server-pill-name">S1: Direct (1080p)</span>
+                ${isDirectSel ? '<span class="server-pill-active-dot"></span>' : ''}
+            </button>`;
+        }
+        if (activeFallbackServers && activeFallbackServers.length > 0) {
+            pillsHtml += activeFallbackServers.map(s => {
+                const isSel = currentSelectedServer === s.id;
+                const short = s.name.replace('Server ', 'S').replace(' (', ' - ').replace(')', '');
+                return `<button class="server-pill-tab ${isSel ? 'active' : ''}" onclick="changePlayerServer('${s.id}')">
+                    <span class="server-pill-icon">☁</span>
+                    <span class="server-pill-name">${escapeHtml(short)}</span>
+                    ${isSel ? '<span class="server-pill-active-dot"></span>' : ''}
+                </button>`;
+            }).join('');
+        }
+        pillsWrap.innerHTML = pillsHtml;
+    }
+
+    // Update Popout/External Player button in footer
+    const extBtn = document.getElementById('playerExternalLinkBtn');
+    if (extBtn) {
+        if (currentSelectedServer !== 'direct') {
+            const curTarget = (activeFallbackServers || []).find(s => s.id === currentSelectedServer);
+            if (curTarget && curTarget.url) {
+                extBtn.href = curTarget.url;
+                extBtn.style.display = 'inline-flex';
+            } else {
+                extBtn.style.display = 'none';
+            }
+        } else {
+            extBtn.style.display = 'none';
+        }
+    }
 }
 
 function changePlayerServer(serverId) {
-    const video = document.getElementById('cinemaVideo');
+    const video = getCinemaVideoElement();
     const iframe = document.getElementById('cinemaIframe');
     const plyrEl = document.querySelector('#videoStage .plyr');
+    const stage = document.getElementById('videoStage');
+    const quickBar = document.getElementById('inPlayerQuickBar');
+    const qualityBadge = document.getElementById('inPlayerQualityBadge');
+    const dubBadge = document.getElementById('inPlayerDubBadge');
 
     if (serverId === 'direct') {
         if (!activeStreamList || activeStreamList.length === 0) {
@@ -1105,20 +2057,27 @@ function changePlayerServer(serverId) {
             updatePlayerServerSelect();
             return;
         }
+        if (stage) stage.classList.remove('is-iframe-mode');
         if (iframe) {
             iframe.src = 'about:blank';
             iframe.style.display = 'none';
         }
         if (plyrEl) plyrEl.style.display = '';
         if (video) video.style.display = 'block';
+        if (quickBar) quickBar.style.display = 'flex';
+        if (qualityBadge) qualityBadge.style.display = '';
+        if (dubBadge) dubBadge.style.display = '';
+
         currentSelectedServer = 'direct';
         updatePlayerServerSelect();
+        safeText('inPlayerCurrentServerText', 'Server 1 (Direct)');
         if (currentPlayingStream) {
-            document.getElementById('playerQualityTag').textContent = currentPlayingStream.quality || '1080p';
-            document.getElementById('playerMediaSub').textContent = `${currentPlayingStream.format || 'MP4'} • ${currentPlayingStream.codec || 'H.264'}`;
+            safeText('playerQualityTag', currentPlayingStream.quality || '1080p');
+            safeText('playerMediaSub', `${currentPlayingStream.format || 'MP4'} • ${currentPlayingStream.codec || 'H.264'}`);
+            setCinemaVideoSource(getEffectiveStreamUrl(currentPlayingStream), currentPlayingStream, activeMediaMeta?.title);
         }
         if (plyrInstance) plyrInstance.play().catch(() => {});
-        showToast('Switched to MovieBox Direct');
+        showToast('Switched to MovieBox Direct (Full Features)');
         return;
     }
 
@@ -1129,11 +2088,23 @@ function changePlayerServer(serverId) {
         return;
     }
 
+    if (hlsInstance) {
+        try { hlsInstance.destroy(); } catch {}
+        hlsInstance = null;
+    }
     if (plyrInstance) {
         try { plyrInstance.pause(); } catch {}
     }
+    if (stage) stage.classList.add('is-iframe-mode');
     if (plyrEl) plyrEl.style.display = 'none';
-    if (video) video.style.display = 'none';
+    if (video) {
+        video.style.display = 'none';
+        try { video.pause(); } catch {}
+    }
+    // In iframe mode, direct controls DO NOT apply - hide quickbar completely
+    if (quickBar) quickBar.style.display = 'none';
+    if (qualityBadge) qualityBadge.style.display = 'none';
+    if (dubBadge) dubBadge.style.display = 'none';
 
     if (iframe) {
         iframe.style.display = 'block';
@@ -1142,12 +2113,16 @@ function changePlayerServer(serverId) {
     currentSelectedServer = targetServer.id;
     updatePlayerServerSelect();
 
-    document.getElementById('playerQualityTag').textContent = '1080p (Cloud)';
-    document.getElementById('playerMediaSub').textContent = `${targetServer.name} • Multi-Source`;
-    document.getElementById('playerSizeStat').textContent = 'Cloud Stream';
-    document.getElementById('playerCodecStat').textContent = 'H.264 / Adaptive';
+    const shortName = targetServer.name.replace('Server ', 'S').replace(' (', ' - ').replace(')', '');
+    safeText('inPlayerCurrentServerText', shortName);
+    safeText('playerQualityTag', 'Cloud HD');
+    safeText('playerMediaSub', `${targetServer.name} • Embedded Player`);
+    safeText('playerSizeStat', 'Cloud Stream');
+    safeText('playerCodecStat', 'Auto Adaptive');
 
     showToast(`Switched to ${targetServer.name}`);
+    // Keep series ribbon visible after server switch
+    renderPlayerSeriesRibbon();
 }
 
 // ─── CINEMA PLAYER MODAL ─────────────────────────────────────────────────────
@@ -1159,12 +2134,15 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     currentPlayingStream = stream;
 
     const modal = document.getElementById('playerModal');
-    const video = document.getElementById('cinemaVideo');
+    const video = getCinemaVideoElement();
     const iframe = document.getElementById('cinemaIframe');
     const plyrEl = document.querySelector('#videoStage .plyr');
 
-    const titleText = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'MovieBox Stream';
-    document.getElementById('playerMediaTitle').textContent = titleText;
+    const baseTitle = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'MovieBox Stream';
+    const isSeries = Boolean(currentEpisode > 0 || (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series')));
+    const epSuffix = (isSeries && currentEpisode > 0) ? ` • S${currentSeason || 1} E${currentEpisode}` : '';
+    const titleText = `${baseTitle}${epSuffix}`;
+    safeText('playerMediaTitle', titleText);
 
     // Ambient glow backlight
     const poster = activeMediaMeta ? activeMediaMeta.cover : null;
@@ -1178,13 +2156,18 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         }
     }
 
-    // Next episode button
+    // Episode buttons
     const nextEpBtn = document.getElementById('playerNextEpBtn');
-    if (currentEpisode > 0) {
-        nextEpBtn.style.display = 'inline-flex';
-        nextEpBtn.textContent = `Next Ep ${currentEpisode + 1} →`;
+    const epDrawerBtn = document.getElementById('inPlayerEpisodesBtn');
+    if (isSeries || currentEpisode > 0) {
+        if (epDrawerBtn) epDrawerBtn.style.display = 'inline-flex';
+        if (nextEpBtn) {
+            nextEpBtn.style.display = 'inline-flex';
+            nextEpBtn.textContent = `Next Ep ${currentEpisode + 1} →`;
+        }
     } else {
-        nextEpBtn.style.display = 'none';
+        if (epDrawerBtn) epDrawerBtn.style.display = 'none';
+        if (nextEpBtn) nextEpBtn.style.display = 'none';
     }
 
     // Populate Audio dubs (always visible and selectable)
@@ -1194,11 +2177,11 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     if (dubsToUse && dubsToUse.length > 0) {
         audioGroup.style.display = 'flex';
         audioSelect.innerHTML = dubsToUse.map(d =>
-            `<option value="${d.subject_id}" ${d.subject_id === currentPlayingSubjectId ? 'selected' : ''}>🔊 ${escapeHtml(d.lang_name || d.language || 'Audio Dub')}</option>`
+            `<option value="${d.subject_id}" ${d.subject_id === currentPlayingSubjectId ? 'selected' : ''}>${escapeHtml(d.lang_name || d.language || 'Audio Dub')}</option>`
         ).join('');
     } else {
         audioGroup.style.display = 'flex';
-        audioSelect.innerHTML = '<option value="">🔊 Original Audio</option>';
+        audioSelect.innerHTML = '<option value="">Original Audio</option>';
     }
 
     if (window._resetFallbackFlag) window._resetFallbackFlag();
@@ -1216,32 +2199,67 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         currentSelectedServer = srv.id;
         updatePlayerServerSelect();
 
+        const stage = document.getElementById('videoStage');
+        if (stage) stage.classList.add('is-iframe-mode');
+
+        if (hlsInstance) {
+            try { hlsInstance.destroy(); } catch {}
+            hlsInstance = null;
+        }
         if (plyrInstance) {
             try { plyrInstance.pause(); } catch {}
         }
         if (plyrEl) plyrEl.style.display = 'none';
-        if (video) video.style.display = 'none';
+        if (video) {
+            video.style.display = 'none';
+            try { video.pause(); } catch {}
+        }
+
+        const quickBar = document.getElementById('inPlayerQuickBar');
+        if (quickBar) quickBar.style.display = 'none';
+        const qualityBadge = document.getElementById('inPlayerQualityBadge');
+        if (qualityBadge) {
+            qualityBadge.style.display = 'inline-flex';
+            qualityBadge.textContent = 'Cloud HD';
+        }
+        const dubBadge = document.getElementById('inPlayerDubBadge');
+        if (dubBadge) {
+            dubBadge.style.display = (dubsToUse && dubsToUse.length > 0) ? 'inline-flex' : 'none';
+        }
 
         if (iframe) {
             iframe.style.display = 'block';
             iframe.src = srv.url;
         }
 
-        document.getElementById('playerQualityTag').textContent = '1080p (Cloud)';
-        document.getElementById('playerMediaSub').textContent = `${srv.name} • Multi-Source`;
-        document.getElementById('playerSizeStat').textContent = 'Cloud Stream';
-        document.getElementById('playerCodecStat').textContent = 'H.264 / Adaptive';
-        document.getElementById('playerExternalLink').href = srv.url;
+        safeText('inPlayerTitle', titleText);
+        const shortName = srv.name.replace('Server ', 'S').replace(' (', ' - ').replace(')', '');
+        safeText('inPlayerCurrentServerText', shortName);
+        safeText('playerQualityTag', 'Cloud HD');
+        safeText('playerMediaSub', `${srv.name} • Embedded Player`);
+        safeText('playerSizeStat', 'Cloud Stream');
+        safeText('playerCodecStat', 'Auto Adaptive');
+        safeAttr('playerExternalLink', 'href', srv.url);
 
+        modal.style.display = 'flex';
         modal.classList.add('active');
         document.body.style.overflow = 'hidden';
+        renderPlayerSeriesRibbon();
         showToast(`Streaming via ${srv.name}`);
+
+        // Trigger pre-roll ad overlay if eligible
+        if (typeof AdEngine !== 'undefined') {
+            AdEngine.runPrerollIfEligible(() => {});
+        }
         return;
     }
 
     // Playing direct stream
     currentSelectedServer = 'direct';
     updatePlayerServerSelect();
+
+    const stage = document.getElementById('videoStage');
+    if (stage) stage.classList.remove('is-iframe-mode');
 
     if (iframe) {
         iframe.src = 'about:blank';
@@ -1250,11 +2268,18 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     if (plyrEl) plyrEl.style.display = '';
     if (video) video.style.display = 'block';
 
-    document.getElementById('playerQualityTag').textContent = stream ? (stream.quality || '1080p') : '1080p';
-    document.getElementById('playerMediaSub').textContent = stream ? `${stream.format || 'MP4'} • ${stream.codec || 'H.264'}` : 'Direct MP4';
-    document.getElementById('playerSizeStat').textContent = (stream && stream.size_mb > 0) ? `${stream.size_mb} MB` : 'DASH Adaptive';
-    document.getElementById('playerCodecStat').textContent = stream ? (stream.codec || 'H.264/AAC') : 'H.264';
-    document.getElementById('playerExternalLink').href = stream ? stream.url : '#';
+    const quickBar = document.getElementById('inPlayerQuickBar');
+    if (quickBar) quickBar.style.display = 'flex';
+    const qualityBadge = document.getElementById('inPlayerQualityBadge');
+    if (qualityBadge) qualityBadge.style.display = '';
+    const dubBadge = document.getElementById('inPlayerDubBadge');
+    if (dubBadge) dubBadge.style.display = '';
+
+    safeText('playerQualityTag', stream ? (stream.quality || '1080p') : '1080p');
+    safeText('playerMediaSub', stream ? `${stream.format || 'MP4'} • ${stream.codec || 'H.264'}` : 'Direct MP4');
+    safeText('playerSizeStat', (stream && stream.size_mb > 0) ? `${stream.size_mb} MB` : 'DASH Adaptive');
+    safeText('playerCodecStat', stream ? (stream.codec || 'H.264/AAC') : 'H.264');
+    safeAttr('playerExternalLink', 'href', stream ? stream.url : '#');
 
     // Populate Quality selector - show playable MP4 streams
     const qualitySelect = document.getElementById('playerQualitySelect');
@@ -1264,62 +2289,243 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         `<option value="${encodeURIComponent(JSON.stringify(s))}" ${stream && s.url === stream.url ? 'selected' : ''}>${s.quality} (${s.format})</option>`
     ).join('');
 
-    // Populate captions and setup default track
-    const captionSelect = document.getElementById('playerCaptionSelect');
-    video.querySelectorAll('track').forEach(t => t.remove());
-
-    if (activeCaptionList && activeCaptionList.length > 0) {
-        captionSelect.innerHTML = '<option value="">Subtitles Off</option>' +
-            activeCaptionList.map((c, idx) => `<option value="${c.url}" ${idx === 0 ? 'selected' : ''}>${escapeHtml(c.language || 'Unknown')}</option>`).join('');
-
-        const firstSub = activeCaptionList[0];
-        const proxyVttUrl = `/api/proxy/caption?url=${encodeURIComponent(firstSub.url)}`;
-        const track = document.createElement('track');
-        track.kind = 'captions';
-        track.label = firstSub.language || 'English';
-        track.srclang = firstSub.code || 'en';
-        track.src = proxyVttUrl;
-        track.default = true;
-        track.addEventListener('load', function() {
-            if (this.track) this.track.mode = 'showing';
-        });
-        video.appendChild(track);
-        if (track.track) track.track.mode = 'showing';
-        if (plyrInstance) {
-            try { plyrInstance.toggleCaptions(true); } catch {}
-        }
+    // Synchronize In-Player Top HUD & Badges
+    safeText('inPlayerTitle', titleText);
+    // Determine current dub name accurately — match by subject_id OR use the stream source language
+    const currentDubObj = (dubsToUse && dubsToUse.find(d => d.subject_id === currentPlayingSubjectId)) || null;
+    let currentDubName;
+    if (currentDubObj) {
+        currentDubName = currentDubObj.lang_name || currentDubObj.language || 'Audio Dub';
+    } else if (dubsToUse && dubsToUse.length > 0) {
+        // Likely playing original audio — label it from the detail metadata language
+        const origLang = (activeMediaMeta && activeMediaMeta.language) ? activeMediaMeta.language : 'Original';
+        currentDubName = origLang;
     } else {
-        captionSelect.innerHTML = '<option value="">No Subtitles Available</option>';
+        currentDubName = 'Original Audio';
+    }
+    safeText('inPlayerDubBadge', currentDubName);
+    safeText('inPlayerQualityBadge', stream ? (stream.quality || '1080p FHD') : '1080p FHD');
+    safeText('inPlayerCurrentAudioText', `Audio: ${currentDubName}`);
+    safeText('inPlayerCurrentQualityText', `Quality: ${stream ? (stream.quality || '1080p FHD') : '1080p FHD'}`);
+    safeText('inPlayerCurrentServerText', `Server: ${currentSelectedServer === 'direct' ? 'MovieBox Direct' : 'Cloud Server'}`);
+
+    // Populate In-Player Audio Popover List (Works inside Fullscreen!)
+    const inPlayerAudioList = document.getElementById('inPlayerAudioList');
+    if (inPlayerAudioList) {
+        if (dubsToUse && dubsToUse.length > 0) {
+            inPlayerAudioList.innerHTML = dubsToUse.map(d => {
+                const isSel = d.subject_id === currentPlayingSubjectId;
+                const name = d.lang_name || d.language || 'Audio Dub';
+                return `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerAudio('${d.subject_id}', '${escapeHtml(name)}')">
+                    <span>${escapeHtml(name)}</span>
+                    ${isSel ? '<span>✓</span>' : ''}
+                </button>`;
+            }).join('');
+        } else {
+            inPlayerAudioList.innerHTML = `<button class="popover-item active" onclick="selectInPlayerAudio('', 'Original Audio')"><span>Original Audio</span><span>✓</span></button>`;
+        }
     }
 
-    // Set video source and load
+    // Populate In-Player Quality Popover List (Works inside Fullscreen!)
+    const inPlayerQualityList = document.getElementById('inPlayerQualityList');
+    if (inPlayerQualityList) {
+        inPlayerQualityList.innerHTML = listToRender.map(s => {
+            const isSel = Boolean(stream && s.url === stream.url);
+            return `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerQuality('${encodeURIComponent(JSON.stringify(s))}', '${s.quality}')">
+                <span>${s.quality} (${s.format})</span>
+                ${isSel ? '<span>✓</span>' : ''}
+            </button>`;
+        }).join('');
+    }
+
+    // Populate captions, auto-select English, and setup default track
+    const captionSelect = document.getElementById('playerCaptionSelect');
+    const subSyncGroup = document.getElementById('subSyncGroup');
+    currentSubtitleSyncOffset = 0;
+    const subSyncLabel = document.getElementById('subSyncLabel');
+    if (subSyncLabel) subSyncLabel.textContent = '0.0s';
+    const inPlayerSubSyncVal = document.getElementById('inPlayerSubSyncVal');
+    if (inPlayerSubSyncVal) inPlayerSubSyncVal.textContent = '0.0s';
+
+    if (video && video.querySelectorAll) {
+        video.querySelectorAll('track').forEach(t => t.remove());
+    }
+
+    let defaultIndex = -1;
+    if (activeCaptionList && activeCaptionList.length > 0) {
+        if (subSyncGroup) subSyncGroup.style.display = 'flex';
+        // Auto-detect English subtitle or default to first
+        const englishIndex = activeCaptionList.findIndex(c => (c.language || '').toLowerCase().includes('eng'));
+        defaultIndex = englishIndex >= 0 ? englishIndex : 0;
+        const selectedSub = activeCaptionList[defaultIndex];
+
+        captionSelect.innerHTML = '<option value="">Subtitles Off</option>' +
+            activeCaptionList.map((c, idx) => `<option value="${c.url}" ${idx === defaultIndex ? 'selected' : ''}>${escapeHtml(c.language || 'Unknown')}</option>`).join('');
+
+        if (selectedSub) {
+            safeText('inPlayerCurrentSubText', `Subtitles: ${selectedSub.language || 'English'}`);
+            const proxyVttUrl = `/api/proxy/caption?url=${encodeURIComponent(selectedSub.url)}`;
+            const track = document.createElement('track');
+            track.kind = 'captions';
+            track.label = selectedSub.language || 'English';
+            track.srclang = selectedSub.code || 'en';
+            track.src = proxyVttUrl;
+            track.default = true;
+            track.addEventListener('load', function() {
+                if (this.track) this.track.mode = 'showing';
+            });
+            if (video) {
+                video.appendChild(track);
+                if (track.track) track.track.mode = 'showing';
+            }
+            if (plyrInstance) {
+                try { plyrInstance.toggleCaptions(true); } catch {}
+            }
+        }
+    } else {
+        if (subSyncGroup) subSyncGroup.style.display = 'none';
+        captionSelect.innerHTML = '<option value="">No Subtitles Available</option>';
+        safeText('inPlayerCurrentSubText', 'Subtitles: Off');
+    }
+
+    // Populate In-Player Subtitles Popover List
+    const inPlayerSubList = document.getElementById('inPlayerSubList');
+    if (inPlayerSubList) {
+        let subHtml = `<button class="popover-item ${defaultIndex < 0 ? 'active' : ''}" onclick="selectInPlayerSub('', 'Off')"><span>Subtitles Off</span></button>`;
+        if (activeCaptionList && activeCaptionList.length > 0) {
+            subHtml += activeCaptionList.map((c, idx) => {
+                const isSel = idx === defaultIndex;
+                const lang = c.language || 'English';
+                return `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerSub('${c.url}', '${escapeHtml(lang)}')">
+                    <span>${escapeHtml(lang)}</span>
+                    ${isSel ? '<span>✓</span>' : ''}
+                </button>`;
+            }).join('');
+        }
+        inPlayerSubList.innerHTML = subHtml;
+    }
+
+    // Populate In-Player Servers Popover List
+    const inPlayerServerList = document.getElementById('inPlayerServerList');
+    if (inPlayerServerList) {
+        let srvHtml = `<button class="popover-item ${currentSelectedServer === 'direct' ? 'active' : ''}" onclick="selectInPlayerServer('direct', 'MovieBox Direct')">
+            <span>Server 1 (Direct 1080p)</span>
+            ${currentSelectedServer === 'direct' ? '<span>✓</span>' : ''}
+        </button>`;
+        if (activeFallbackServers && activeFallbackServers.length > 0) {
+            srvHtml += activeFallbackServers.map(s => {
+                const isSel = currentSelectedServer === s.id;
+                return `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerServer('${s.id}', '${escapeHtml(s.name)}')">
+                    <span>${escapeHtml(s.name)}</span>
+                    ${isSel ? '<span>✓</span>' : ''}
+                </button>`;
+            }).join('');
+        }
+        inPlayerServerList.innerHTML = srvHtml;
+    }
+
+    // Configure External / Download links with clean, sanitized filename (NEVER raw UUID)
+    const cleanTitle = (titleText || 'Movie').replace(/[^a-zA-Z0-9_\-]/g, '_').replace(/_+/g, '_').trim();
+    const safeQuality = stream ? (stream.quality || '1080p') : '1080p';
+    const cleanFilename = `${cleanTitle}_(${safeQuality}).mp4`;
+    const safeDownloadUrl = stream ? `/api/proxy/stream?url=${encodeURIComponent(stream.url)}&referer=${encodeURIComponent(stream.headers?.Referer || '')}&download=true&filename=${encodeURIComponent(cleanFilename)}` : '#';
+    safeAttr('playerExternalLink', 'href', safeDownloadUrl);
+    safeAttr('playerExternalLink', 'download', cleanFilename);
+
+    // Toggle Legacy In-Player Episodes Drawer Button
+    const legacyEpDrawerBtn = document.getElementById('playerEpisodesDrawerBtn');
+    if (legacyEpDrawerBtn) {
+        legacyEpDrawerBtn.style.display = (currentEpisode > 0 || (activeMediaMeta && activeMediaMeta.type === 'Series')) ? 'inline-flex' : 'none';
+    }
+
+    // Set video source and load via unified player engine (HLS.js / Plyr / HTML5)
     if (stream) {
         const src = getEffectiveStreamUrl(stream);
-        if (video.src !== src) {
-            video.src = src;
-            try { video.load(); } catch {}
-        }
+        setCinemaVideoSource(src, stream, titleText);
     }
 
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
 
-    if (plyrInstance) {
-        plyrInstance.play().then(() => {
-            if (seekToTime > 0) {
-                setTimeout(() => { plyrInstance.currentTime = seekToTime; }, 300);
-            }
-        }).catch(() => {});
+    // Smart Quick-Resume Prompt (Prime Video / Netflix UX)
+    const continueList = getContinueWatching();
+    const existingProgress = continueList.find(c => c.subject_id === currentPlayingSubjectId && (!c.season || c.season === currentSeason) && (!c.episode || c.episode === currentEpisode));
+    const resumePrompt = document.getElementById('resumePromptBox');
+    if (existingProgress && existingProgress.current_time > 20 && (!existingProgress.duration || existingProgress.current_time < existingProgress.duration * 0.92) && seekToTime <= 0) {
+        pendingResumeTimestamp = existingProgress.current_time;
+        if (resumePrompt) {
+            const timeText = document.getElementById('resumeTimestampText');
+            if (timeText) timeText.textContent = `at ${formatTime(existingProgress.current_time)}`;
+            resumePrompt.style.display = 'flex';
+            clearTimeout(resumePromptTimer);
+            resumePromptTimer = setTimeout(() => {
+                if (resumePrompt) resumePrompt.style.display = 'none';
+            }, 8000);
+        }
+    } else {
+        if (resumePrompt) resumePrompt.style.display = 'none';
+    }
+
+    // Start playback with browser autoplay policy resilience & AdEngine pre-roll
+    const startPlayback = () => {
+        if (!plyrInstance) return;
+        const playPromise = plyrInstance.play();
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                if (seekToTime > 0) {
+                    setTimeout(() => { if (plyrInstance) plyrInstance.currentTime = seekToTime; }, 300);
+                }
+            }).catch(err => {
+                console.warn('Autoplay prevented. Retrying muted:', err);
+                plyrInstance.muted = true;
+                plyrInstance.play().then(() => {
+                    showToast('Playback started (Muted — click volume to unmute)', 'info');
+                }).catch(() => {
+                    showToast('Click play button to start watching', 'info');
+                });
+            });
+        }
+    };
+
+    if (typeof AdEngine !== 'undefined') {
+        AdEngine.runPrerollIfEligible(startPlayback);
+    } else {
+        setTimeout(startPlayback, 100);
+        if (video) {
+            video.addEventListener('canplay', () => { startPlayback(); }, { once: true });
+        }
+    }
+    renderPlayerSeriesRibbon();
+
+    // Netflix auto-hide cursor during playback
+    const stageEl = document.getElementById('videoStage');
+    if (stageEl && !stageEl.dataset.cursorBound) {
+        stageEl.dataset.cursorBound = 'true';
+        let curTimer = null;
+        stageEl.addEventListener('mousemove', () => {
+            stageEl.classList.remove('hide-cursor');
+            clearTimeout(curTimer);
+            curTimer = setTimeout(() => {
+                if (plyrInstance && !plyrInstance.paused) {
+                    stageEl.classList.add('hide-cursor');
+                }
+            }, 2500);
+        });
     }
 
     showToast(`Streaming ${stream ? stream.quality || 'HD' : 'HD'} ${stream ? stream.format || 'MP4' : ''}`);
 }
 
 function changePlayerAudioDub(dubSubjectId) {
-    if (!dubSubjectId || dubSubjectId === currentPlayingSubjectId) return;
+    if (!dubSubjectId) return;
     const dubsToUse = (currentTitleDubs && currentTitleDubs.length > 0) ? currentTitleDubs : activeDubsList;
     const dub = dubsToUse.find(d => d.subject_id === dubSubjectId);
-    switchAudioDub(dubSubjectId, dub ? dub.lang_name : 'Audio Dub');
+    const dubName = dub ? (dub.lang_name || dub.language || 'Audio Dub') : ((activeMediaMeta && activeMediaMeta.language) || 'Original');
+    // Update the HUD badges immediately before async switch
+    safeText('inPlayerDubBadge', dubName);
+    safeText('inPlayerCurrentAudioText', `Audio: ${dubName}`);
+    if (dubSubjectId === currentPlayingSubjectId) return; // Already playing this dub
+    switchAudioDub(dubSubjectId, dubName);
 }
 
 function playNextEpisode() {
@@ -1335,9 +2541,10 @@ function playNextEpisode() {
 
 function changePlaybackMode(mode) {
     currentPlaybackMode = mode;
-    if (currentPlayingStream && plyrInstance) {
-        const t = plyrInstance.currentTime;
-        document.getElementById('cinemaVideo').src = getEffectiveStreamUrl(currentPlayingStream);
+    if (currentPlayingStream) {
+        const t = plyrInstance ? plyrInstance.currentTime : 0;
+        const src = getEffectiveStreamUrl(currentPlayingStream);
+        setCinemaVideoSource(src, currentPlayingStream, activeMediaMeta?.title);
         setTimeout(() => { if (plyrInstance) { plyrInstance.currentTime = t; plyrInstance.play().catch(() => {}); } }, 300);
         showToast(`Route: ${mode === 'proxy' ? 'Fast Proxy' : 'Direct CDN'}`);
     }
@@ -1348,15 +2555,20 @@ function changePlayerQuality(encodedStream) {
     const stream = JSON.parse(decodeURIComponent(encodedStream));
     const t = plyrInstance.currentTime;
     currentPlayingStream = stream;
-    document.getElementById('cinemaVideo').src = getEffectiveStreamUrl(stream);
-    document.getElementById('playerQualityTag').textContent = stream.quality || '1080p';
+    const src = getEffectiveStreamUrl(stream);
+    setCinemaVideoSource(src, stream, activeMediaMeta?.title);
+    safeText('playerQualityTag', stream.quality || '1080p');
+    safeText('inPlayerQualityBadge', stream.quality || '1080p');
+    safeText('inPlayerCurrentQualityText', `Quality: ${stream.quality || '1080p'}`);
     setTimeout(() => { if (plyrInstance) { plyrInstance.currentTime = t; plyrInstance.play().catch(() => {}); } }, 300);
     showToast(`Quality: ${stream.quality}`);
 }
 
 function changePlayerSubtitle(subUrl) {
-    const video = document.getElementById('cinemaVideo');
-    video.querySelectorAll('track').forEach(t => t.remove());
+    const video = getCinemaVideoElement();
+    if (video && video.querySelectorAll) {
+        video.querySelectorAll('track').forEach(t => t.remove());
+    }
     if (!subUrl) {
         if (plyrInstance) {
             try { plyrInstance.toggleCaptions(false); } catch {}
@@ -1369,23 +2581,182 @@ function changePlayerSubtitle(subUrl) {
     const lang = subObj ? (subObj.language || 'English') : 'Subtitle';
     const code = subObj ? (subObj.code || 'en') : 'en';
 
-    const proxyVttUrl = `/api/proxy/caption?url=${encodeURIComponent(subUrl)}`;
+    const finalTrackUrl = (subUrl.startsWith('blob:') || subUrl.startsWith('/api/proxy/online-caption'))
+        ? subUrl
+        : `/api/proxy/caption?url=${encodeURIComponent(subUrl)}`;
+
     const track = document.createElement('track');
     track.kind = 'captions';
     track.label = lang;
     track.srclang = code;
-    track.src = proxyVttUrl;
+    track.src = finalTrackUrl;
     track.default = true;
     track.addEventListener('load', function() {
         if (this.track) this.track.mode = 'showing';
     });
-    video.appendChild(track);
-    if (track.track) track.track.mode = 'showing';
+    if (video) {
+        video.appendChild(track);
+        if (track.track) track.track.mode = 'showing';
+    }
 
     if (plyrInstance) {
         try { plyrInstance.toggleCaptions(true); } catch {}
     }
     showToast(`Subtitles loaded: ${lang}`);
+}
+
+function refreshInPlayerSubMenu(activeUrl) {
+    const inPlayerSubList = document.getElementById('inPlayerSubList');
+    if (!inPlayerSubList) return;
+    let subHtml = `<button class="popover-item ${!activeUrl ? 'active' : ''}" onclick="selectInPlayerSub('', 'Off')"><span>Subtitles Off</span>${!activeUrl ? '<span>✓</span>' : ''}</button>`;
+    if (activeCaptionList && activeCaptionList.length > 0) {
+        subHtml += activeCaptionList.map(c => {
+            const isSel = c.url === activeUrl;
+            const lang = c.language || 'English';
+            return `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerSub('${c.url}', '${escapeHtml(lang)}')">
+                <span>${escapeHtml(lang)}</span>
+                ${isSel ? '<span>✓</span>' : ''}
+            </button>`;
+        }).join('');
+    }
+    inPlayerSubList.innerHTML = subHtml;
+}
+
+function handleLocalSubtitleUpload(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        let content = e.target.result;
+        if (!content || !content.trim()) {
+            showToast('Empty subtitle file', 'error');
+            return;
+        }
+        // Convert SRT to WebVTT if needed
+        if (!content.trim().startsWith('WEBVTT')) {
+            content = "WEBVTT\n\n" + content.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+        }
+        const blob = new Blob([content], { type: 'text/vtt; charset=utf-8' });
+        const blobUrl = URL.createObjectURL(blob);
+        const namePart = file.name.replace(/\.[^/.]+$/, "").slice(0, 20);
+        const customItem = {
+            id: 'custom_' + Date.now(),
+            language: `📁 Local (${namePart})`,
+            code: 'local',
+            url: blobUrl,
+            isCustom: true
+        };
+        activeCaptionList.unshift(customItem);
+        selectInPlayerSub(blobUrl, customItem.language);
+        closeAllInPlayerMenus();
+        showToast(`Loaded local subtitle: ${file.name}`, 'success');
+    };
+    reader.onerror = function() {
+        showToast('Failed to read subtitle file', 'error');
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+}
+
+let allOnlineSubs = [];
+let currentOnlineSubLang = 'all';
+
+function openOnlineSubtitlesModal(event) {
+    if (event) event.stopPropagation();
+    closeAllInPlayerMenus();
+    const modal = document.getElementById('onlineSubsModal');
+    if (!modal) return;
+
+    const title = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : (document.getElementById('playerMediaTitle')?.textContent || '');
+    const year = (activeMediaMeta && activeMediaMeta.year) ? ` (${activeMediaMeta.year})` : '';
+    safeText('onlineSubsMovieTitle', `${title}${year}`);
+    safeAttr('onlineSubQueryInput', 'value', title);
+
+    modal.style.display = 'flex';
+    executeOnlineSubSearch();
+}
+
+function closeOnlineSubtitlesModal() {
+    const modal = document.getElementById('onlineSubsModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function executeOnlineSubSearch() {
+    const listEl = document.getElementById('onlineSubsList');
+    if (!listEl) return;
+    const query = document.getElementById('onlineSubQueryInput')?.value.trim() || (activeMediaMeta?.title || '');
+    const lang = document.getElementById('onlineSubLangSelect')?.value || 'all';
+
+    if (!query) {
+        listEl.innerHTML = '<div class="subs-empty-state">Please enter a movie title to search subtitles.</div>';
+        return;
+    }
+
+    listEl.innerHTML = '<div class="subs-empty-state"><div class="spinner" style="width:24px;height:24px;margin:0 auto 10px;"></div>Searching OpenSubtitles library…</div>';
+
+    try {
+        const imdbId = (activeMediaMeta && activeMediaMeta.imdb_id) ? activeMediaMeta.imdb_id : '';
+        const se = currentSeason || 0;
+        const ep = currentEpisode || 0;
+        const url = `/api/subtitles/online?title=${encodeURIComponent(query)}&imdb_id=${encodeURIComponent(imdbId)}&se=${se}&ep=${ep}&lang=${encodeURIComponent(lang)}`;
+        const res = await fetch(url).then(r => r.json());
+        allOnlineSubs = res.subtitles || [];
+        renderOnlineSubsList();
+    } catch (err) {
+        listEl.innerHTML = `<div class="subs-empty-state" style="color:#ef4444;">Failed to fetch subtitles: ${err.message}</div>`;
+    }
+}
+
+function filterOnlineSubLang(lang, btn) {
+    currentOnlineSubLang = lang;
+    document.querySelectorAll('.online-chip').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    renderOnlineSubsList();
+}
+
+function renderOnlineSubsList() {
+    const listEl = document.getElementById('onlineSubsList');
+    if (!listEl) return;
+
+    let filtered = allOnlineSubs;
+    if (currentOnlineSubLang && currentOnlineSubLang !== 'all') {
+        filtered = allOnlineSubs.filter(s => s.language.toLowerCase() === currentOnlineSubLang.toLowerCase() || s.code.toLowerCase() === currentOnlineSubLang.toLowerCase());
+    }
+
+    if (!filtered || filtered.length === 0) {
+        listEl.innerHTML = '<div class="subs-empty-state">No online subtitles found for this selection. Try searching another keyword or language.</div>';
+        return;
+    }
+
+    listEl.innerHTML = filtered.map(s => `
+        <div class="online-sub-item">
+            <div class="online-sub-info">
+                <div class="online-sub-lang-row">
+                    <span class="online-sub-lang">${escapeHtml(s.language)}</span>
+                    <span class="online-sub-badge">${escapeHtml(s.code.toUpperCase())}</span>
+                </div>
+                <div class="online-sub-filename" title="${escapeAttr(s.filename)}">${escapeHtml(s.filename)}</div>
+                <div class="online-sub-stats">Downloads: ${s.downloads || '0'} · Rating: ★ ${s.rating || 'N/A'}</div>
+            </div>
+            <button class="btn-apply-sub" onclick="applyOnlineSubtitle('${escapeAttr(s.proxy_url)}', '${escapeAttr(s.language)}', '${escapeAttr(s.filename)}')">
+                Apply Track
+            </button>
+        </div>
+    `).join('');
+}
+
+function applyOnlineSubtitle(proxyUrl, lang, filename) {
+    const onlineItem = {
+        id: 'online_' + Date.now(),
+        language: `🌐 ${lang} (Online)`,
+        code: lang.slice(0, 2).toLowerCase(),
+        url: proxyUrl,
+        isOnline: true
+    };
+    activeCaptionList.unshift(onlineItem);
+    selectInPlayerSub(proxyUrl, onlineItem.language);
+    closeOnlineSubtitlesModal();
+    showToast(`Loaded online subtitle: ${lang}`, 'success');
 }
 
 function changePlayerSpeed(speedVal) {
@@ -1401,19 +2772,20 @@ function downloadCurrentStream() {
         showToast('No active stream to download', 'error');
         return;
     }
-    const title = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'MovieBox_Video';
+    const rawTitle = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'Movie';
     const quality = currentPlayingStream.quality || '1080p';
-    const filename = `${title.replace(/\s+/g, '_')}_${quality}.mp4`;
+    const cleanTitle = rawTitle.replace(/[^a-zA-Z0-9_\-]/g, '_').replace(/_+/g, '_').trim();
+    const filename = `${cleanTitle}_(${quality}).mp4`;
     const ref = currentPlayingStream.headers?.Referer || 'https://123moviesfree.club/';
     const downloadUrl = `/api/proxy/stream?url=${encodeURIComponent(currentPlayingStream.url)}&referer=${encodeURIComponent(ref)}&download=true&filename=${encodeURIComponent(filename)}`;
     
-    showToast(`Starting download: ${filename}…`);
+    showToast(`Downloading: ${filename}…`, 'info');
     const a = document.createElement('a');
     a.href = downloadUrl;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
-    setTimeout(() => a.remove(), 100);
+    setTimeout(() => a.remove(), 200);
 }
 
 function copyMpvCommand() {
@@ -1425,7 +2797,25 @@ function copyMpvCommand() {
 
 function closePlayerModal() {
     const modal = document.getElementById('playerModal');
-    if (plyrInstance) { saveContinueWatching(); plyrInstance.pause(); }
+    // Exit full screen if browser or stage is in fullscreen
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+        try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch {}
+    }
+    const stage = document.getElementById('videoStage');
+    if (stage) {
+        stage.classList.remove('is-fullscreen');
+        stage.classList.remove('is-iframe-mode');
+        stage.classList.remove('hide-cursor');
+    }
+    if (window._clearStreamWatchdog) window._clearStreamWatchdog();
+    if (hlsInstance) {
+        try { hlsInstance.destroy(); } catch {}
+        hlsInstance = null;
+    }
+    if (plyrInstance) {
+        saveContinueWatching();
+        try { plyrInstance.pause(); } catch {}
+    }
     const iframe = document.getElementById('cinemaIframe');
     if (iframe) {
         iframe.src = 'about:blank';
@@ -1433,11 +2823,110 @@ function closePlayerModal() {
     }
     const plyrEl = document.querySelector('#videoStage .plyr');
     if (plyrEl) plyrEl.style.display = '';
-    const video = document.getElementById('cinemaVideo');
-    if (video) video.style.display = 'block';
+    const video = getCinemaVideoElement();
+    if (video) {
+        video.style.display = 'block';
+        try { video.pause(); } catch {}
+        video.src = '';
+    }
+    const quickBar = document.getElementById('inPlayerQuickBar');
+    if (quickBar) quickBar.style.display = 'flex';
     currentSelectedServer = 'direct';
-    modal.classList.remove('active');
+
+    // Close any open in-player popovers that may block clicks on search
+    document.querySelectorAll('.in-player-popover.open').forEach(p => p.classList.remove('open'));
+
+    if (modal) {
+        modal.classList.remove('active');
+        modal.style.display = 'none';
+        // Ensure no child element retains focus (blocks search input)
+        try { modal.blur(); } catch {}
+    }
     document.body.style.overflow = '';
+
+    // Restore the search input's pointer-events (belt-and-suspenders)
+    const searchInput = document.getElementById('globalSearchInput');
+    if (searchInput) {
+        searchInput.style.pointerEvents = 'auto';
+        searchInput.removeAttribute('disabled');
+    }
+
+    // Show exit interstitial if eligible
+    if (typeof AdEngine !== 'undefined') {
+        AdEngine.showExitInterstitial();
+    }
+}
+
+async function renderPlayerSeriesRibbon() {
+    const ribbon = document.getElementById('playerSeriesRibbon');
+    if (!ribbon) return;
+    const mediaType = activeMediaMeta && (activeMediaMeta.type || '');
+    const isSeries = Boolean(
+        currentEpisode > 0 ||
+        mediaType === 'Series' ||
+        mediaType === 'TV Series' ||
+        (activeMediaMeta && activeMediaMeta.subject_type && activeMediaMeta.subject_type !== 1)
+    );
+    if (!isSeries) {
+        ribbon.style.display = 'none';
+        return;
+    }
+    ribbon.style.display = 'block';
+
+    const seasonsWrap = document.getElementById('playerRibbonSeasons');
+    const epWrap = document.getElementById('playerRibbonEpisodes');
+
+    let seasonList = (activeMediaMeta && activeMediaMeta.seasons) ? activeMediaMeta.seasons : [];
+
+    // Dynamically load seasons if not present in memory
+    if ((!seasonList || seasonList.length === 0) && currentPlayingSubjectId) {
+        try {
+            const epData = await fetch(`/episodes/${currentPlayingSubjectId}`).then(r => r.json());
+            if (epData && epData.seasons && epData.seasons.length > 0) {
+                seasonList = epData.seasons;
+                if (!activeMediaMeta) activeMediaMeta = {};
+                activeMediaMeta.seasons = seasonList;
+            }
+        } catch {}
+    }
+
+    const curSeNum = Number(currentSeason || 1);
+
+    if (seasonsWrap) {
+        if (seasonList.length > 1) {
+            seasonsWrap.innerHTML = seasonList.map(s => {
+                const sNum = Number(s.season ?? s.season_number ?? 1);
+                const isCur = sNum === curSeNum;
+                return `
+                    <button class="ribbon-season-btn ${isCur ? 'active' : ''}" onclick="switchPlayerRibbonSeason(${sNum})">
+                        Season ${sNum}
+                    </button>
+                `;
+            }).join('');
+        } else {
+            seasonsWrap.innerHTML = `<span class="ribbon-season-label">Season ${curSeNum}</span>`;
+        }
+    }
+
+    if (epWrap) {
+        const curSeasonObj = seasonList.find(s => Number(s.season ?? s.season_number ?? 1) === curSeNum);
+        const maxEp = (curSeasonObj && curSeasonObj.episode_count) ? curSeasonObj.episode_count : ((activeMediaMeta && activeMediaMeta.episode_count) ? activeMediaMeta.episode_count : 24);
+        let epHtml = '';
+        for (let ep = 1; ep <= maxEp; ep++) {
+            const isPlaying = ep === currentEpisode;
+            epHtml += `<button class="ribbon-ep-btn ${isPlaying ? 'active' : ''}" onclick="playDetailEpisode('${currentPlayingSubjectId}', ${curSeNum}, ${ep})">
+                Ep ${ep} ${isPlaying ? '▶' : ''}
+            </button>`;
+        }
+        epWrap.innerHTML = epHtml;
+    }
+}
+
+function switchPlayerRibbonSeason(seasonNum) {
+    currentSeason = Number(seasonNum);
+    currentEpisode = 1;
+    renderPlayerSeriesRibbon();
+    playDetailEpisode(currentPlayingSubjectId, currentSeason, 1);
 }
 
 function copyCurrentStreamUrl() {
@@ -1450,17 +2939,32 @@ function copyStreamUrl(url) {
 
 // ─── MINI PLAYER ─────────────────────────────────────────────────────────────
 function toggleMiniPlayer() {
+    // Exit browser fullscreen if active
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+        try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch {}
+    }
+    const stage = document.getElementById('videoStage');
+    if (stage) stage.classList.remove('is-fullscreen');
+
     const modal = document.getElementById('playerModal');
     const dock = document.getElementById('miniPlayerDock');
-    modal.classList.remove('active');
+    if (modal) {
+        modal.classList.remove('active');
+        modal.style.display = 'none';
+    }
     document.body.style.overflow = '';
-    dock.style.display = 'block';
-    document.getElementById('miniTitle').textContent = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'Playing';
+    if (dock) dock.style.display = 'block';
+    safeText('miniTitle', (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'Playing');
 }
 
 function expandMiniPlayer() {
-    document.getElementById('miniPlayerDock').style.display = 'none';
-    document.getElementById('playerModal').classList.add('active');
+    const dock = document.getElementById('miniPlayerDock');
+    if (dock) dock.style.display = 'none';
+    const modal = document.getElementById('playerModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.add('active');
+    }
     document.body.style.overflow = 'hidden';
 }
 
@@ -1594,7 +3098,10 @@ async function openDetailsModal(subjectId) {
         return;
     }
     const modal = document.getElementById('detailModal');
-    modal.classList.add('active');
+    if (modal) {
+        modal.style.display = 'flex';
+        modal.classList.add('active');
+    }
     document.body.style.overflow = 'hidden';
 
     document.getElementById('detailTitleText').textContent = 'Loading…';
@@ -1700,7 +3207,7 @@ async function openDetailsModal(subjectId) {
             document.getElementById('detailDubsSection').style.display = 'block';
             document.getElementById('detailDubsPills').innerHTML = dubs.map(dub => `
                 <button class="dub-pill ${dub.subject_id === subjectId ? 'active' : ''}"
-                    onclick="closeDetailModal(); activeDubsList=[...activeDubsList]; switchAudioDub('${dub.subject_id}', '${escapeAttr(dub.lang_name)}')">
+                    onclick="closeDetailModal(true); activeDubsList=[...activeDubsList]; switchAudioDub('${dub.subject_id}', '${escapeAttr(dub.lang_name)}')">
                     ${escapeHtml(dub.lang_name)}
                 </button>`).join('');
         }
@@ -1757,7 +3264,7 @@ async function openDetailsModal(subjectId) {
             streamBtn.className = 'btn btn-primary btn-block';
             streamBtn.style.background = '';
             streamBtn.onclick = () => {
-                closeDetailModal();
+                closeDetailModal(true);
                 quickPlay(subjectId, d.title);
             };
         }
@@ -1783,6 +3290,14 @@ async function openDetailsModal(subjectId) {
 
         // TV seasons
         const seasons = ep ? ep.seasons : null;
+        
+        // Set activeMediaMeta so the player ribbon has all data when playback starts
+        activeMediaMeta = {
+            ...d,
+            seasons: (seasons && seasons.length > 0) ? seasons : (d.seasons || [])
+        };
+        currentPlayingSubjectId = subjectId;
+        
         if (seasons && seasons.length > 0) {
             const sc = document.getElementById('detailSeriesContainer');
             sc.style.display = 'block';
@@ -1817,7 +3332,7 @@ function playTrailer(trailerUrl, title, poster) {
         cover: poster
     };
     activeStreamList = [trailerStream];
-    closeDetailModal();
+    closeDetailModal(true);
     playInCinemaModal(encodeURIComponent(JSON.stringify(trailerStream)));
     showToast(`Playing trailer: ${title}`);
 }
@@ -1825,6 +3340,8 @@ function playTrailer(trailerUrl, title, poster) {
 function selectDetailSeason(subjectId, seasonNum, epCount, btn) {
     document.querySelectorAll('#detailSeasonTabs .season-tab-btn').forEach(b => b.classList.remove('active'));
     if (btn) btn.classList.add('active');
+    // Update currentSeason so playDetailEpisode uses the correct season
+    currentSeason = seasonNum;
     renderDetailEpisodes(subjectId, seasonNum, epCount);
 }
 
@@ -1844,14 +3361,17 @@ function renderDetailEpisodes(subjectId, seasonNum, epCount) {
 }
 
 function playDetailEpisode(subjectId, seasonNum, episodeNum) {
-    closeDetailModal();
+    closeDetailModal(true);
     currentPlayingSubjectId = subjectId;
-    currentSeason = seasonNum;
-    currentEpisode = episodeNum;
+    currentSeason = Number(seasonNum);
+    currentEpisode = Number(episodeNum);
     showToast(`Loading S${seasonNum}E${episodeNum}…`);
+
+    const isCurrentlyFallback = currentSelectedServer && currentSelectedServer !== 'direct';
+
     fetch(`/api/stream/${subjectId}?se=${seasonNum}&ep=${episodeNum}`)
-        .then(r => r.json())
-        .then(data => {
+        .then(async r => {
+            const data = await r.json();
             const rawStreams = data.streams || [];
             const streams = rawStreams.filter(s => !isNoticeStream(s));
             activeStreamList = streams.length > 0 ? streams : rawStreams;
@@ -1862,13 +3382,43 @@ function playDetailEpisode(subjectId, seasonNum, episodeNum) {
             }
             // Fetch captions in background
             fetch(`/api/stream/${subjectId}/captions?se=${seasonNum}&ep=${episodeNum}`)
-                .then(r => r.json())
+                .then(res => res.json())
                 .then(cd => { activeCaptionList = cd.captions || []; })
                 .catch(() => {});
+
+            activeFallbackServers = data.fallback_servers || [];
+
+            // If fallback servers came empty, fetch from /api/fallback-sources
+            if (activeFallbackServers.length === 0 && activeMediaMeta && activeMediaMeta.title) {
+                try {
+                    const t = activeMediaMeta.title;
+                    const year = (activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+                    const fbRes = await fetch(`/api/fallback-sources?title=${encodeURIComponent(t)}&year=${year}&is_series=true&season=${seasonNum}&episode=${episodeNum}`).then(res => res.json());
+                    if (fbRes.servers && fbRes.servers.length > 0) {
+                        activeFallbackServers = fbRes.servers;
+                        updatePlayerServerSelect();
+                    }
+                } catch {}
+            }
+
+            // If user was already streaming via an embedded backup server, keep them on that server
+            if (isCurrentlyFallback && activeFallbackServers.length > 0) {
+                const target = activeFallbackServers.find(s => s.id === currentSelectedServer) || activeFallbackServers[0];
+                playInCinemaModal(null, 0, target);
+                renderPlayerSeriesRibbon();
+                return;
+            }
+
             if (activeStreamList.length > 0) {
                 const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
                 const streamToPlay = playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0];
                 playInCinemaModal(encodeURIComponent(JSON.stringify(streamToPlay)));
+                renderPlayerSeriesRibbon();
+            } else if (activeFallbackServers && activeFallbackServers.length > 0) {
+                const srvName = activeFallbackServers[0].name.split('(')[1]?.replace(')', '') || 'Cloud';
+                showToast(`Direct stream unavailable — playing S${seasonNum}E${episodeNum} via Backup Server (${srvName})…`, 'info');
+                playInCinemaModal(null, 0, activeFallbackServers[0]);
+                renderPlayerSeriesRibbon();
             } else {
                 showToast(`No stream for S${seasonNum}E${episodeNum}`, 'error');
             }
@@ -1876,9 +3426,16 @@ function playDetailEpisode(subjectId, seasonNum, episodeNum) {
         .catch(err => showToast(`Error: ${err.message}`, 'error'));
 }
 
-function closeDetailModal() {
-    document.getElementById('detailModal').classList.remove('active');
+function closeDetailModal(isTransitionToPlay = false) {
+    const modal = document.getElementById('detailModal');
+    if (modal) {
+        modal.classList.remove('active');
+        modal.style.display = 'none';
+    }
     document.body.style.overflow = '';
+    if (!isTransitionToPlay && typeof AdEngine !== 'undefined') {
+        AdEngine.showExitInterstitial();
+    }
 }
 
 // ─── API PLAYGROUND ───────────────────────────────────────────────────────────

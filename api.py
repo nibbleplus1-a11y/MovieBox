@@ -1,5 +1,7 @@
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
+import threading
 import base64
 import hashlib
 import hmac
@@ -36,9 +38,12 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
         pass
 
 app = FastAPI(
-    title="MovieBox 1080p API",
-    description="REST API for MovieBox with 1080p Stream & Subtitle Extraction",
-    version="2.5.0"
+    title="CineScope 1080p Cinema API",
+    description="REST API for CineScope with 1080p Stream & Subtitle Extraction",
+    version="2.5.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
 )
 
 app.add_middleware(
@@ -51,6 +56,10 @@ app.add_middleware(
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.get("/")
+def read_root():
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 class SimpleCache:
     def __init__(self, maxsize: int = 500, default_ttl: int = 600):
@@ -82,6 +91,7 @@ class SimpleCache:
             del self.cache[k]
 
 app_cache = SimpleCache()
+_bg_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="bg_imdb")
 
 SECRET_KEY_DEFAULT_B64 = "NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw=="
 SECRET_KEY_ALT_B64 = "WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ=="
@@ -231,6 +241,101 @@ def extract_policy_resource(sign_cookie: str | None) -> str | None:
                 pass
     return None
 
+# ─── SAFE SEARCH & ADULT/PORNOGRAPHIC CONTENT FILTER ─────────────────────────
+ADULT_GENRES = {
+    "adult", "erotica", "erotic", "18+", "porn", "porno", "hentai",
+    "mature 18+", "nsfw", "sensual", "jav"
+}
+
+# Whitelist legitimate mainstream movies & television series so they are never blocked
+MAINSTREAM_SAFE_PATTERNS = [
+    r"^xxx(\s*\(\d{4}\)|\s*:\s*(state\s+of\s+the\s+union|return\s+of\s+xander\s+cage|the\s+next\s+level|xander\s*cage))?(\s*\[.*\])?$",
+    r"\bsex\s+and\s+the\s+city\b",
+    r"\bsex\s+education\b",
+    r"\bmasters\s+of\s+sex\b",
+    r"\bthe\s+sex\s+lives\s+of\s+college\s+girls\b",
+    r"\bsex\s+tape\b",
+    r"\bsex,\s*lies,\s*and\s*videotape\b",
+    r"\bthe\s+girl\s+with\s+the\s+dragon\s+tattoo\b",
+    r"\bbasic\s+instinct\b",
+    r"\bamerican\s+pie\b",
+    r"\bfifty\s+shades\b",
+    r"\beyes\s+wide\s+shut\b",
+    r"\bboogie\s+nights\b",
+    r"\bwild\s+things\b",
+    r"\bcalifornication\b",
+    r"\beuphoria\b"
+]
+_SAFE_TITLE_REGEX = re.compile("|".join(MAINSTREAM_SAFE_PATTERNS), re.IGNORECASE)
+
+ADULT_KEYWORD_PATTERNS = [
+    # Explicit adult terms
+    r"\b18\+\b", r"\bxxx\b", r"\bporn\b", r"\bporno\b", r"\bpornograph[a-z]*\b", r"\bhentai\b", r"\bjav\b",
+    r"\bxxx\s*(video|movie|clip|film|tube|cam|pic|actress|porn|parody)\b",
+    r"\btriple\s*x\s*porn\b",
+    r"\bsex\s*(video|tape|clip|scene|act|mms|chat|cam|worker|toy)\b",
+    r"\bpleasure\s*toy\b",
+    r"\badult\s*(film|video|movie|industry|channel|xxx|site)\b",
+    r"\bfor\s*adults\s*only\b",
+    r"\berotic\b", r"\berotica\b", r"\bhardcore\b", r"\bsoftcore\b", r"\bbrazzers\b",
+    r"\bxvideos?\b", r"\bcamgirl\b", r"\bstripper\b", r"\bblowjob\b", r"\bgangbang\b",
+    r"\borgasm\b", r"\bincest\b", r"\bmilf\b", r"\bdildo\b", r"\bvoyeur\b",
+    r"\bnudity\b", r"\bnude\b", r"\buncensored\b", r"\bnsfw\b",
+    
+    # Erotic Indian & Asian B-grade adult platforms & titles
+    r"\bullu\b", r"\bkooku\b", r"\bprimeplay\b", r"\bmoodx\b", r"\bcharmsukh\b",
+    r"\bpalang\s*tod\b", r"\bkavita\s*bhabhi\b", r"\brabbit\s*movies\b", r"\bhotshots\b",
+    r"\bbhabhi\b", r"\bjane\s*anjane\b", r"\briiti\s*riwaz\b", r"\brateeq\b",
+    r"\bdesi\s*kahani\b", r"\bhunters\b", r"\bbesharams\b", r"\bjalva\b",
+    
+    # Erotic tropes (Korean 18+, adult incest tropes, etc.)
+    r"\byoung\s*sister[- ]in[- ]law\b", r"\bmother[- ]in[- ]law\b", r"\bfriend'?s\s*mother\b",
+    r"\bnice\s*sister[- ]in[- ]law\b", r"\bstepmother'?s\s*friends?\b", r"\bdelicious\s*delivery\b",
+    r"\btasty\s*boarding\b", r"\bfemale\s*boarding\s*house\b", r"\bpurpose\s*of\s*(sex|erotic)\b",
+    r"\bprivate\s*sex\b", r"\berotic\s*island\b", r"\berotic\s*tutoring\b",
+    r"\bhot\s*(scene|web\s*series)\b",
+    r"\bseduction\b", r"\blust\s*stories\b"
+]
+
+_ADULT_REGEX = re.compile("|".join(ADULT_KEYWORD_PATTERNS), re.IGNORECASE)
+
+def is_adult_content(item: Any) -> bool:
+    if not item or not isinstance(item, dict):
+        return False
+
+    title = str(item.get("title") or "").strip()
+    if _SAFE_TITLE_REGEX.search(title):
+        return False
+
+    slug = str(item.get("detail_path") or item.get("detailPath") or "")
+    if slug and _SAFE_TITLE_REGEX.search(slug.replace("-", " ")):
+        return False
+
+    genre = str(item.get("genre") or "").lower()
+    for g in genre.replace("/", ",").split(","):
+        g_clean = g.strip()
+        if g_clean in ADULT_GENRES:
+            return True
+
+    if re.search(r"\bsex\b", title, re.IGNORECASE) and not _SAFE_TITLE_REGEX.search(title):
+        return True
+
+    if _ADULT_REGEX.search(title):
+        return True
+
+    if slug and _ADULT_REGEX.search(slug):
+        return True
+
+    return False
+
+def is_adult_query(query: str) -> bool:
+    if not query:
+        return False
+    q = query.strip()
+    if _SAFE_TITLE_REGEX.search(q):
+        return False
+    return bool(_ADULT_REGEX.search(q))
+
 class MovieBoxEngine:
     _instance = None
 
@@ -292,6 +397,9 @@ class MovieBoxEngine:
 
     def search(self, query: str, page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
         safe_per_page = min(max(1, int(per_page or 20)), 20)
+        if is_adult_query(query):
+            return []
+
         cache_key = f"search:{query}:{page}:{safe_per_page}"
         cached = app_cache.get(cache_key)
         if cached is not None:
@@ -309,6 +417,10 @@ class MovieBoxEngine:
         results = []
         for item in raw_items:
             sub = item.get("subject", item)
+            # Enforce clean family-friendly results: strictly exclude pornographic/adult content
+            if is_adult_content(sub):
+                continue
+
             rel_date = sub.get("releaseDate") or ""
             is_cs = False
             if rel_date:
@@ -449,7 +561,8 @@ class MovieBoxEngine:
             "cast": ", ".join(actors[:6]) if actors else None,
             "trailer_url": trailer_url,
             "detail_path": detail_path,
-            "dubs": dubs
+            "dubs": dubs,
+            "seasons": self.get_episodes(main_id) if data.get("subjectType") != 1 else []
         }
         app_cache.set(cache_key, res, ttl=1800)
         return res
@@ -464,9 +577,22 @@ class MovieBoxEngine:
         seasons = res.get("data", {}).get("seasons", [])
         season_list = []
         for s in seasons:
+            se_num = int(s.get("se") or 1)
+            max_ep = int(s.get("maxEp") or 1)
+            ep_list = [
+                {
+                    "season": se_num,
+                    "season_number": se_num,
+                    "episode": ep_num,
+                    "title": f"Episode {ep_num}"
+                }
+                for ep_num in range(1, max_ep + 1)
+            ]
             season_list.append({
-                "season": s.get("se", 1),
-                "episode_count": s.get("maxEp", 1),
+                "season": se_num,
+                "season_number": se_num,
+                "episode_count": max_ep,
+                "episodes": ep_list,
                 "resolutions": s.get("resolutions", [])
             })
         app_cache.set(cache_key, season_list, ttl=1800)
@@ -710,7 +836,7 @@ class MovieBoxEngine:
 
                 if target_key:
                     for s in subs:
-                        if s.get("subjectType") == 6:  # skip video clips and songs
+                        if s.get("subjectType") == 6 or is_adult_content(s):  # skip video clips, songs, and adult content
                             continue
                         cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
                         item = {
@@ -824,6 +950,18 @@ async def dashboard():
         return FileResponse(index_path)
     return HTMLResponse("<h1>MovieBox 1080p Engine Active</h1><p>Visit <a href='/docs'>/docs</a> for Swagger documentation.</p>")
 
+_STREAM_PROXY_CLIENT: Optional[httpx.AsyncClient] = None
+
+def get_stream_proxy_client() -> httpx.AsyncClient:
+    global _STREAM_PROXY_CLIENT
+    if _STREAM_PROXY_CLIENT is None or _STREAM_PROXY_CLIENT.is_closed:
+        timeout = httpx.Timeout(connect=8.0, read=None, write=30.0, pool=30.0)
+        limits = httpx.Limits(max_keepalive_connections=120, max_connections=350, keepalive_expiry=60.0)
+        _STREAM_PROXY_CLIENT = httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True)
+    return _STREAM_PROXY_CLIENT
+
+_WORKING_REFERERS: Dict[str, str] = {}
+
 @app.api_route("/api/proxy/stream", methods=["GET", "HEAD", "OPTIONS"])
 async def proxy_stream(request: Request, url: str = Query(...), referer: Optional[str] = None, download: bool = False, filename: Optional[str] = None, subject_id: Optional[str] = None):
     if request.method == "OPTIONS":
@@ -834,12 +972,19 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
             "Access-Control-Max-Age": "86400"
         })
 
+    from urllib.parse import urlparse
+    url_domain = urlparse(url).netloc
+
     # Smart candidate referers to prevent 429 rate-limiting from hakunaymatata CDN
     candidate_refs = []
+    # Prioritize previously successful referer for this domain
+    if url_domain in _WORKING_REFERERS:
+        candidate_refs.append(_WORKING_REFERERS[url_domain])
+
     if referer and "aoneroom.com" not in referer:
         candidate_refs.append(referer)
     if "hakunaymatata.com" in url:
-        candidate_refs.extend(["https://movieboxonline.net/", "https://123moviesfree.club/", "https://moviebox.ph/"])
+        candidate_refs.extend(["https://123moviesfree.club/", "https://movieboxonline.net/", "https://moviebox.ph/"])
     else:
         candidate_refs.extend(["https://movieboxonline.net/", "https://api3.aoneroom.com/"])
 
@@ -851,8 +996,7 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
             unique_refs.append(cr)
 
     range_header = request.headers.get("range", "bytes=0-")
-    timeout = httpx.Timeout(connect=15.0, read=None, write=30.0, pool=30.0)
-    client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+    client = get_stream_proxy_client()
     resp = None
 
     for ref in unique_refs:
@@ -871,6 +1015,7 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
             r = await client.send(req, stream=True)
             if r.status_code not in (429, 403):
                 resp = r
+                _WORKING_REFERERS[url_domain] = ref
                 break
             else:
                 await r.aclose()
@@ -878,7 +1023,6 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
             continue
 
     if resp is None or resp.status_code in (429, 403):
-        await client.aclose()
         if subject_id:
             app_cache.delete_prefix(f"streams:{subject_id}:")
         err_msg = "Upstream CDN rate limit (429). Fresh URLs loaded — please try again." if (resp and resp.status_code == 429) else "Upstream CDN blocked request (403)."
@@ -898,33 +1042,33 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
     if "content-type" not in response_headers:
         response_headers["content-type"] = "video/mp4"
 
+    # Ensure clean, human-readable filename for downloads & browser saves
+    raw_fn = filename or (re.sub(r'[^a-zA-Z0-9_\-\. ]', '_', subject_id or "Movie").strip())
+    safe_fn = re.sub(r'[^a-zA-Z0-9_\-\. ]', '_', raw_fn).strip()
+    if not safe_fn.lower().endswith(".mp4"):
+        safe_fn += ".mp4"
+    from urllib.parse import quote
+    encoded_fn = quote(safe_fn)
+
     if download:
-        safe_fn = re.sub(r'[^a-zA-Z0-9_\-\. ]', '_', filename or "MovieBox_Video").strip()
-        if not safe_fn.endswith(".mp4"):
-            safe_fn += ".mp4"
-        response_headers["Content-Disposition"] = f'attachment; filename="{safe_fn}"'
+        response_headers["Content-Disposition"] = f'attachment; filename="{safe_fn}"; filename*=UTF-8\'\'{encoded_fn}'
     else:
-        # Crucial: explicit inline disposition prevents browsers & download managers from halting playback
-        response_headers["Content-Disposition"] = "inline"
+        # Crucial: explicit inline disposition prevents playback stalls while providing clean filename on save
+        response_headers["Content-Disposition"] = f'inline; filename="{safe_fn}"; filename*=UTF-8\'\'{encoded_fn}'
 
     if request.method == "HEAD":
         await resp.aclose()
-        await client.aclose()
         return Response(status_code=resp.status_code, headers=response_headers)
 
     async def content_iterator():
         try:
-            async for chunk in resp.aiter_bytes(chunk_size=131072):
+            async for chunk in resp.aiter_bytes(chunk_size=524288):
                 yield chunk
         except Exception:
             pass
         finally:
             try:
                 await resp.aclose()
-            except Exception:
-                pass
-            try:
-                await client.aclose()
             except Exception:
                 pass
 
@@ -951,8 +1095,37 @@ async def proxy_caption(url: str = Query(...), referer: Optional[str] = None):
 
     return Response(content=content, media_type="text/vtt; charset=utf-8", headers={"Access-Control-Allow-Origin": "*"})
 
+@app.get("/api/proxy/online-caption")
+async def proxy_online_caption(url: str = Query(...)):
+    headers = {"User-Agent": "TemporaryUserAgent"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code != 200:
+                raise HTTPException(status_code=r.status_code, detail="Failed to fetch online subtitle")
+            raw_bytes = r.content
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch online subtitle: {str(e)}")
+
+    import gzip
+    try:
+        content = gzip.decompress(raw_bytes).decode("utf-8", errors="replace")
+    except Exception:
+        try:
+            content = raw_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            content = raw_bytes.decode("latin-1", errors="replace")
+
+    if not content.strip().startswith("WEBVTT"):
+        converted = re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", content)
+        content = "WEBVTT\n\n" + converted
+
+    return Response(content=content, media_type="text/vtt; charset=utf-8", headers={"Access-Control-Allow-Origin": "*"})
+
 @app.get("/search")
 def search(q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20):
+    if is_adult_query(q):
+        return {"query": q, "page": page, "results": []}
     safe_per_page = min(max(1, int(per_page or 20)), 20)
     try:
         results = engine.search(q, page=page, per_page=safe_per_page)
@@ -962,11 +1135,15 @@ def search(q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20)
 
 @app.get("/search/suggest")
 def search_suggest(q: str = Query(..., min_length=1)):
+    if is_adult_query(q):
+        return {"suggestions": []}
     # Return real subject search matches with genuine posters, types, and valid subject IDs
     real_results = engine.search(q, per_page=8)
     suggestions = []
     seen_ids = set()
     for item in real_results:
+        if is_adult_content(item):
+            continue
         sid = str(item.get("subject_id") or "")
         if sid and sid != "None" and sid not in seen_ids:
             seen_ids.add(sid)
@@ -987,7 +1164,7 @@ def get_detail(subject_id: str):
     if not subject_id or subject_id == "None":
         raise HTTPException(status_code=400, detail="Invalid subject ID")
     res = engine.get_details(subject_id)
-    if not res or not res.get("title"):
+    if not res or not res.get("title") or is_adult_content(res):
         raise HTTPException(status_code=404, detail="Title not found")
     # Mark pre-release titles as "Coming Soon" based on release date only
     release_date = res.get("release_date") or ""
@@ -1048,77 +1225,85 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
     if not imdb_id:
         return []
     
+    clean_id = imdb_id.strip()
+
     if is_series or season > 0 or episode > 0:
         s = max(1, season)
         e = max(1, episode)
         return [
             {
-                "name": "Server 2 (VidLink HD)",
-                "id": "vidlink",
+                "name": "Server 2 (VidSrc Cloud)",
+                "id": "vidsrc_me",
                 "type": "iframe",
-                "url": f"https://vidlink.pro/tv/{imdb_id}/{s}/{e}?primaryColor=7c3aed&secondaryColor=a855f7",
+                "url": f"https://vidsrc.me/embed/tv?imdb={clean_id}&season={s}&episode={e}",
             },
             {
-                "name": "Server 3 (VidSrc Cloud)",
-                "id": "vidsrc_to",
+                "name": "Server 3 (RiveStream Ultra)",
+                "id": "rivestream",
                 "type": "iframe",
-                "url": f"https://vidsrc.to/embed/tv/{imdb_id}/{s}/{e}",
+                "url": f"https://rivestream.live/embed?type=serie&id={clean_id}&season={s}&episode={e}",
             },
             {
-                "name": "Server 4 (MultiEmbed Global)",
+                "name": "Server 4 (AutoEmbed Fast)",
+                "id": "autoembed",
+                "type": "iframe",
+                "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
+            },
+            {
+                "name": "Server 5 (VidSrc VIP Mirror)",
+                "id": "vidsrc_pm",
+                "type": "iframe",
+                "url": f"https://vidsrc.pm/embed/tv?imdb={clean_id}&season={s}&episode={e}",
+            },
+            {
+                "name": "Server 6 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
-                "url": f"https://multiembed.mov/?video_id={imdb_id}&s={s}&e={e}",
-            },
-            {
-                "name": "Server 5 (SmashyStream Fast)",
-                "id": "smashystream",
-                "type": "iframe",
-                "url": f"https://embed.smashystream.com/playere.php?imdb={imdb_id}&season={s}&episode={e}",
-            },
-            {
-                "name": "Server 6 (2Embed Mirror)",
-                "id": "2embed",
-                "type": "iframe",
-                "url": f"https://www.2embed.cc/embedtv/{imdb_id}&s={s}&e={e}",
+                "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
             },
         ]
     else:
         return [
             {
-                "name": "Server 2 (VidLink HD)",
+                "name": "Server 2 (VidSrc Cloud)",
+                "id": "vidsrc_me",
+                "type": "iframe",
+                "url": f"https://vidsrc.me/embed/movie?imdb={clean_id}",
+            },
+            {
+                "name": "Server 3 (VidLink Pro)",
                 "id": "vidlink",
                 "type": "iframe",
-                "url": f"https://vidlink.pro/movie/{imdb_id}?primaryColor=7c3aed&secondaryColor=a855f7",
+                "url": f"https://vidlink.pro/movie/{clean_id}?primaryColor=e50914&secondaryColor=ff4d4f",
             },
             {
-                "name": "Server 3 (VidSrc Cloud)",
-                "id": "vidsrc_to",
+                "name": "Server 4 (RiveStream Ultra)",
+                "id": "rivestream",
                 "type": "iframe",
-                "url": f"https://vidsrc.to/embed/movie/{imdb_id}",
+                "url": f"https://rivestream.live/embed?type=movie&id={clean_id}",
             },
             {
-                "name": "Server 4 (MultiEmbed Global)",
+                "name": "Server 5 (AutoEmbed Fast)",
+                "id": "autoembed",
+                "type": "iframe",
+                "url": f"https://autoembed.co/movie/imdb/{clean_id}",
+            },
+            {
+                "name": "Server 6 (VidSrc VIP Mirror)",
+                "id": "vidsrc_pm",
+                "type": "iframe",
+                "url": f"https://vidsrc.pm/embed/movie?imdb={clean_id}",
+            },
+            {
+                "name": "Server 7 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
-                "url": f"https://multiembed.mov/?video_id={imdb_id}",
-            },
-            {
-                "name": "Server 5 (SmashyStream Fast)",
-                "id": "smashystream",
-                "type": "iframe",
-                "url": f"https://embed.smashystream.com/playere.php?imdb={imdb_id}",
-            },
-            {
-                "name": "Server 6 (2Embed Mirror)",
-                "id": "2embed",
-                "type": "iframe",
-                "url": f"https://www.2embed.cc/embed/{imdb_id}",
+                "url": f"https://multiembed.mov/?video_id={clean_id}",
             },
         ]
 
 @app.get("/api/fallback-sources")
-def get_fallback_sources(
+async def get_fallback_sources(
     title: str = Query(...),
     year: Optional[str] = Query(None),
     is_series: bool = Query(False),
@@ -1126,7 +1311,8 @@ def get_fallback_sources(
     episode: int = Query(0),
     subject_id: Optional[str] = Query(None)
 ):
-    imdb_id = resolve_imdb_id(title, year=year, is_series=is_series)
+    loop = asyncio.get_event_loop()
+    imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(title, year=year, is_series=is_series))
     if not imdb_id:
         return {"title": title, "imdb_id": None, "servers": []}
     servers = get_backup_servers(imdb_id, is_series=is_series, season=season, episode=episode)
@@ -1140,7 +1326,7 @@ def get_fallback_sources(
     }
 
 @app.get("/api/stream/{subject_id}")
-def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Optional[str] = None, _bust: Optional[str] = None):
+async def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Optional[str] = None, _bust: Optional[str] = None):
     if not subject_id or subject_id == "None":
         raise HTTPException(status_code=400, detail="Invalid subject ID")
 
@@ -1148,44 +1334,64 @@ def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Optional
     if _bust:
         app_cache.delete_prefix(f"streams:{subject_id}:")
 
-    streams = engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path)
+    loop = asyncio.get_event_loop()
+    # Run blocking stream fetch in thread to not block event loop
+    streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path))
+
     # If se=0 and ep=0 returned no streams, check if this subject is a TV series (Season 1 Episode 1)
+    local_se, local_ep = se, ep
     if not streams and se == 0 and ep == 0:
-        s1_streams = engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path)
+        s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path))
         if s1_streams:
             streams = s1_streams
-            se = 1
-            ep = 1
+            local_se = 1
+            local_ep = 1
+    else:
+        local_se, local_ep = se, ep
 
     try:
-        details = engine.get_details(subject_id)
+        details = await loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
+        if is_adult_content(details):
+            raise HTTPException(status_code=404, detail="Title not found")
         dubs = details.get("dubs", [])
         title = details.get("title")
         cover = details.get("cover")
-        # Only mark coming_soon when the detail endpoint itself confirms it (date-based).
         is_coming_soon = bool(details.get("coming_soon") and len(streams) == 0)
         trailer_url = details.get("trailer_url")
+        det_type = details.get("type", "")
+        det_release = str(details.get("release_date") or "")[:4] or None
     except Exception:
         dubs = []
         title = None
         cover = None
         is_coming_soon = False
         trailer_url = None
+        det_type = ""
+        det_release = None
 
-    # Resolve backup servers if available
-    fallback_servers = []
+    # Check cache for IMDB/fallback servers first (avoids the slow 13s Cinemeta call)
     imdb_id = None
+    fallback_servers = []
     if title and not is_coming_soon:
-        is_ser = bool((details.get("type") if 'details' in locals() else None) == "Series" or se > 0 or ep > 0)
-        yr = str(details.get("release_date") if 'details' in locals() else "")[:4] or None
-        imdb_id = resolve_imdb_id(title, year=yr, is_series=is_ser)
+        is_ser = bool(det_type == "Series" or local_se > 0 or local_ep > 0)
+        cache_key_imdb = f"imdb_id:{re.sub(r'[\[\(].*?[\]\)]', '', title).strip()}:{det_release or ''}:{is_ser}"
+        imdb_id = app_cache.get(cache_key_imdb)
         if imdb_id:
-            fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=se, episode=ep)
+            # Cache hit — build servers immediately
+            fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
+        else:
+            # Kick off IMDB resolution in background — don't block the stream response
+            def _bg_resolve():
+                resolved = resolve_imdb_id(title, year=det_release, is_series=is_ser)
+                # result cached inside resolve_imdb_id already
+                return resolved
+            # Fire-and-forget — client can fetch /api/fallback-sources separately if needed
+            _bg_executor.submit(_bg_resolve)
 
     return {
         "subject_id": subject_id,
-        "season": se,
-        "episode": ep,
+        "season": local_se,
+        "episode": local_ep,
         "count": len(streams),
         "streams": streams,
         "dubs": dubs,
@@ -1208,6 +1414,60 @@ def get_captions(subject_id: str, se: int = 0, ep: int = 0, stream_id: Optional[
         "captions": subs
     }
 
+@app.get("/api/subtitles/online")
+def search_online_subtitles(title: str = Query(..., min_length=1), imdb_id: Optional[str] = None, se: int = 0, ep: int = 0, lang: Optional[str] = None):
+    headers = {"User-Agent": "TemporaryUserAgent"}
+    url = None
+    if imdb_id:
+        num = imdb_id.lower().replace("tt", "").strip()
+        if num.isdigit():
+            if se > 0 and ep > 0:
+                url = f"https://rest.opensubtitles.org/search/episode-{ep}/imdbid-{num}/season-{se}/sublanguageid-all"
+            else:
+                url = f"https://rest.opensubtitles.org/search/imdbid-{num}/sublanguageid-all"
+    if not url:
+        safe_q = urllib.parse.quote(title.strip())
+        url = f"https://rest.opensubtitles.org/search/query-{safe_q}/sublanguageid-all"
+
+    results = []
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            if isinstance(data, list):
+                seen = set()
+                for item in data:
+                    dl = item.get("SubDownloadLink")
+                    if not dl or dl in seen:
+                        continue
+                    seen.add(dl)
+                    lan_name = item.get("LanguageName") or "English"
+                    lan_code = item.get("SubLanguageID") or "en"
+                    if lang and lang.lower() != "all" and lan_code.lower() != lang.lower() and lang.lower() not in lan_name.lower():
+                        continue
+                    results.append({
+                        "id": str(item.get("IDSubtitleFile") or len(results) + 1),
+                        "language": lan_name,
+                        "code": lan_code,
+                        "filename": item.get("SubFileName") or f"{title}.srt",
+                        "downloads": str(item.get("SubDownloadsCnt") or "0"),
+                        "rating": str(item.get("SubRating") or "0"),
+                        "download_url": dl,
+                        "proxy_url": f"/api/proxy/online-caption?url={urllib.parse.quote(dl)}"
+                    })
+    except Exception:
+        pass
+
+    return {
+        "title": title,
+        "imdb_id": imdb_id,
+        "season": se,
+        "episode": ep,
+        "count": len(results),
+        "subtitles": results[:40]
+    }
+
+@app.get("/api/feed")
 @app.get("/api/feed/home-curated")
 def get_home_curated():
     return engine.get_curated_feed()
@@ -1256,8 +1516,8 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
         resp = engine.session.post(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://movieboxhd.net/"}, json=payload, timeout=12)
         raw = resp.json().get("data", {}).get("items") or []
         for s in raw:
-            # strictly exclude clips, songs, and YouTube mashups (subjectType 6)
-            if s.get("subjectType") == 6:
+            # strictly exclude clips, songs, and adult content
+            if s.get("subjectType") == 6 or is_adult_content(s):
                 continue
             if not s.get("title"):
                 continue
@@ -1320,7 +1580,8 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
         resp = engine.session.post(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://movieboxhd.net/"}, json=payload, timeout=12)
         raw = resp.json().get("data", {}).get("items") or []
         for s in raw:
-            if s.get("subjectType") == 6:
+            # strictly exclude clips, songs, and adult content
+            if s.get("subjectType") == 6 or is_adult_content(s):
                 continue
             if not s.get("title"):
                 continue
@@ -1361,15 +1622,56 @@ def get_home():
     resp = engine.session.get(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://moviebox.ph/"}, timeout=20)
     return resp.json()
 
-@app.get("/admin/clear-cache")
-def clear_cache(prefix: Optional[str] = None):
-    """Flush all cached data (or a specific prefix) so stale coming_soon / stream entries are refreshed."""
-    if prefix:
-        app_cache.delete_prefix(prefix)
-        return {"cleared": f"prefix:{prefix}"}
-    # Full flush
-    app_cache.cache.clear()
-    return {"cleared": "all"}
+@app.get("/api/ads/config")
+def get_ads_config():
+    """Returns the master ad monetization config for web and mobile apps."""
+    config_path = os.path.join(os.path.dirname(__file__), "ad_config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            pass
+    return {
+        "enabled": True,
+        "test_mode": True,
+        "monetag": {
+            "enabled": True,
+            "zone_id": "",
+            "direct_link": "",
+            "preroll_enabled": True,
+            "preroll_duration_seconds": 5,
+            "preroll_cooldown_seconds": 300,
+            "exit_interstitial_enabled": True,
+            "exit_cooldown_seconds": 600
+        },
+        "adsterra": {
+            "enabled": True,
+            "social_bar_enabled": True,
+            "social_bar_script_url": "",
+            "native_banner_enabled": True,
+            "banner_key": ""
+        },
+        "admob": {
+            "enabled": True,
+            "app_id": "ca-app-pub-3940256099942544~3347511713",
+            "banner_unit_id": "ca-app-pub-3940256099942544/6300978111",
+            "interstitial_unit_id": "ca-app-pub-3940256099942544/1033173712",
+            "interstitial_frequency": 4
+        }
+    }
+
+@app.post("/api/ads/config")
+async def update_ads_config(request: Request):
+    """Allows updating ad monetization configuration dynamically."""
+    try:
+        new_config = await request.json()
+        config_path = os.path.join(os.path.dirname(__file__), "ad_config.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(new_config, f, indent=2)
+        return {"status": "success", "config": new_config}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

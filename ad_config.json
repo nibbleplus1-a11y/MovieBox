@@ -1,0 +1,28 @@
+{
+  "enabled": true,
+  "test_mode": true,
+  "monetag": {
+    "enabled": true,
+    "zone_id": "",
+    "direct_link": "",
+    "preroll_enabled": true,
+    "preroll_duration_seconds": 5,
+    "preroll_cooldown_seconds": 60,
+    "exit_interstitial_enabled": true,
+    "exit_cooldown_seconds": 15
+  },
+  "adsterra": {
+    "enabled": true,
+    "social_bar_enabled": true,
+    "social_bar_script_url": "",
+    "native_banner_enabled": true,
+    "banner_key": ""
+  },
+  "admob": {
+    "enabled": true,
+    "app_id": "ca-app-pub-3940256099942544~3347511713",
+    "banner_unit_id": "ca-app-pub-3940256099942544/6300978111",
+    "interstitial_unit_id": "ca-app-pub-3940256099942544/1033173712",
+    "interstitial_frequency": 4
+  }
+}
