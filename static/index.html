@@ -324,6 +324,10 @@
             <div class="video-stage" id="videoStage">
                 <div id="playerAmbientGlow" class="player-ambient-glow"></div>
                 <video id="cinemaVideo" playsinline poster=""></video>
+                <div id="videoBufferingSpinner" class="video-buffering-spinner" style="display:none;">
+                    <div class="video-spinner-ring"></div>
+                    <span id="videoBufferingText">Buffering 1080p Stream...</span>
+                </div>
                 <iframe id="cinemaIframe" class="cinema-iframe" style="display:none; width:100%; height:100%; border:0; position:absolute; inset:0; z-index:3; border-radius: var(--r-md);" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
                 <div class="seek-ripple left" id="seekRippleLeft">
                     <span>

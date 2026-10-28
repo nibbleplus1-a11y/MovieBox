@@ -1290,10 +1290,11 @@ def resolve_imdb_id(title: str, year: Optional[str] = None, is_series: bool = Fa
     if cached is not None:
         return cached
 
+    # Attempt 1: Cinemeta
     cat = "series" if is_series else "movie"
     try:
         url = f"https://v3-cinemeta.strem.io/catalog/{cat}/top/search={urllib.parse.quote(clean_title)}.json"
-        r = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        r = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
         metas = r.json().get("metas", [])
         if metas:
             if year:
@@ -1310,6 +1311,30 @@ def resolve_imdb_id(title: str, year: Optional[str] = None, is_series: bool = Fa
                 return imdb_id
     except Exception:
         pass
+
+    # Attempt 2: Official IMDb Suggestion API (handles titles like Tulsa King, etc.)
+    try:
+        q_slug = re.sub(r'[^a-zA-Z0-9 ]', '', clean_title).strip().lower()
+        if q_slug:
+            first_letter = q_slug[0]
+            imdb_url = f"https://v3.sg.media-imdb.com/suggestion/{first_letter}/{urllib.parse.quote(q_slug)}.json"
+            r = httpx.get(imdb_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            data = r.json().get("d", [])
+            for item in data:
+                it_id = item.get("id")
+                if it_id and it_id.startswith("tt"):
+                    it_year = str(item.get("y", ""))
+                    if year and it_year and year != it_year and len(data) > 1:
+                        continue
+                    app_cache.set(cache_key, it_id, ttl=86400)
+                    return it_id
+            if data and data[0].get("id") and data[0]["id"].startswith("tt"):
+                it_id = data[0]["id"]
+                app_cache.set(cache_key, it_id, ttl=86400)
+                return it_id
+    except Exception:
+        pass
+
     return None
 
 def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, episode: int = 0) -> List[Dict[str, str]]:
@@ -1323,73 +1348,67 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
         e = max(1, episode)
         return [
             {
-                "name": "Server 2 (VidSrc Cloud)",
-                "id": "vidsrc_me",
+                "name": "Server 2 (VidLink Pro)",
+                "id": "vidlink",
                 "type": "iframe",
-                "url": f"https://vidsrc.me/embed/tv?imdb={clean_id}&season={s}&episode={e}",
+                "url": f"https://vidlink.pro/tv/{clean_id}/{s}/{e}?primaryColor=e50914&secondaryColor=ff4d4f",
             },
             {
-                "name": "Server 3 (RiveStream Ultra)",
-                "id": "rivestream",
-                "type": "iframe",
-                "url": f"https://rivestream.live/embed?type=serie&id={clean_id}&season={s}&episode={e}",
-            },
-            {
-                "name": "Server 4 (AutoEmbed Fast)",
+                "name": "Server 3 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
             },
             {
-                "name": "Server 5 (VidSrc VIP Mirror)",
-                "id": "vidsrc_pm",
-                "type": "iframe",
-                "url": f"https://vidsrc.pm/embed/tv?imdb={clean_id}&season={s}&episode={e}",
-            },
-            {
-                "name": "Server 6 (MultiEmbed Global)",
+                "name": "Server 4 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
+            },
+            {
+                "name": "Server 5 (EmbedSu Fast)",
+                "id": "embedsu",
+                "type": "iframe",
+                "url": f"https://embed.su/embed/tv/{clean_id}/{s}/{e}",
+            },
+            {
+                "name": "Server 6 (RiveStream Ultra)",
+                "id": "rivestream",
+                "type": "iframe",
+                "url": f"https://rivestream.live/embed?type=serie&id={clean_id}&season={s}&episode={e}",
             },
         ]
     else:
         return [
             {
-                "name": "Server 2 (VidSrc Cloud)",
-                "id": "vidsrc_me",
-                "type": "iframe",
-                "url": f"https://vidsrc.me/embed/movie?imdb={clean_id}",
-            },
-            {
-                "name": "Server 3 (VidLink Pro)",
+                "name": "Server 2 (VidLink Pro)",
                 "id": "vidlink",
                 "type": "iframe",
                 "url": f"https://vidlink.pro/movie/{clean_id}?primaryColor=e50914&secondaryColor=ff4d4f",
             },
             {
-                "name": "Server 4 (RiveStream Ultra)",
-                "id": "rivestream",
-                "type": "iframe",
-                "url": f"https://rivestream.live/embed?type=movie&id={clean_id}",
-            },
-            {
-                "name": "Server 5 (AutoEmbed Fast)",
+                "name": "Server 3 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/movie/imdb/{clean_id}",
             },
             {
-                "name": "Server 6 (VidSrc VIP Mirror)",
-                "id": "vidsrc_pm",
-                "type": "iframe",
-                "url": f"https://vidsrc.pm/embed/movie?imdb={clean_id}",
-            },
-            {
-                "name": "Server 7 (MultiEmbed Global)",
+                "name": "Server 4 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}",
+            },
+            {
+                "name": "Server 5 (EmbedSu Fast)",
+                "id": "embedsu",
+                "type": "iframe",
+                "url": f"https://embed.su/embed/movie/{clean_id}",
+            },
+            {
+                "name": "Server 6 (RiveStream Ultra)",
+                "id": "rivestream",
+                "type": "iframe",
+                "url": f"https://rivestream.live/embed?type=movie&id={clean_id}",
             },
         ]
 

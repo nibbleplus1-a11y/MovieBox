@@ -1073,6 +1073,31 @@ function selectAndResolveEpisode(subjectId, seasonNum, episodeNum) {
     executeResolver();
 }
 
+// ─── STREAM WATCHDOG (gentle – only triggers after 30s of true stall) ──────────
+let _streamWatchdogTimer = null;
+
+function startStreamWatchdog(ms = 30000) {
+    clearStreamWatchdog();
+    _streamWatchdogTimer = setTimeout(() => {
+        const video = getCinemaVideoElement();
+        if (!video) return;
+        // Only fire if we truly haven't made progress
+        if (video.currentTime < 1 && video.readyState < 3) {
+            console.warn('[Watchdog] Stream stalled – triggering auto-fallback');
+            window.triggerAutoStreamFallback && window.triggerAutoStreamFallback('stall');
+        } else {
+            clearStreamWatchdog();
+        }
+    }, ms);
+}
+
+function clearStreamWatchdog() {
+    if (_streamWatchdogTimer) {
+        clearTimeout(_streamWatchdogTimer);
+        _streamWatchdogTimer = null;
+    }
+}
+
 // ─── PLYR & IN-PLAYER CINEMA ENGINE ──────────────────────────────────────────
 function getCinemaVideoElement() {
     let video = document.getElementById('cinemaVideo');
@@ -1150,6 +1175,9 @@ function setCinemaVideoSource(src, stream, titleText) {
     }
 
     // Direct MP4 playback via Plyr API & HTML5 video element
+    const spinner = document.getElementById('videoBufferingSpinner');
+    if (spinner) spinner.style.display = 'flex';
+
     if (plyrInstance) {
         try {
             plyrInstance.source = {
@@ -1165,15 +1193,14 @@ function setCinemaVideoSource(src, stream, titleText) {
             };
         } catch (e) {
             console.warn('Plyr source setter warning:', e);
+            if (video && video.src !== src) {
+                video.src = src;
+                try { video.load(); } catch {}
+            }
         }
-    }
-    if (video.src !== src) {
+    } else if (video && video.src !== src) {
         video.src = src;
         try { video.load(); } catch {}
-    }
-    // Automatically trigger watchdog to auto-switch if stream fails or stalls on start
-    if (window._startStreamWatchdog) {
-        window._startStreamWatchdog(7500);
     }
 }
 
@@ -1231,10 +1258,33 @@ function initPlyr() {
         }
     });
 
+    const showBuffering = (text = 'Buffering 1080p Stream...') => {
+        const spinner = document.getElementById('videoBufferingSpinner');
+        const txt = document.getElementById('videoBufferingText');
+        if (txt) txt.textContent = text;
+        if (spinner) spinner.style.display = 'flex';
+    };
+    const hideBuffering = () => {
+        const spinner = document.getElementById('videoBufferingSpinner');
+        if (spinner) spinner.style.display = 'none';
+    };
+
+    video.addEventListener('waiting', () => showBuffering('Buffering 1080p Stream...'));
+    video.addEventListener('seeking', () => showBuffering('Seeking...'));
+    video.addEventListener('playing', hideBuffering);
+    video.addEventListener('canplay', hideBuffering);
+    video.addEventListener('pause', hideBuffering);
+
+    plyrInstance.on('playing', hideBuffering);
+    plyrInstance.on('pause', hideBuffering);
+    plyrInstance.on('waiting', () => showBuffering('Buffering 1080p Stream...'));
+    plyrInstance.on('seeking', () => showBuffering('Seeking...'));
+
     plyrInstance.on('timeupdate', () => {
+        hideBuffering();
         if (!currentPlayingSubjectId || plyrInstance.currentTime < 5) return;
-        // Throttle: save every 15s
-        if (!plyrInstance._lastSave || Date.now() - plyrInstance._lastSave > 15000) {
+        // Save progress every 5 seconds for pinpoint resume accuracy
+        if (!plyrInstance._lastSave || Date.now() - plyrInstance._lastSave > 5000) {
             plyrInstance._lastSave = Date.now();
             saveContinueWatching();
         }
@@ -1246,38 +1296,20 @@ function initPlyr() {
         }
     });
 
-    // Smart Buffer & Stall Watchdog Engine
-    let streamWatchdogTimer = null;
-    let fallbackAttemptIndex = 0;
-    window._resetFallbackFlag = () => { fallbackAttemptIndex = 0; };
-
-    function clearStreamWatchdog() {
-        if (streamWatchdogTimer) {
-            clearTimeout(streamWatchdogTimer);
-            streamWatchdogTimer = null;
+    plyrInstance.on('error', (e) => {
+        hideBuffering();
+        console.warn('Plyr stream error event:', e);
+        if (activeFallbackServers && activeFallbackServers.length > 0) {
+            const srv = activeFallbackServers[0];
+            showToast(`Direct stream error — click Server menu to switch to ${srv.name}`, 'warning');
         }
-    }
-    window._clearStreamWatchdog = clearStreamWatchdog;
+    });
 
-    function startStreamWatchdog(timeoutMs = 7500) {
-        clearStreamWatchdog();
-        streamWatchdogTimer = setTimeout(() => {
-            const modal = document.getElementById('playerModal');
-            const v = getCinemaVideoElement();
-            if (!modal || !modal.classList.contains('active')) return;
-            // Trigger auto-fallback if direct server is struggling to buffer or start
-            if (currentSelectedServer === 'direct' && v) {
-                if (v.currentTime < 0.5 || v.readyState < 2) {
-                    showToast('Direct stream is buffering slowly — auto-switching to Backup Server…', 'warning');
-                    window.triggerAutoStreamFallback('stall');
-                }
-            }
-        }, timeoutMs);
-    }
-    window._startStreamWatchdog = startStreamWatchdog;
+    window._clearStreamWatchdog = () => clearStreamWatchdog();
+    window._startStreamWatchdog = (ms) => startStreamWatchdog(ms || 30000);
+    window._resetFallbackFlag = () => {};
 
     window.triggerAutoStreamFallback = async function(reason = 'error') {
-        clearStreamWatchdog();
         const modal = document.getElementById('playerModal');
         if (!modal || !modal.classList.contains('active')) return;
 
@@ -1354,11 +1386,12 @@ function initPlyr() {
     });
 
     video.addEventListener('waiting', () => {
-        if (currentSelectedServer === 'direct') startStreamWatchdog(6000);
+        // 30-second gentle watchdog — won't fire if video is actually making progress
+        if (currentSelectedServer === 'direct') startStreamWatchdog(30000);
     });
 
     video.addEventListener('stalled', () => {
-        if (currentSelectedServer === 'direct') startStreamWatchdog(6000);
+        if (currentSelectedServer === 'direct') startStreamWatchdog(30000);
     });
 
     video.addEventListener('playing', () => {
@@ -1891,6 +1924,16 @@ async function quickPlay(subjectId, title, startTime = 0) {
     showToast(`Loading "${title}"…`);
     currentPlayingSubjectId = subjectId;
     _drawerEpisodeData = null; // Clear episode cache for new title
+
+    // Check for saved resume progress (movie or TV series)
+    const saved = getLastWatchedProgress(subjectId);
+    if (startTime <= 0 && saved) {
+        if (saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
+            startTime = saved.currentTime;
+        }
+        if (saved.season > 0) currentSeason = saved.season;
+        if (saved.episode > 0) currentEpisode = saved.episode;
+    }
 
     const isKnownSeries = Boolean(
         (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2)) ||
@@ -3029,20 +3072,31 @@ function getContinueWatching() {
     try { return JSON.parse(localStorage.getItem('moviebox_continue') || '[]'); } catch { return []; }
 }
 
+function getLastWatchedProgress(subjectId) {
+    if (!subjectId) return null;
+    const list = getContinueWatching();
+    return list.find(i => String(i.subject_id) === String(subjectId)) || null;
+}
+
 function saveContinueWatching() {
-    if (!currentPlayingSubjectId || !plyrInstance || plyrInstance.duration < 10) return;
-    const list = getContinueWatching().filter(i => i.subject_id !== currentPlayingSubjectId);
+    if (!currentPlayingSubjectId) return;
+    const v = getCinemaVideoElement();
+    const curTime = (plyrInstance && !isNaN(plyrInstance.currentTime)) ? plyrInstance.currentTime : (v ? v.currentTime : 0);
+    const totalDuration = (plyrInstance && !isNaN(plyrInstance.duration)) ? plyrInstance.duration : (v ? v.duration : 0);
+    if (curTime < 5) return;
+    const list = getContinueWatching().filter(i => String(i.subject_id) !== String(currentPlayingSubjectId));
     list.unshift({
-        subject_id: currentPlayingSubjectId,
+        subject_id: String(currentPlayingSubjectId),
         title: (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'Stream',
         cover: activeMediaMeta ? activeMediaMeta.cover : null,
-        currentTime: plyrInstance.currentTime,
-        duration: plyrInstance.duration,
-        progress: (plyrInstance.currentTime / plyrInstance.duration) * 100,
-        season: currentSeason, episode: currentEpisode,
+        currentTime: Math.floor(curTime),
+        duration: Math.floor(totalDuration || 0),
+        progress: totalDuration > 0 ? (curTime / totalDuration) * 100 : 0,
+        season: Number(currentSeason || 0),
+        episode: Number(currentEpisode || 0),
         savedAt: Date.now()
     });
-    localStorage.setItem('moviebox_continue', JSON.stringify(list.slice(0, 10)));
+    localStorage.setItem('moviebox_continue', JSON.stringify(list.slice(0, 30)));
     renderContinueWatching();
 }
 
@@ -3069,8 +3123,11 @@ function renderContinueWatching() {
         const pct = Math.min(100, Math.round(item.progress || 0));
         const timeLeft = item.duration ? formatDuration(item.duration - item.currentTime) : null;
         const epLabel = item.season > 0 ? ` · S${item.season}E${item.episode}` : '';
+        const clickAction = (item.season > 0 && item.episode > 0)
+            ? `playDetailEpisode('${item.subject_id}', ${item.season}, ${item.episode}, ${item.currentTime})`
+            : `quickPlay('${item.subject_id}', '${escapeAttr(item.title)}', ${item.currentTime})`;
         return `
-            <div class="continue-card" onclick="quickPlay('${item.subject_id}', '${escapeAttr(item.title)}', ${item.currentTime})">
+            <div class="continue-card" onclick="${clickAction}">
                 <div class="continue-thumb-wrap">
                     <img class="continue-thumb" src="${cover}" alt="${escapeHtml(item.title)}" onerror="this.onerror=null; this.src='${fallback}'">
                     <div class="continue-progress-overlay">
@@ -3297,6 +3354,21 @@ async function openDetailsModal(subjectId) {
         const trailerBtn = document.getElementById('detailTrailerBtn');
         const seasons = ep ? ep.seasons : null;
 
+        const saved = getLastWatchedProgress(subjectId);
+        const hasSeries = Boolean(seasons && seasons.length > 0);
+        
+        let resumeSeason = 1;
+        let resumeEpisode = 1;
+        let resumeTime = 0;
+        
+        if (saved) {
+            if (saved.season > 0) resumeSeason = saved.season;
+            if (saved.episode > 0) resumeEpisode = saved.episode;
+            if (saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
+                resumeTime = saved.currentTime;
+            }
+        }
+
         if (d.coming_soon) {
             if (streamBtn) {
                 streamBtn.innerHTML = `
@@ -3312,20 +3384,41 @@ async function openDetailsModal(subjectId) {
             if (trailerBtn) trailerBtn.style.display = 'none';
         } else {
             if (streamBtn) {
-                streamBtn.innerHTML = `
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    <span>Stream Now</span>
-                `;
-                streamBtn.className = 'btn btn-primary btn-block';
-                streamBtn.style.background = '';
-                streamBtn.onclick = () => {
-                    closeDetailModal(true);
-                    if (seasons && seasons.length > 0) {
-                        playDetailEpisode(subjectId, currentSeason || 1, currentEpisode || 1);
-                    } else {
-                        quickPlay(subjectId, d.title);
-                    }
-                };
+                if (resumeTime > 0) {
+                    const label = hasSeries 
+                        ? `Resume S${resumeSeason}E${resumeEpisode} (${formatDuration(resumeTime)})`
+                        : `Resume (${formatDuration(resumeTime)})`;
+                    streamBtn.innerHTML = `
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        <span>${label}</span>
+                    `;
+                    streamBtn.className = 'btn btn-primary btn-block';
+                    streamBtn.style.background = '';
+                    streamBtn.onclick = () => {
+                        closeDetailModal(true);
+                        if (hasSeries) {
+                            playDetailEpisode(subjectId, resumeSeason, resumeEpisode, resumeTime);
+                        } else {
+                            quickPlay(subjectId, d.title, resumeTime);
+                        }
+                    };
+                } else {
+                    const label = hasSeries ? `Play S${resumeSeason}E${resumeEpisode}` : 'Stream Now';
+                    streamBtn.innerHTML = `
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        <span>${label}</span>
+                    `;
+                    streamBtn.className = 'btn btn-primary btn-block';
+                    streamBtn.style.background = '';
+                    streamBtn.onclick = () => {
+                        closeDetailModal(true);
+                        if (hasSeries) {
+                            playDetailEpisode(subjectId, resumeSeason, resumeEpisode);
+                        } else {
+                            quickPlay(subjectId, d.title);
+                        }
+                    };
+                }
             }
         }
 
@@ -3355,17 +3448,17 @@ async function openDetailsModal(subjectId) {
         };
         currentPlayingSubjectId = subjectId;
         
-        if (seasons && seasons.length > 0) {
+        if (hasSeries) {
             const sc = document.getElementById('detailSeriesContainer');
             sc.style.display = 'block';
             document.getElementById('detailSeasonTabs').innerHTML = seasons.map(s => `
-                <button class="season-tab-btn ${s.season === 1 ? 'active' : ''}" onclick="selectDetailSeason('${subjectId}', ${s.season}, ${s.episode_count}, this)">
+                <button class="season-tab-btn ${s.season === resumeSeason ? 'active' : ''}" onclick="selectDetailSeason('${subjectId}', ${s.season}, ${s.episode_count}, this)">
                     Season ${s.season}
                 </button>`).join('');
-            // Auto-select Season 1, Episode 1 so user sees which episode will play
-            currentSeason = 1;
-            currentEpisode = 1;
-            renderDetailEpisodes(subjectId, 1, seasons[0].episode_count, 1);
+            currentSeason = resumeSeason;
+            currentEpisode = resumeEpisode;
+            const curSeObj = seasons.find(s => s.season === resumeSeason) || seasons[0];
+            renderDetailEpisodes(subjectId, resumeSeason, curSeObj.episode_count, resumeEpisode);
         }
 
     } catch (err) {
@@ -3427,7 +3520,13 @@ function renderDetailEpisodes(subjectId, seasonNum, epCount, activeEp = 1) {
     }
 }
 
-function playDetailEpisode(subjectId, seasonNum, episodeNum) {
+function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0) {
+    if (seekTime <= 0) {
+        const saved = getLastWatchedProgress(subjectId);
+        if (saved && saved.season === Number(seasonNum) && saved.episode === Number(episodeNum) && saved.currentTime > 15) {
+            seekTime = saved.currentTime;
+        }
+    }
     // Update active state in episode grid before closing modal
     const detailGrid = document.getElementById('detailEpisodesGrid');
     if (detailGrid) {
@@ -3478,7 +3577,7 @@ function playDetailEpisode(subjectId, seasonNum, episodeNum) {
             // If user was already streaming via an embedded backup server, keep them on that server
             if (isCurrentlyFallback && activeFallbackServers.length > 0) {
                 const target = activeFallbackServers.find(s => s.id === currentSelectedServer) || activeFallbackServers[0];
-                playInCinemaModal(null, 0, target);
+                playInCinemaModal(null, seekTime, target);
                 renderPlayerSeriesRibbon();
                 return;
             }
@@ -3486,12 +3585,12 @@ function playDetailEpisode(subjectId, seasonNum, episodeNum) {
             if (activeStreamList.length > 0) {
                 const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
                 const streamToPlay = playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0];
-                playInCinemaModal(encodeURIComponent(JSON.stringify(streamToPlay)));
+                playInCinemaModal(encodeURIComponent(JSON.stringify(streamToPlay)), seekTime);
                 renderPlayerSeriesRibbon();
             } else if (activeFallbackServers && activeFallbackServers.length > 0) {
                 const srvName = activeFallbackServers[0].name.split('(')[1]?.replace(')', '') || 'Cloud';
                 showToast(`Direct stream unavailable — playing S${seasonNum}E${episodeNum} via Backup Server (${srvName})…`, 'info');
-                playInCinemaModal(null, 0, activeFallbackServers[0]);
+                playInCinemaModal(null, seekTime, activeFallbackServers[0]);
                 renderPlayerSeriesRibbon();
             } else {
                 showToast(`No stream for S${seasonNum}E${episodeNum}`, 'error');
