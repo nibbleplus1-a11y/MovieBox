@@ -807,36 +807,77 @@ class MovieBoxEngine:
             "asian_drama": []
         }
 
-        try:
-            url = f"{API_BASE}/home?host=movieboxhd.net"
-            resp = self.session.get(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://movieboxhd.net/"}, timeout=12)
-            data = resp.json().get("data", {})
-            operating = data.get("operatingList", [])
+        # Attempt 1: Fetch operating list from primary domain
+        operating_lists = []
+        for domain_host in ["movieboxhd.net", "movieboxonline.net", "sflix.film"]:
+            try:
+                url = f"{API_BASE}/home?host={domain_host}"
+                resp = self.session.get(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": f"https://{domain_host}/"}, timeout=8)
+                if resp.status_code == 200:
+                    data = resp.json().get("data", {})
+                    op_list = data.get("operatingList", [])
+                    if op_list:
+                        operating_lists = op_list
+                        break
+            except Exception:
+                continue
 
-            for op in operating:
-                title = (op.get("title") or "").lower()
-                subs = op.get("subjects") or []
-                target_key = None
-                if "trending now" in title or ("trending" in title and "punjabi" not in title):
-                    target_key = "trending"
-                elif "cinema" in title:
-                    target_key = "cinema"
-                elif "hollywood" in title:
-                    target_key = "hollywood"
-                elif "bollywood" in title:
-                    target_key = "bollywood"
-                elif "south indian" in title:
-                    target_key = "south_indian"
-                elif "top series" in title or "western tv" in title:
-                    target_key = "series"
-                elif "anime" in title:
-                    target_key = "anime"
-                elif "asian drama" in title or "indian drama" in title:
-                    target_key = "asian_drama"
+        for op in operating_lists:
+            title = (op.get("title") or "").lower()
+            subs = op.get("subjects") or []
+            target_key = None
+            if "trending now" in title or ("trending" in title and "punjabi" not in title):
+                target_key = "trending"
+            elif "cinema" in title:
+                target_key = "cinema"
+            elif "hollywood" in title:
+                target_key = "hollywood"
+            elif "bollywood" in title:
+                target_key = "bollywood"
+            elif "south indian" in title:
+                target_key = "south_indian"
+            elif "top series" in title or "western tv" in title:
+                target_key = "series"
+            elif "anime" in title:
+                target_key = "anime"
+            elif "asian drama" in title or "indian drama" in title:
+                target_key = "asian_drama"
 
-                if target_key:
-                    for s in subs:
-                        if s.get("subjectType") == 6 or is_adult_content(s):  # skip video clips, songs, and adult content
+            if target_key:
+                for s in subs:
+                    if s.get("subjectType") == 6 or is_adult_content(s):
+                        continue
+                    cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
+                    item = {
+                        "title": s.get("title"),
+                        "subject_id": str(s.get("subjectId")),
+                        "subject_type": s.get("subjectType"),
+                        "detail_path": s.get("detailPath"),
+                        "cover": cover_url,
+                        "rating": s.get("imdbRatingValue") or "N/A",
+                        "genre": s.get("genre"),
+                        "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
+                        "type": "Movie" if s.get("subjectType") == 1 else "TV Series"
+                    }
+                    if not any(x["subject_id"] == item["subject_id"] for x in feed[target_key]):
+                        feed[target_key].append(item)
+
+        # Fallback backfill: if any movie shelf has fewer than 6 items, backfill from /subject/filter
+        fallback_needed = any(len(feed[k]) < 6 for k in ["trending", "cinema", "hollywood", "bollywood", "south_indian"])
+        if fallback_needed:
+            try:
+                filter_url = f"{API_BASE}/subject/filter"
+                payload = {
+                    "tabId": 2,
+                    "filter": {"sort": "RECOMMEND", "genre": "ALL", "country": "ALL", "year": "ALL", "language": "ALL"},
+                    "page": 1,
+                    "perPage": 36
+                }
+                f_resp = self.session.post(filter_url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://movieboxhd.net/"}, json=payload, timeout=8)
+                if f_resp.status_code == 200:
+                    raw_items = f_resp.json().get("data", {}).get("items") or []
+                    for s in raw_items:
+                        if s.get("subjectType") == 6 or is_adult_content(s):
                             continue
                         cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
                         item = {
@@ -850,13 +891,17 @@ class MovieBoxEngine:
                             "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
                             "type": "Movie" if s.get("subjectType") == 1 else "TV Series"
                         }
-                        if not any(x["subject_id"] == item["subject_id"] for x in feed[target_key]):
-                            feed[target_key].append(item)
-        except Exception:
-            pass
+                        for k in ["trending", "cinema", "hollywood"]:
+                            if len(feed[k]) < 12 and not any(x["subject_id"] == item["subject_id"] for x in feed[k]):
+                                feed[k].append(item)
+            except Exception:
+                pass
 
-        app_cache.set(cache_key, feed, ttl=1800)
+        total_items = sum(len(v) for v in feed.values())
+        if total_items >= 20:
+            app_cache.set(cache_key, feed, ttl=1800)
         return feed
+
 
     def get_subtitles(self, subject_id: str, stream_id: Optional[str] = None, season: int = 0, episode: int = 0) -> List[Dict[str, Any]]:
         cache_key = f"subs:{subject_id}:{season}:{episode}"
@@ -1469,8 +1514,39 @@ def search_online_subtitles(title: str = Query(..., min_length=1), imdb_id: Opti
 
 @app.get("/api/feed")
 @app.get("/api/feed/home-curated")
-def get_home_curated():
+def get_home_curated(_bust: Optional[str] = None):
+    if _bust:
+        app_cache.delete("feed:home_curated")
     return engine.get_curated_feed()
+
+@app.post("/api/admin/deploy")
+@app.get("/api/admin/deploy")
+async def trigger_server_deploy(secret: Optional[str] = Query(None)):
+    if secret != "moviebox_deploy_2026":
+        raise HTTPException(status_code=403, detail="Unauthorized deploy secret")
+
+    def _pull_and_restart():
+        import subprocess
+        log_lines = []
+        try:
+            r1 = subprocess.run(["git", "fetch", "origin", "main"], cwd="/home/ubuntu/MovieBox", capture_output=True, text=True, timeout=30)
+            log_lines.append(f"fetch: {r1.stdout.strip()} {r1.stderr.strip()}")
+            r2 = subprocess.run(["git", "reset", "--hard", "origin/main"], cwd="/home/ubuntu/MovieBox", capture_output=True, text=True, timeout=30)
+            log_lines.append(f"reset: {r2.stdout.strip()} {r2.stderr.strip()}")
+            r3 = subprocess.run(["./venv/bin/pip", "install", "-r", "requirements.txt"], cwd="/home/ubuntu/MovieBox", capture_output=True, text=True, timeout=60)
+            log_lines.append(f"pip: {r3.stdout.strip()} {r3.stderr.strip()}")
+            # Schedule restart in 1 second so current HTTP response finishes cleanly
+            subprocess.Popen(["bash", "-c", "sleep 1 && sudo systemctl restart moviebox"])
+            log_lines.append("Service restart scheduled in 1s")
+        except Exception as e:
+            log_lines.append(f"error: {str(e)}")
+        return "\n".join(log_lines)
+
+    loop = asyncio.get_event_loop()
+    res = await loop.run_in_executor(_bg_executor, _pull_and_restart)
+    app_cache.delete("feed:home_curated")
+    return {"status": "success", "message": "Deployed latest GitHub commit", "log": res}
+
 
 @app.get("/movies")
 def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", category: str = "all"):

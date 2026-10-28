@@ -1,0 +1,23 @@
+name: Auto Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to Cloud VM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Automatic Deployment
+        run: |
+          echo "Triggering auto-deployment on Oracle Cloud VM..."
+          RESPONSE=$(curl -sSL -f -m 60 "http://137.23.40.164/api/admin/deploy?secret=moviebox_deploy_2026")
+          echo "Response from server:"
+          echo "$RESPONSE"
+          if echo "$RESPONSE" | grep -q '"status":"success"'; then
+            echo "✅ Deployment successful! Changes are now live on server."
+          else
+            echo "❌ Deployment trigger failed."
+            exit 1
+          fi

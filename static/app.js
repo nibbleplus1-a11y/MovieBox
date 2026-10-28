@@ -464,7 +464,14 @@ async function loadHomeFeed() {
         const feed = await res.json();
 
         // 1. Trending & Fresh Cinema
-        const trendingList = feed.trending || [];
+        let trendingList = feed.trending || [];
+        if (!trendingList.length) {
+            try {
+                const trRes = await fetch('/movies?page=1&per_page=12&sort=RECOMMEND');
+                const trData = await trRes.json();
+                trendingList = trData.items || [];
+            } catch (e) {}
+        }
         if (curatedGrid) {
             curatedGrid.innerHTML = trendingList.length
                 ? trendingList.slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('')
@@ -472,35 +479,55 @@ async function loadHomeFeed() {
         }
 
         // 2. Hollywood Blockbusters
-        const hollywoodList = feed.hollywood || [];
+        let hollywoodList = feed.hollywood || [];
+        if (!hollywoodList.length) {
+            try {
+                const hwRes = await fetch('/movies?page=1&per_page=12&category=hollywood');
+                const hwData = await hwRes.json();
+                hollywoodList = hwData.items || [];
+            } catch (e) {}
+        }
         if (hollywoodGrid) {
-            hollywoodGrid.innerHTML = hollywoodList.length
-                ? hollywoodList.slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('')
-                : '';
+            hollywoodGrid.innerHTML = (hollywoodList.length ? hollywoodList : trendingList).slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('');
         }
 
         // 3. Bollywood Hits
-        const bollywoodList = feed.bollywood || [];
+        let bollywoodList = feed.bollywood || [];
+        if (!bollywoodList.length) {
+            try {
+                const bwRes = await fetch('/movies?page=1&per_page=12&category=bollywood');
+                const bwData = await bwRes.json();
+                bollywoodList = bwData.items || [];
+            } catch (e) {}
+        }
         if (bollywoodGrid) {
-            bollywoodGrid.innerHTML = bollywoodList.length
-                ? bollywoodList.slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('')
-                : '';
+            bollywoodGrid.innerHTML = (bollywoodList.length ? bollywoodList : trendingList.slice(3)).slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('');
         }
 
         // 4. South Indian Cinema
-        const southList = feed.south_indian || [];
+        let southList = feed.south_indian || [];
+        if (!southList.length) {
+            try {
+                const siRes = await fetch('/movies?page=1&per_page=12&category=south_indian');
+                const siData = await siRes.json();
+                southList = siData.items || [];
+            } catch (e) {}
+        }
         if (southIndianGrid) {
-            southIndianGrid.innerHTML = southList.length
-                ? southList.slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('')
-                : '';
+            southIndianGrid.innerHTML = (southList.length ? southList : trendingList.slice(6)).slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('');
         }
 
         // 5. Top TV Series & Anime
-        const seriesList = [...(feed.series || []), ...(feed.anime || [])];
+        let seriesList = [...(feed.series || []), ...(feed.anime || [])];
+        if (!seriesList.length) {
+            try {
+                const seRes = await fetch('/movies?page=1&per_page=12&category=series');
+                const seData = await seRes.json();
+                seriesList = seData.items || [];
+            } catch (e) {}
+        }
         if (homeSeriesGrid) {
-            homeSeriesGrid.innerHTML = seriesList.length
-                ? seriesList.slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'TV Series' })).join('')
-                : '';
+            homeSeriesGrid.innerHTML = seriesList.slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'TV Series' })).join('');
         }
     } catch (err) {
         if (curatedGrid) curatedGrid.innerHTML = `<div class="grid-loading">Failed to load feed: ${escapeHtml(err.message)}</div>`;
