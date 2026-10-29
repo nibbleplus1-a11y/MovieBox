@@ -448,8 +448,8 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
-    padding: 48px;
-    max-width: 600px;
+    padding: 48px 48px 48px 84px;
+    max-width: 640px;
 }
 
 .hero-badges {
@@ -1650,110 +1650,556 @@ body {
     padding: 6px 10px;
 }
 
-/* IN-PLAYER QUICK SETTINGS BAR (Positioned directly above timeline) */
-.in-player-quick-bar {
+/* ==========================================================================
+   UNIFIED CINEMA PLAYER: PARALLEL LOADING, ERROR STATE & CONTROLS
+   ========================================================================== */
+
+/* 1. PARALLEL SERVER DETECTION LOADING OVERLAY */
+.player-loading-overlay {
     position: absolute;
-    bottom: 56px;
-    left: 16px;
-    right: 16px;
-    z-index: 60;
+    inset: 0;
+    z-index: 70;
+    background: radial-gradient(circle at center, rgba(10, 14, 24, 0.94) 0%, rgba(4, 6, 12, 0.98) 100%);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+    animation: fadeIn 0.25s ease forwards;
+}
+
+.loading-ring-spinner {
+    width: 46px;
+    height: 46px;
+    border: 3.5px solid rgba(229, 9, 20, 0.18);
+    border-top-color: #e50914;
+    border-right-color: #ff3366;
+    border-radius: 50%;
+    animation: spin 0.8s cubic-bezier(0.5, 0.1, 0.5, 0.9) infinite;
+    margin-bottom: 18px;
+    box-shadow: 0 0 24px rgba(229, 9, 20, 0.45);
+}
+
+.loading-state-title {
+    color: #fff;
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    letter-spacing: -0.2px;
+}
+
+.loading-state-sub {
+    color: #94a3b8;
+    font-size: 13px;
+    max-width: 420px;
+    margin-bottom: 16px;
+    line-height: 1.45;
+}
+
+.server-probe-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    max-width: 500px;
+}
+
+.probe-chip {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #cbd5e1;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+}
+
+.probe-chip .chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #f59e0b;
+    box-shadow: 0 0 8px #f59e0b;
+}
+
+.probe-chip.healthy {
+    border-color: rgba(16, 185, 129, 0.5);
+    background: rgba(16, 185, 129, 0.12);
+    color: #34d399;
+}
+.probe-chip.healthy .chip-dot {
+    background: #10b981;
+    box-shadow: 0 0 8px #10b981;
+}
+
+.probe-chip.failed {
+    border-color: rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.08);
+    color: #f87171;
+    opacity: 0.75;
+}
+.probe-chip.failed .chip-dot {
+    background: #ef4444;
+    box-shadow: none;
+}
+
+/* 2. ERROR OVERLAY (ALL SERVERS FAILED) */
+.player-error-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 75;
+    background: radial-gradient(circle at center, rgba(18, 12, 16, 0.96) 0%, rgba(8, 6, 10, 0.99) 100%);
+    backdrop-filter: blur(20px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+    text-align: center;
+}
+
+.error-badge-icon {
+    font-size: 38px;
+    margin-bottom: 14px;
+    filter: drop-shadow(0 0 16px rgba(239, 68, 68, 0.6));
+}
+
+.error-state-title {
+    color: #fff;
+    font-size: 19px;
+    font-weight: 800;
+    margin-bottom: 8px;
+}
+
+.error-state-sub {
+    color: #94a3b8;
+    font-size: 13px;
+    max-width: 440px;
+    line-height: 1.5;
+    margin-bottom: 20px;
+}
+
+.error-state-actions {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+/* 3. UNIFIED BOTTOM PLAYER CONTROLS (Single Player Layout) */
+.cinema-player-controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+    background: linear-gradient(180deg, transparent 0%, rgba(4, 6, 12, 0.65) 30%, rgba(2, 4, 8, 0.96) 100%);
+    padding: 24px 20px 14px;
+    display: flex;
+    flex-direction: column;
     gap: 8px;
     opacity: 1;
+    transform: translateY(0);
     transition: opacity 0.28s ease, transform 0.28s ease;
     pointer-events: auto;
 }
 
-.in-player-quick-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
+.video-stage.hud-hidden .cinema-player-controls,
+.video-stage.hud-hidden .in-player-top-bar {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translateY(12px);
+}
+.video-stage.hud-hidden .in-player-top-bar {
+    transform: translateY(-12px);
 }
 
-.in-player-quick-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.in-player-dropdown-wrap {
+/* Timeline Progress Track */
+.player-timeline-wrap {
     position: relative;
+    width: 100%;
+    height: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
 }
 
-.in-player-pill-btn {
-    background: rgba(16, 20, 30, 0.88);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 8px;
-    color: #cbd5e1;
-    padding: 6px 11px;
+.player-progress-bar {
+    position: relative;
+    width: 100%;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.22);
+    border-radius: 3px;
+    transition: height 0.15s ease;
+    overflow: visible;
+}
+
+.player-timeline-wrap:hover .player-progress-bar {
+    height: 8px;
+}
+
+.player-progress-buffer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 0%;
+    background: rgba(255, 255, 255, 0.42);
+    border-radius: 3px;
+    transition: width 0.25s linear;
+}
+
+.player-progress-current {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #e50914, #ff3366);
+    border-radius: 3px;
+    box-shadow: 0 0 10px rgba(229, 9, 20, 0.6);
+}
+
+.player-progress-thumb {
+    position: absolute;
+    right: -6px;
+    top: 50%;
+    transform: translateY(-50%) scale(0);
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 8px rgba(0,0,0,0.8), 0 0 12px rgba(229, 9, 20, 0.8);
+    transition: transform 0.15s ease;
+}
+
+.player-timeline-wrap:hover .player-progress-thumb {
+    transform: translateY(-50%) scale(1);
+}
+
+.player-time-tooltip {
+    position: absolute;
+    bottom: 24px;
+    transform: translateX(-50%);
+    background: rgba(10, 14, 24, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 6px;
+    color: #fff;
     font-size: 11px;
     font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 3px 8px;
+    pointer-events: none;
+    display: none;
+    white-space: nowrap;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.8);
+}
+
+/* Controls Bottom Row */
+.player-controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.controls-left,
+.controls-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.player-ctrl-btn {
+    background: transparent;
+    border: none;
+    color: #fff;
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    transition: all 0.18s ease;
-    white-space: nowrap;
+    justify-content: center;
+    transition: all 0.15s ease;
+    padding: 0;
 }
-.in-player-pill-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
+.player-ctrl-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
     color: #fff;
-    border-color: rgba(255, 255, 255, 0.3);
+    transform: scale(1.06);
 }
-.in-player-pill-btn.btn-highlight {
-    background: rgba(229, 9, 20, 0.25);
-    border-color: rgba(229, 9, 20, 0.5);
-    color: #ff4d4f;
-}
-.in-player-pill-btn.btn-highlight:hover {
-    background: #e50914;
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(229, 9, 20, 0.45);
+.player-ctrl-btn:active {
+    transform: scale(0.95);
 }
 
-/* IN-PLAYER POPOVERS (Works in Fullscreen!) */
-.in-player-popover {
+.player-ctrl-btn .ctrl-label {
+    font-size: 12px;
+    font-weight: 700;
+    margin-left: 6px;
+}
+#bottomEpisodesBtn {
+    width: auto;
+    padding: 0 12px;
+    background: rgba(255, 255, 255, 0.08);
+}
+#bottomEpisodesBtn:hover {
+    background: rgba(229, 9, 20, 0.85);
+}
+
+/* Volume Slider */
+.player-volume-wrap {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.player-volume-slider-box {
+    width: 0;
+    overflow: hidden;
+    transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    align-items: center;
+}
+
+.player-volume-wrap:hover .player-volume-slider-box,
+.player-volume-wrap:focus-within .player-volume-slider-box {
+    width: 78px;
+    margin-right: 6px;
+}
+
+#playerVolumeSlider {
+    width: 74px;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: rgba(255, 255, 255, 0.25);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+#playerVolumeSlider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(0,0,0,0.5);
+}
+
+.player-time-display {
+    color: #cbd5e1;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+    user-select: none;
+}
+.player-time-display .time-sep {
+    opacity: 0.45;
+}
+
+/* 4. UNIFIED SETTINGS MENU (GEAR POPUP) */
+.player-settings-wrap {
+    position: relative;
+}
+
+.player-unified-settings-menu {
     position: absolute;
-    bottom: 38px;
-    left: 0;
-    z-index: 9999;
-    background: rgba(10, 12, 18, 0.96);
+    bottom: 48px;
+    right: 0;
+    z-index: 100;
+    width: 280px;
+    background: rgba(14, 18, 28, 0.96);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 12px;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(229, 9, 20, 0.25);
-    min-width: 220px;
-    max-width: 320px;
-    max-height: 280px;
-    overflow-y: auto;
-    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.9), 0 0 0 1px rgba(229, 9, 20, 0.2);
+    overflow: hidden;
     display: none;
     animation: inPlayerPopIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.in-player-popover.open {
+.player-unified-settings-menu.open {
     display: block;
 }
 
-.in-player-top-bar .in-player-popover {
-    bottom: auto;
-    top: 40px;
-    right: 0;
-    left: auto;
+.settings-menu-page {
+    display: none;
+    padding: 10px;
+    max-height: 340px;
+    overflow-y: auto;
+}
+.settings-menu-page.active {
+    display: block;
 }
 
-/* IFRAME FALLBACK EMBED MODE: Hide plyr and direct controls so the iframe is 100% clean and unobstructed */
-.video-stage.is-iframe-mode #seekRippleLeft,
-.video-stage.is-iframe-mode #seekRippleRight,
-.video-stage.is-iframe-mode #inPlayerDubBadge,
-.video-stage.is-iframe-mode #inPlayerQualityBadge,
-.video-stage.is-iframe-mode .plyr,
-.video-stage.is-iframe-mode .in-player-quick-bar {
+.settings-menu-header {
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #94a3b8;
+    padding: 6px 10px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 6px;
+}
+
+.settings-subpage-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px 10px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+.settings-subpage-header:hover {
+    color: #ff3366;
+}
+.settings-subpage-header .back-arrow {
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.settings-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    user-select: none;
+}
+.settings-menu-item:hover {
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.settings-menu-item .menu-icon {
+    font-size: 15px;
+    width: 20px;
+    text-align: center;
+}
+.settings-menu-item .menu-label {
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    flex: 1;
+}
+.settings-menu-item .menu-value {
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 500;
+    max-width: 110px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: right;
+}
+.settings-menu-item .menu-arrow {
+    color: #64748b;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.settings-options-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.settings-opt-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 8px;
+    background: transparent;
+    border: none;
+    color: #cbd5e1;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s ease;
+}
+.settings-opt-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+}
+.settings-opt-item.active {
+    background: rgba(229, 9, 20, 0.18);
+    color: #ff4d4f;
+    font-weight: 700;
+}
+
+.settings-subs-tools {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.btn-sub-tool {
+    flex: 1;
+    padding: 7px 10px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    color: #cbd5e1;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all 0.15s ease;
+}
+.btn-sub-tool:hover {
+    background: rgba(229, 9, 20, 0.3);
+    color: #fff;
+    border-color: rgba(229, 9, 20, 0.6);
+}
+
+/* Badge Server inside top bar */
+.in-player-badge.badge-server {
+    background: rgba(59, 130, 246, 0.22);
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #60a5fa;
+}
+
+/* Hide Plyr internal controls so only our unified bottom bar is visible */
+.video-stage .plyr__controls {
+    display: none !important;
+}
+
+.player-server-strip {
+    display: none !important;
+}
+
+/* IFRAME EMBED MODE: Keep unified top bar & gear controls on top of iframe */
+.video-stage.is-iframe-mode #cinemaVideo,
+.video-stage.is-iframe-mode .plyr {
     display: none !important;
 }
 
@@ -1763,6 +2209,8 @@ body {
     height: 100% !important;
     z-index: 5 !important;
 }
+
+
 
 @keyframes inPlayerPopIn {
     from { opacity: 0; transform: translateY(6px); }
@@ -4528,4 +4976,242 @@ kbd {
     color: #fff;
     letter-spacing: 0.3px;
 }
+
+/* ==========================================================================
+   HERO AUTO-UPDATING SLIDER NAVIGATION & RESPONSIVE CONTROLS
+   ========================================================================== */
+.hero-banner {
+    position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.hero-nav-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(10, 14, 26, 0.65);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 8;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    opacity: 0.7;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.hero-nav-arrow:hover {
+    opacity: 1;
+    background: rgba(229, 9, 20, 0.85);
+    border-color: rgba(255, 255, 255, 0.4);
+    transform: translateY(-50%) scale(1.1);
+    box-shadow: 0 0 24px rgba(229, 9, 20, 0.6);
+}
+
+.hero-nav-arrow.prev {
+    left: 20px;
+}
+
+.hero-nav-arrow.next {
+    right: 20px;
+}
+
+@media (max-width: 768px) {
+    .hero-nav-arrow {
+        width: 38px;
+        height: 38px;
+        opacity: 0.85;
+    }
+    .hero-nav-arrow.prev { left: 10px; }
+    .hero-nav-arrow.next { right: 10px; }
+}
+
+/* ==========================================================================
+   HORIZONTAL SCROLLABLE SHELVES (DESKTOP & MOBILE STREAMING ROWS)
+   ========================================================================== */
+.shelf-row-wrapper {
+    margin: 28px 0 10px;
+    position: relative;
+}
+
+.shelf-row-wrapper .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    padding: 0 4px;
+}
+
+.shelf-count-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    padding: 2px 8px;
+    margin-left: 8px;
+    letter-spacing: 0.2px;
+}
+
+.shelf-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.shelf-scroll-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: var(--text-primary);
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.shelf-scroll-btn:hover {
+    background: var(--brand-red, #e50914);
+    color: #fff;
+    border-color: transparent;
+    transform: scale(1.08);
+    box-shadow: 0 4px 12px rgba(229, 9, 20, 0.4);
+}
+
+.horizontal-scroll-row {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 16px;
+    padding: 8px 4px 18px;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.horizontal-scroll-row::-webkit-scrollbar {
+    height: 6px;
+}
+
+.horizontal-scroll-row::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.horizontal-scroll-row::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+}
+
+.horizontal-scroll-row::-webkit-scrollbar-thumb:hover {
+    background: rgba(229, 9, 20, 0.5);
+}
+
+/* Row media card sizing */
+.horizontal-scroll-row .media-card {
+    flex: 0 0 172px;
+    width: 172px;
+    min-width: 172px;
+    border-radius: 14px;
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s ease;
+}
+
+.horizontal-scroll-row .media-card:hover {
+    transform: translateY(-6px) scale(1.03);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.7);
+    z-index: 3;
+}
+
+@media (max-width: 768px) {
+    .horizontal-scroll-row {
+        gap: 12px;
+        scroll-snap-type: x mandatory;
+        padding-bottom: 12px;
+        scrollbar-width: none;
+    }
+    .horizontal-scroll-row::-webkit-scrollbar {
+        display: none;
+    }
+    .horizontal-scroll-row .media-card {
+        flex: 0 0 136px;
+        width: 136px;
+        min-width: 136px;
+        scroll-snap-align: start;
+    }
+}
+
+/* ==========================================================================
+   AUDIO DUB BADGES & DEDUPLICATION VISUALS
+   ========================================================================== */
+.card-badge-audio {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    background: rgba(139, 92, 246, 0.25);
+    color: #c4b5fd;
+    border: 1px solid rgba(139, 92, 246, 0.4);
+    vertical-align: middle;
+}
+
+/* ==========================================================================
+   INFINITE SCROLL & CATALOG LOAD MORE
+   ========================================================================== */
+.catalog-load-more-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 28px 0 20px;
+}
+
+.btn-load-more {
+    padding: 12px 32px;
+    font-size: 14px;
+    font-weight: 700;
+    border-radius: 30px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-load-more:hover {
+    background: var(--brand-red, #e50914);
+    border-color: transparent;
+    box-shadow: 0 6px 20px rgba(229, 9, 20, 0.4);
+    transform: translateY(-2px);
+}
+
+.infinite-sentinel {
+    height: 10px;
+    width: 100%;
+    margin-top: 20px;
+    pointer-events: none;
+}
+
 

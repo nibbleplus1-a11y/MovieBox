@@ -81,7 +81,7 @@
     <main class="main-content">
         <!-- TAB: HOME / DISCOVER -->
         <section id="tab-home" class="tab-pane active">
-            <!-- Hero Showcase Banner Carousel -->
+            <!-- Hero Showcase Banner Carousel with Daily Refresh & Touch/Hover Controls -->
             <div class="hero-banner" id="heroBanner">
                 <div class="hero-backdrop" id="heroBackdrop"></div>
                 <div class="hero-overlay"></div>
@@ -107,6 +107,14 @@
                     </div>
                 </div>
 
+                <!-- Hero Navigation Arrow Buttons (Desktop & Touch) -->
+                <button class="hero-nav-arrow prev" id="heroPrevBtn" onclick="prevHeroSlide()" aria-label="Previous Slide">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <button class="hero-nav-arrow next" id="heroNextBtn" onclick="nextHeroSlide()" aria-label="Next Slide">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+
                 <!-- Hero Carousel Navigation Dots -->
                 <div class="hero-carousel-dots" id="heroDots">
                     <span class="dot active" onclick="switchHeroSlide(0)"></span>
@@ -129,15 +137,37 @@
                 <div class="section-divider"></div>
             </div>
 
-            <!-- Shelf 1: Trending & Fresh Cinema -->
-            <div class="section-header">
-                <div class="section-title-wrap">
-                    <div class="section-dot dot-rose"></div>
-                    <h2>🔥 Trending & Cinema Releases</h2>
+            <!-- Shelf 1: Trending Now -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-rose"></div>
+                        <h2>🔥 Trending Now</h2>
+                        <span class="shelf-count-badge" id="trendingCount">Top 20</span>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('trendingRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('trendingRow', 1)" aria-label="Next">›</button>
+                    </div>
                 </div>
-                <span class="section-subtitle">Fresh 2026 releases • 1080p signed CDN verified</span>
+                <div class="horizontal-scroll-row" id="trendingRow"></div>
             </div>
-            <div class="cards-grid" id="curatedGrid"></div>
+
+            <!-- Shelf 2: In Theaters & New Releases -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-cyan"></div>
+                        <h2>🌟 New Releases (2025–2026)</h2>
+                        <span class="shelf-count-badge">Cinema</span>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('newReleasesRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('newReleasesRow', 1)" aria-label="Next">›</button>
+                    </div>
+                </div>
+                <div class="horizontal-scroll-row" id="newReleasesRow"></div>
+            </div>
 
             <!-- In-Feed Native Ad Banner Slot -->
             <div id="inFeedAdBanner" class="in-feed-ad-banner" style="display: none;">
@@ -154,53 +184,175 @@
                 </div>
             </div>
 
-            <div class="section-divider"></div>
-
-            <!-- Shelf 2: Hollywood Blockbusters -->
-            <div class="section-header">
-                <div class="section-title-wrap">
-                    <div class="section-dot dot-cyan"></div>
-                    <h2>🎬 Hollywood Blockbusters</h2>
+            <!-- Shelf 3: Top Rated Cinema & Masterpieces -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-gold"></div>
+                        <h2>⭐ Top Rated Masterpieces</h2>
+                        <span class="shelf-count-badge">IMDb 7.0+</span>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('topRatedRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('topRatedRow', 1)" aria-label="Next">›</button>
+                    </div>
                 </div>
-                <button class="btn-link" onclick="browseMoviesByCategory('hollywood')">View All Hollywood →</button>
+                <div class="horizontal-scroll-row" id="topRatedRow"></div>
             </div>
-            <div class="cards-grid" id="hollywoodGrid"></div>
 
-            <div class="section-divider"></div>
-
-            <!-- Shelf 3: Bollywood Hits -->
-            <div class="section-header">
-                <div class="section-title-wrap">
-                    <div class="section-dot dot-gold"></div>
-                    <h2>🌟 Bollywood Hits</h2>
+            <!-- Shelf 4: Hollywood Blockbusters -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-cyan"></div>
+                        <h2>🎬 Hollywood Blockbusters</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="btn-link" onclick="browseMoviesByCategory('hollywood')">View All →</button>
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('hollywoodRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('hollywoodRow', 1)" aria-label="Next">›</button>
+                    </div>
                 </div>
-                <button class="btn-link" onclick="browseMoviesByCategory('bollywood')">View All Bollywood →</button>
+                <div class="horizontal-scroll-row" id="hollywoodRow"></div>
             </div>
-            <div class="cards-grid" id="bollywoodGrid"></div>
 
-            <div class="section-divider"></div>
-
-            <!-- Shelf 4: South Indian Cinema -->
-            <div class="section-header">
-                <div class="section-title-wrap">
-                    <div class="section-dot dot-emerald"></div>
-                    <h2>⚡ South Indian Action & Drama</h2>
+            <!-- Shelf 5: Binge-Worthy TV Series & Shows -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-violet"></div>
+                        <h2>📺 Binge-Worthy TV Series</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="btn-link" onclick="switchTab('series')">View All →</button>
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('seriesRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('seriesRow', 1)" aria-label="Next">›</button>
+                    </div>
                 </div>
-                <button class="btn-link" onclick="browseMoviesByCategory('south_indian')">View All South Indian →</button>
+                <div class="horizontal-scroll-row" id="seriesRow"></div>
             </div>
-            <div class="cards-grid" id="southIndianGrid"></div>
 
-            <div class="section-divider"></div>
-
-            <!-- Shelf 5: Binge-Worthy TV Series & Anime -->
-            <div class="section-header">
-                <div class="section-title-wrap">
-                    <div class="section-dot dot-violet"></div>
-                    <h2>📺 Top TV Series & Anime</h2>
+            <!-- Shelf 6: Action & High-Octane Thrillers -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-rose"></div>
+                        <h2>💥 Action & Thrillers</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('actionRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('actionRow', 1)" aria-label="Next">›</button>
+                    </div>
                 </div>
-                <button class="btn-link" onclick="switchTab('series')">Explore All Shows →</button>
+                <div class="horizontal-scroll-row" id="actionRow"></div>
             </div>
-            <div class="cards-grid" id="homeSeriesGrid"></div>
+
+            <!-- Shelf 7: Sci-Fi, Space & Fantasy -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-cyan"></div>
+                        <h2>🚀 Sci-Fi & Mind-Benders</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('scifiRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('scifiRow', 1)" aria-label="Next">›</button>
+                    </div>
+                </div>
+                <div class="horizontal-scroll-row" id="scifiRow"></div>
+            </div>
+
+            <!-- Shelf 8: Comedy & Feel-Good Hits -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-emerald"></div>
+                        <h2>🍿 Comedy & Feel-Good Hits</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('comedyRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('comedyRow', 1)" aria-label="Next">›</button>
+                    </div>
+                </div>
+                <div class="horizontal-scroll-row" id="comedyRow"></div>
+            </div>
+
+            <!-- Shelf 9: Horror, Mystery & Suspense -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-rose"></div>
+                        <h2>👻 Horror & Supernatural</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('horrorRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('horrorRow', 1)" aria-label="Next">›</button>
+                    </div>
+                </div>
+                <div class="horizontal-scroll-row" id="horrorRow"></div>
+            </div>
+
+            <!-- Shelf 10: Bollywood Hits -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-gold"></div>
+                        <h2>🌟 Bollywood Hits</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="btn-link" onclick="browseMoviesByCategory('bollywood')">View All →</button>
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('bollywoodRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('bollywoodRow', 1)" aria-label="Next">›</button>
+                    </div>
+                </div>
+                <div class="horizontal-scroll-row" id="bollywoodRow"></div>
+            </div>
+
+            <!-- Shelf 11: South Indian Cinema -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-emerald"></div>
+                        <h2>⚡ South Indian Action & Drama</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="btn-link" onclick="browseMoviesByCategory('south_indian')">View All →</button>
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('southIndianRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('southIndianRow', 1)" aria-label="Next">›</button>
+                    </div>
+                </div>
+                <div class="horizontal-scroll-row" id="southIndianRow"></div>
+            </div>
+
+            <!-- Shelf 12: Top Anime & Animation -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-rose"></div>
+                        <h2>🌸 Top Anime & Animation</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('animeRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('animeRow', 1)" aria-label="Next">›</button>
+                    </div>
+                </div>
+                <div class="horizontal-scroll-row" id="animeRow"></div>
+            </div>
+
+            <!-- Shelf 13: Asian & K-Drama -->
+            <div class="shelf-row-wrapper">
+                <div class="section-header">
+                    <div class="section-title-wrap">
+                        <div class="section-dot dot-violet"></div>
+                        <h2>🎭 Asian & K-Drama</h2>
+                    </div>
+                    <div class="shelf-controls">
+                        <button class="shelf-scroll-btn prev" onclick="scrollShelf('asianDramaRow', -1)" aria-label="Previous">‹</button>
+                        <button class="shelf-scroll-btn next" onclick="scrollShelf('asianDramaRow', 1)" aria-label="Next">›</button>
+                    </div>
+                </div>
+                <div class="horizontal-scroll-row" id="asianDramaRow"></div>
+            </div>
         </section>
 
         <!-- TAB: MOVIES -->
@@ -243,6 +395,15 @@
 
             <div class="cards-grid" id="moviesCatalogGrid"></div>
 
+            <!-- Infinite Scroll Sentinel & Load More Action -->
+            <div id="moviesInfiniteSentinel" class="infinite-sentinel"></div>
+            <div class="catalog-load-more-wrap" id="moviesLoadMoreWrap">
+                <button class="btn btn-secondary btn-load-more" id="moviesLoadMoreBtn" onclick="loadMoreMovies()">
+                    <span class="load-more-text">Load More Movies</span>
+                    <span class="load-more-spinner" style="display: none;">⏳ Loading...</span>
+                </button>
+            </div>
+
             <div class="pagination-bar" id="moviesPagination">
                 <button class="btn btn-ghost" id="moviesPrevBtn" onclick="changeMoviesPage(-1)">← Previous</button>
                 <span class="page-indicator" id="moviesPageIndicator">Page 1</span>
@@ -273,6 +434,15 @@
             </div>
 
             <div class="cards-grid" id="seriesCatalogGrid"></div>
+
+            <!-- Infinite Scroll Sentinel & Load More Action -->
+            <div id="seriesInfiniteSentinel" class="infinite-sentinel"></div>
+            <div class="catalog-load-more-wrap" id="seriesLoadMoreWrap">
+                <button class="btn btn-secondary btn-load-more" id="seriesLoadMoreBtn" onclick="loadMoreSeries()">
+                    <span class="load-more-text">Load More Series</span>
+                    <span class="load-more-spinner" style="display: none;">⏳ Loading...</span>
+                </button>
+            </div>
 
             <div class="pagination-bar" id="seriesPagination">
                 <button class="btn btn-ghost" id="seriesPrevBtn" onclick="changeSeriesPage(-1)">← Previous</button>
@@ -320,15 +490,31 @@
     <div id="playerModal" class="player-modal">
         <div class="player-modal-backdrop" onclick="closePlayerModal()"></div>
         <div class="player-modal-content">
-            <!-- Video Stage with Plyr -->
+            <!-- Video Stage with Unified Player -->
             <div class="video-stage" id="videoStage">
                 <div id="playerAmbientGlow" class="player-ambient-glow"></div>
                 <video id="cinemaVideo" playsinline poster=""></video>
-                <div id="videoBufferingSpinner" class="video-buffering-spinner" style="display:none;">
-                    <div class="video-spinner-ring"></div>
-                    <span id="videoBufferingText">Buffering 1080p Stream...</span>
-                </div>
                 <iframe id="cinemaIframe" class="cinema-iframe" style="display:none; width:100%; height:100%; border:0; position:absolute; inset:0; z-index:3; border-radius: var(--r-md);" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture"></iframe>
+
+                <!-- PARALLEL SERVER DETECTION LOADING STATE -->
+                <div id="playerLoadingState" class="player-loading-overlay">
+                    <div class="loading-ring-spinner"></div>
+                    <h3 id="playerLoadingTitle" class="loading-state-title">Testing Stream Servers…</h3>
+                    <p id="playerLoadingSubtitle" class="loading-state-sub">Probing Server 1 (Direct 1080p), VidLink, AutoEmbed in parallel</p>
+                    <div class="server-probe-chips" id="playerProbeChips"></div>
+                </div>
+
+                <!-- ALL SERVERS FAILED ERROR STATE WITH RETRY -->
+                <div id="playerErrorState" class="player-error-overlay" style="display:none;">
+                    <div class="error-badge-icon">⚠️</div>
+                    <h3 class="error-state-title">Stream Servers Unavailable</h3>
+                    <p class="error-state-sub" id="playerErrorText">All available streaming mirrors failed to respond with a playable stream.</p>
+                    <div class="error-state-actions">
+                        <button class="btn btn-primary btn-sm" onclick="retryStreamServers()">🔄 Retry Connection</button>
+                        <button class="btn btn-secondary btn-sm" onclick="togglePlayerSettingsMenu(event); openSettingsSubpage('server');">Select Server Manually</button>
+                    </div>
+                </div>
+
                 <div class="seek-ripple left" id="seekRippleLeft">
                     <span>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="11 19 2 12 11 5 11 19"/><polygon points="22 19 13 12 22 5 22 19"/></svg>
@@ -378,7 +564,7 @@
                     </div>
                 </div>
 
-                <!-- IN-PLAYER FLOATING TOP HUD (Visible in both normal & fullscreen, auto-hides on inactivity) -->
+                <!-- IN-PLAYER MINIMAL TOP HUD (Title, Back, Badges, Fullscreen, Close) -->
                 <div class="in-player-top-bar" id="inPlayerTopBar">
                     <div class="in-player-title-row">
                         <button class="in-player-hud-btn" onclick="handleInPlayerBack()" title="Back / Exit Fullscreen">
@@ -386,22 +572,11 @@
                             Back
                         </button>
                         <span class="in-player-title" id="inPlayerTitle">Movie Title</span>
-                        <span class="in-player-badge" id="inPlayerDubBadge">Hindi dub</span>
+                        <span class="in-player-badge" id="inPlayerDubBadge" style="display:none;">Hindi dub</span>
                         <span class="in-player-badge badge-quality" id="inPlayerQualityBadge">1080p FHD</span>
+                        <span class="in-player-badge badge-server" id="inPlayerServerBadge">⚡ S1 Direct</span>
                     </div>
                     <div class="in-player-top-actions">
-                        <!-- Server Selector in Top Bar (Accessible in both Direct and Iframe modes) -->
-                        <div class="in-player-dropdown-wrap">
-                            <button class="in-player-hud-btn" onclick="toggleInPlayerMenu('server', event)" id="inPlayerServerBtn" title="Change Streaming Server">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
-                                <span id="inPlayerCurrentServerText">Server 1 (Direct)</span>
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
-                            </button>
-                            <div class="in-player-popover" id="inPlayerServerMenu">
-                                <div class="popover-header">Streaming Server</div>
-                                <div class="popover-list" id="inPlayerServerList"></div>
-                            </div>
-                        </div>
                         <button class="in-player-hud-btn" id="inPlayerEpisodesBtn" onclick="togglePlayerEpisodesDrawer()" style="display: none;" title="View & select episodes">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
                             Episodes
@@ -413,11 +588,6 @@
                         <button class="in-player-hud-btn" onclick="toggleMiniPlayer()" title="Dock as Mini-Player">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><rect width="18" height="14" x="3" y="5" rx="2"/><rect width="6" height="4" x="13" y="13" rx="1"/></svg>
                             Mini
-                        </button>
-                        <button class="in-player-hud-btn" id="playerScreenLockBtn" onclick="toggleScreenLock()" title="Lock / Unlock Controls">
-                            <span id="screenLockIcon">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
-                            </span>
                         </button>
                         <button class="in-player-hud-btn" id="inPlayerFullscreenBtn" onclick="toggleCinemaFullscreen()" title="Fullscreen (F)">
                             <span id="inPlayerFullscreenIcon">
@@ -431,90 +601,176 @@
                     </div>
                 </div>
 
-                <!-- IN-PLAYER QUICK SETTINGS CONTROLS (Floating directly above timeline, auto-hides when watching) -->
-                <div class="in-player-quick-bar" id="inPlayerQuickBar">
-                    <div class="in-player-quick-left">
-                        <!-- Audio Dubs In-Player Menu -->
-                        <div class="in-player-dropdown-wrap">
-                            <button class="in-player-pill-btn" onclick="toggleInPlayerMenu('audio', event)" id="inPlayerAudioBtn" title="Switch Audio Dub">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
-                                <span id="inPlayerCurrentAudioText">Audio: Hindi dub</span>
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
-                            </button>
-                            <div class="in-player-popover" id="inPlayerAudioMenu">
-                                <div class="popover-header">Select Audio Dub / Language</div>
-                                <div class="popover-list" id="inPlayerAudioList"></div>
+                <!-- UNIFIED MODERN CINEMA PLAYER CONTROLS (Standard Bottom Bar + Gear Settings Menu) -->
+                <div class="cinema-player-controls" id="cinemaPlayerControls">
+                    <!-- Progress Timeline Bar -->
+                    <div class="player-timeline-wrap" id="playerTimelineWrap" onmousemove="handleTimelineHover(event)" onmouseleave="hideTimelineHover()" onclick="handleTimelineSeek(event)">
+                        <div class="player-progress-bar" id="playerProgressBar">
+                            <div class="player-progress-buffer" id="playerProgressBuffer"></div>
+                            <div class="player-progress-current" id="playerProgressCurrent">
+                                <span class="player-progress-thumb"></span>
                             </div>
                         </div>
-
-                        <!-- Video Quality In-Player Menu -->
-                        <div class="in-player-dropdown-wrap">
-                            <button class="in-player-pill-btn" onclick="toggleInPlayerMenu('quality', event)" id="inPlayerQualityBtn" title="Select Video Quality">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                                <span id="inPlayerCurrentQualityText">Quality: 1080p FHD</span>
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
-                            </button>
-                            <div class="in-player-popover" id="inPlayerQualityMenu">
-                                <div class="popover-header">Stream Resolution</div>
-                                <div class="popover-list" id="inPlayerQualityList"></div>
-                            </div>
-                        </div>
-
-                        <!-- Subtitles In-Player Menu -->
-                        <div class="in-player-dropdown-wrap">
-                            <button class="in-player-pill-btn" onclick="toggleInPlayerMenu('subs', event)" id="inPlayerSubBtn" title="Subtitles & Timing">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                                <span id="inPlayerCurrentSubText">Subtitles: English</span>
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
-                            </button>
-                            <div class="in-player-popover" id="inPlayerSubMenu">
-                                <div class="popover-header">Subtitles & Timing</div>
-                                <div class="popover-actions-bar">
-                                    <label class="popover-action-chip" title="Upload a .srt or .vtt subtitle file from your device">
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                                        Upload File (.srt)
-                                        <input type="file" id="localSubFileInput" accept=".srt,.vtt,.txt" style="display:none;" onchange="handleLocalSubtitleUpload(event)">
-                                    </label>
-                                    <button class="popover-action-chip" onclick="openOnlineSubtitlesModal(event)" title="Find & download subtitles online">
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6M8 11h6"/></svg>
-                                        Search Online
-                                    </button>
-                                </div>
-                                <div class="popover-list" id="inPlayerSubList"></div>
-                                <div class="popover-sync-row">
-                                    <span style="font-size:11px; color:#94a3b8; font-weight:700;">Sync:</span>
-                                    <button class="btn-xs-sync" onclick="adjustSubtitleSync(-0.5); event.stopPropagation();">-0.5s</button>
-                                    <span id="inPlayerSubSyncVal" style="color:#00e599; font-weight:800; font-size:11px;">0.0s</span>
-                                    <button class="btn-xs-sync" onclick="adjustSubtitleSync(0.5); event.stopPropagation();">+0.5s</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Playback Speed In-Player Menu -->
-                        <div class="in-player-dropdown-wrap">
-                            <button class="in-player-pill-btn" onclick="toggleInPlayerMenu('speed', event)" id="inPlayerSpeedBtn" title="Playback Speed">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                <span id="inPlayerCurrentSpeedText">1.0x</span>
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-left:4px;"><path d="m6 9 6 6 6-6"/></svg>
-                            </button>
-                            <div class="in-player-popover" id="inPlayerSpeedMenu">
-                                <div class="popover-header">Playback Speed</div>
-                                <div class="popover-list">
-                                    <button class="popover-item" onclick="selectInPlayerSpeed(0.75, event)">0.75x</button>
-                                    <button class="popover-item active" onclick="selectInPlayerSpeed(1.0, event)">1.0x (Normal)</button>
-                                    <button class="popover-item" onclick="selectInPlayerSpeed(1.25, event)">1.25x</button>
-                                    <button class="popover-item" onclick="selectInPlayerSpeed(1.5, event)">1.5x</button>
-                                    <button class="popover-item" onclick="selectInPlayerSpeed(2.0, event)">2.0x</button>
-                                </div>
-                            </div>
-                        </div>
+                        <div class="player-time-tooltip" id="playerTimeTooltip">00:00</div>
                     </div>
 
-                    <div class="in-player-quick-right">
-                        <button class="in-player-pill-btn btn-highlight" onclick="downloadCurrentStream()" title="Download MP4 stream">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:5px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-                            Download
-                        </button>
+                    <!-- Bottom Controls Row -->
+                    <div class="player-controls-row">
+                        <div class="controls-left">
+                            <!-- Play/Pause -->
+                            <button class="player-ctrl-btn" id="playerPlayPauseBtn" onclick="toggleCinemaPlayPause()" title="Play/Pause (Space)">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" id="playPauseIcon"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            </button>
+                            <!-- Rewind 10s -->
+                            <button class="player-ctrl-btn" onclick="seekCinemaRelative(-10)" title="Rewind 10s (←)">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><text x="12" y="16" text-anchor="middle" font-size="7" font-weight="800" fill="currentColor" stroke="none">10</text></svg>
+                            </button>
+                            <!-- Forward 10s -->
+                            <button class="player-ctrl-btn" onclick="seekCinemaRelative(10)" title="Forward 10s (→)">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.85.99 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><text x="12" y="16" text-anchor="middle" font-size="7" font-weight="800" fill="currentColor" stroke="none">10</text></svg>
+                            </button>
+                            <!-- Volume & Mute -->
+                            <div class="player-volume-wrap">
+                                <button class="player-ctrl-btn" id="playerMuteBtn" onclick="toggleCinemaMute()" title="Mute/Unmute (M)">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="muteIcon"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+                                </button>
+                                <div class="player-volume-slider-box">
+                                    <input type="range" id="playerVolumeSlider" min="0" max="1" step="0.05" value="1" oninput="setCinemaVolume(this.value)">
+                                </div>
+                            </div>
+                            <!-- Time Display -->
+                            <div class="player-time-display">
+                                <span id="playerCurrentTime">00:00</span>
+                                <span class="time-sep">/</span>
+                                <span id="playerDuration">00:00</span>
+                            </div>
+                        </div>
+
+                        <div class="controls-right">
+                            <!-- Episodes Drawer Toggle (if series) -->
+                            <button class="player-ctrl-btn" id="bottomEpisodesBtn" onclick="togglePlayerEpisodesDrawer()" style="display:none;" title="Episodes List">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="15" x="2" y="7" rx="2"/><polyline points="17 2 12 7 7 2"/></svg>
+                                <span class="ctrl-label">Episodes</span>
+                            </button>
+                            <!-- Next Episode (if series) -->
+                            <button class="player-ctrl-btn" id="bottomNextEpBtn" onclick="playNextEpisode()" style="display:none;" title="Next Episode">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" x2="19" y1="5" y2="19"/></svg>
+                            </button>
+                            <!-- Mini-Player PIP -->
+                            <button class="player-ctrl-btn" onclick="toggleMiniPlayer()" title="Mini Player">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="14" x="3" y="5" rx="2"/><rect width="6" height="4" x="13" y="13" rx="1"/></svg>
+                            </button>
+                            
+                            <!-- Unified Settings Menu (Gear Icon) -->
+                            <div class="player-settings-wrap">
+                                <button class="player-ctrl-btn" id="playerGearBtn" onclick="togglePlayerSettingsMenu(event)" title="Settings (Server, Quality, Audio, Subs, Speed)">
+                                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="gear-icon"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                                </button>
+                                
+                                <div class="player-unified-settings-menu" id="playerUnifiedSettingsMenu">
+                                    <!-- Main Menu View -->
+                                    <div class="settings-menu-page active" id="settingsPageMain">
+                                        <div class="settings-menu-header">Playback Settings</div>
+                                        <div class="settings-menu-item" onclick="openSettingsSubpage('server')">
+                                            <span class="menu-icon">⚡</span>
+                                            <span class="menu-label">Server</span>
+                                            <span class="menu-value" id="settingsValServer">S1 (Direct)</span>
+                                            <span class="menu-arrow">›</span>
+                                        </div>
+                                        <div class="settings-menu-item" onclick="openSettingsSubpage('quality')">
+                                            <span class="menu-icon">📺</span>
+                                            <span class="menu-label">Quality</span>
+                                            <span class="menu-value" id="settingsValQuality">1080p FHD</span>
+                                            <span class="menu-arrow">›</span>
+                                        </div>
+                                        <div class="settings-menu-item" onclick="openSettingsSubpage('audio')">
+                                            <span class="menu-icon">🌐</span>
+                                            <span class="menu-label">Audio Track</span>
+                                            <span class="menu-value" id="settingsValAudio">Original</span>
+                                            <span class="menu-arrow">›</span>
+                                        </div>
+                                        <div class="settings-menu-item" onclick="openSettingsSubpage('subs')">
+                                            <span class="menu-icon">💬</span>
+                                            <span class="menu-label">Subtitles</span>
+                                            <span class="menu-value" id="settingsValSubs">Off</span>
+                                            <span class="menu-arrow">›</span>
+                                        </div>
+                                        <div class="settings-menu-item" onclick="openSettingsSubpage('speed')">
+                                            <span class="menu-icon">⏩</span>
+                                            <span class="menu-label">Speed</span>
+                                            <span class="menu-value" id="settingsValSpeed">1.0x</span>
+                                            <span class="menu-arrow">›</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Subpage: Server -->
+                                    <div class="settings-menu-page" id="settingsPageServer">
+                                        <div class="settings-subpage-header" onclick="backToSettingsMain()">
+                                            <span class="back-arrow">‹</span>
+                                            <span>Streaming Server</span>
+                                        </div>
+                                        <div class="settings-options-list" id="settingsServerOptions"></div>
+                                    </div>
+
+                                    <!-- Subpage: Quality -->
+                                    <div class="settings-menu-page" id="settingsPageQuality">
+                                        <div class="settings-subpage-header" onclick="backToSettingsMain()">
+                                            <span class="back-arrow">‹</span>
+                                            <span>Stream Quality</span>
+                                        </div>
+                                        <div class="settings-options-list" id="settingsQualityOptions"></div>
+                                    </div>
+
+                                    <!-- Subpage: Audio Track -->
+                                    <div class="settings-menu-page" id="settingsPageAudio">
+                                        <div class="settings-subpage-header" onclick="backToSettingsMain()">
+                                            <span class="back-arrow">‹</span>
+                                            <span>Audio Dub / Language</span>
+                                        </div>
+                                        <div class="settings-options-list" id="settingsAudioOptions"></div>
+                                    </div>
+
+                                    <!-- Subpage: Subtitles -->
+                                    <div class="settings-menu-page" id="settingsPageSubs">
+                                        <div class="settings-subpage-header" onclick="backToSettingsMain()">
+                                            <span class="back-arrow">‹</span>
+                                            <span>Subtitles</span>
+                                        </div>
+                                        <div class="settings-subs-tools">
+                                            <label class="btn-sub-tool" title="Upload subtitle file (.srt, .vtt)">
+                                                📂 Upload File (.srt)
+                                                <input type="file" id="localSubFileInput" accept=".srt,.vtt,.txt" style="display:none;" onchange="handleLocalSubtitleUpload(event)">
+                                            </label>
+                                            <button class="btn-sub-tool" onclick="openOnlineSubtitlesModal(event)">
+                                                🌐 Search Online
+                                            </button>
+                                        </div>
+                                        <div class="settings-options-list" id="settingsSubsOptions"></div>
+                                    </div>
+
+                                    <!-- Subpage: Speed -->
+                                    <div class="settings-menu-page" id="settingsPageSpeed">
+                                        <div class="settings-subpage-header" onclick="backToSettingsMain()">
+                                            <span class="back-arrow">‹</span>
+                                            <span>Playback Speed</span>
+                                        </div>
+                                        <div class="settings-options-list" id="settingsSpeedOptions">
+                                            <button class="settings-opt-item" onclick="setPlayerSpeed(0.5)">0.5x</button>
+                                            <button class="settings-opt-item" onclick="setPlayerSpeed(0.75)">0.75x</button>
+                                            <button class="settings-opt-item active" onclick="setPlayerSpeed(1.0)">1.0x (Normal) ✓</button>
+                                            <button class="settings-opt-item" onclick="setPlayerSpeed(1.25)">1.25x</button>
+                                            <button class="settings-opt-item" onclick="setPlayerSpeed(1.5)">1.5x</button>
+                                            <button class="settings-opt-item" onclick="setPlayerSpeed(2.0)">2.0x</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Fullscreen -->
+                            <button class="player-ctrl-btn" onclick="toggleCinemaFullscreen()" title="Fullscreen (F)">
+                                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="fsIcon"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                            </button>
+                        </div>
                     </div>
                 </div>
 

@@ -415,13 +415,36 @@ class MovieBoxEngine:
                 data = {}
         raw_items = data.get("items", []) or data.get("list", [])
         results = []
+        seen_canonical = {}
+
         for item in raw_items:
             sub = item.get("subject", item)
             # Enforce clean family-friendly results: strictly exclude pornographic/adult content
             if is_adult_content(sub):
                 continue
 
+            raw_title = sub.get("title") or ""
+            if not raw_title:
+                continue
+
+            # Strip language/dub bracket tags like [Hindi], (English), [Tamil]
+            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title)
+            clean_base = re.sub(r'\s+', ' ', clean_base).strip().lower()
+
             rel_date = sub.get("releaseDate") or ""
+            year_tag = str(rel_date)[:4] if rel_date else ""
+            type_tag = str(sub.get("subjectType", 1))
+            canonical_key = f"{clean_base}:{year_tag}:{type_tag}"
+
+            # If we've already seen this movie/show with just an audio dub tag
+            if canonical_key in seen_canonical:
+                existing = seen_canonical[canonical_key]
+                # If current has a cleaner title (no brackets), swap title
+                if "[" not in raw_title and "(" not in raw_title and ("[" in existing["title"] or "(" in existing["title"]):
+                    existing["title"] = raw_title
+                    existing["subject_id"] = str(sub.get("subjectId"))
+                continue
+
             is_cs = False
             if rel_date:
                 try:
@@ -431,9 +454,9 @@ class MovieBoxEngine:
                 except Exception:
                     pass
 
-            results.append({
+            entry = {
                 "subject_id": str(sub.get("subjectId")),
-                "title": sub.get("title"),
+                "title": raw_title,
                 "type": "Movie" if sub.get("subjectType") == 1 else "Series",
                 "subject_type": sub.get("subjectType"),
                 "release_date": rel_date,
@@ -443,7 +466,10 @@ class MovieBoxEngine:
                 "cover": sub.get("cover", {}).get("url") if isinstance(sub.get("cover"), dict) else None,
                 "detail_path": sub.get("detailPath"),
                 "language": sub.get("language")
-            })
+            }
+            seen_canonical[canonical_key] = entry
+            results.append(entry)
+
         app_cache.set(cache_key, results, ttl=600)
         return results
 
@@ -859,7 +885,14 @@ class MovieBoxEngine:
                         "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
                         "type": "Movie" if s.get("subjectType") == 1 else "TV Series"
                     }
-                    if not any(x["subject_id"] == item["subject_id"] for x in feed[target_key]):
+                    clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', item.get("title") or "").strip().lower()
+                    year_tag = item.get("year")
+                    is_dup = any(
+                        (x["subject_id"] == item["subject_id"]) or
+                        (re.sub(r'\[.*?\]|\(.*?\)', '', x.get("title") or "").strip().lower() == clean_base and x.get("year") == year_tag)
+                        for x in feed[target_key]
+                    )
+                    if not is_dup:
                         feed[target_key].append(item)
 
         # Fallback backfill for movie shelves (trending, cinema, hollywood)
@@ -942,6 +975,29 @@ class MovieBoxEngine:
                             feed["asian_drama"].append(it)
                 except Exception:
                     pass
+
+        # Derive rich genre and highlight shelves for complete site catalog
+        all_collected = []
+        seen_all = set()
+        for k in ["trending", "cinema", "hollywood", "series", "bollywood", "south_indian", "asian_drama", "anime"]:
+            for it in feed.get(k, []):
+                if it["subject_id"] not in seen_all:
+                    seen_all.add(it["subject_id"])
+                    all_collected.append(it)
+
+        def _parse_rating(val):
+            try:
+                return float(val)
+            except Exception:
+                return 0.0
+
+        top_rated_sorted = sorted([x for x in all_collected if _parse_rating(x.get("rating")) >= 6.5], key=lambda x: _parse_rating(x.get("rating")), reverse=True)
+        feed["top_rated"] = top_rated_sorted[:24]
+        feed["new_releases"] = [x for x in all_collected if str(x.get("year", "")) in ("2026", "2025")][:24]
+        feed["action"] = [x for x in all_collected if any(g in (x.get("genre") or "").lower() for g in ["action", "thriller", "adventure"])][:24]
+        feed["scifi"] = [x for x in all_collected if any(g in (x.get("genre") or "").lower() for g in ["sci-fi", "fantasy", "supernatural", "mystery"])][:24]
+        feed["comedy"] = [x for x in all_collected if any(g in (x.get("genre") or "").lower() for g in ["comedy", "romance", "family"])][:24]
+        feed["horror"] = [x for x in all_collected if any(g in (x.get("genre") or "").lower() for g in ["horror", "mystery", "crime"])][:24]
 
         total_items = sum(len(v) for v in feed.values())
         if total_items >= 20:
@@ -1435,6 +1491,129 @@ async def get_fallback_sources(
         "servers": servers
     }
 
+@app.get("/api/probe-servers")
+async def probe_stream_servers(
+    subject_id: Optional[str] = Query(None),
+    title: Optional[str] = Query(None),
+    year: Optional[str] = Query(None),
+    is_series: bool = Query(False),
+    season: int = Query(0),
+    episode: int = Query(0)
+):
+    """
+    Parallel server health test (3s timeout).
+    Tests Direct Stream and Fallback Servers concurrently.
+    Returns status for each candidate and identifies the fastest healthy server.
+    """
+    candidates = []
+    loop = asyncio.get_event_loop()
+
+    # 1. Candidate: Direct CineScope / MovieBox Stream
+    direct_stream_url = None
+    if subject_id and subject_id != "None":
+        try:
+            streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=season, episode=episode))
+            if streams:
+                # Find best direct stream
+                playable = [s for s in streams if s.get("format") != "DASH" and ".mpd" not in s.get("url", "")]
+                best_direct = playable[0] if playable else streams[0]
+                direct_stream_url = best_direct.get("url")
+                candidates.append({
+                    "id": "direct",
+                    "name": "Server 1 (Direct 1080p)",
+                    "type": "direct",
+                    "url": direct_stream_url,
+                    "stream_meta": best_direct
+                })
+        except Exception:
+            pass
+
+    # 2. Candidates: Fallback Servers (VidLink, AutoEmbed, MultiEmbed, EmbedSu, RiveStream)
+    resolved_title = title
+    if not resolved_title and subject_id:
+        try:
+            details = await loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
+            resolved_title = details.get("title")
+            if not year:
+                year = str(details.get("release_date") or "")[:4] or None
+        except Exception:
+            pass
+
+    fallback_servers = []
+    if resolved_title:
+        imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(resolved_title, year=year, is_series=is_series))
+        if imdb_id:
+            fallback_servers = get_backup_servers(imdb_id, is_series=is_series, season=season, episode=episode)
+            for s in fallback_servers:
+                candidates.append(s)
+
+    # 3. Probe each candidate in parallel with a 3.0s timeout
+    async def _probe(candidate):
+        cid = candidate.get("id")
+        c_url = candidate.get("url")
+        c_type = candidate.get("type", "iframe")
+        if not c_url:
+            return {**candidate, "status": "failed", "error": "No URL"}
+
+        t_start = time.time()
+        try:
+            async with httpx.AsyncClient(timeout=3.0, follow_redirects=True, verify=False) as client:
+                if c_type == "direct":
+                    # Range probe on direct stream
+                    r = await client.get(c_url, headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Range": "bytes=0-1024"
+                    })
+                    latency = round((time.time() - t_start) * 1000)
+                    if r.status_code in (200, 206, 302):
+                        return {**candidate, "status": "healthy", "latency_ms": latency}
+                    else:
+                        return {**candidate, "status": "failed", "error": f"HTTP {r.status_code}", "latency_ms": latency}
+                else:
+                    # Probe embed server
+                    r = await client.head(c_url, headers={"User-Agent": "Mozilla/5.0"})
+                    if r.status_code in (404, 405):
+                        r = await client.get(c_url, headers={"User-Agent": "Mozilla/5.0"})
+                    latency = round((time.time() - t_start) * 1000)
+                    if r.status_code < 400 or r.status_code in (301, 302, 307):
+                        return {**candidate, "status": "healthy", "latency_ms": latency}
+                    else:
+                        return {**candidate, "status": "failed", "error": f"HTTP {r.status_code}", "latency_ms": latency}
+        except Exception as e:
+            latency = round((time.time() - t_start) * 1000)
+            return {**candidate, "status": "failed", "error": str(e)[:50], "latency_ms": latency}
+
+    probe_tasks = [_probe(c) for c in candidates]
+    results = await asyncio.gather(*probe_tasks, return_exceptions=True)
+
+    tested_servers = []
+    for r in results:
+        if isinstance(r, dict):
+            tested_servers.append(r)
+
+    # Pick the fastest healthy server (preferring direct if healthy, else lowest latency fallback)
+    healthy_direct = [s for s in tested_servers if s.get("id") == "direct" and s.get("status") == "healthy"]
+    healthy_fallbacks = [s for s in tested_servers if s.get("id") != "direct" and s.get("status") == "healthy"]
+    healthy_fallbacks.sort(key=lambda s: s.get("latency_ms", 9999))
+
+    best_server = None
+    if healthy_direct:
+        best_server = healthy_direct[0]
+    elif healthy_fallbacks:
+        best_server = healthy_fallbacks[0]
+    elif tested_servers:
+        # Fallback to first candidate if all probes gave opaque / non-200 responses
+        best_server = tested_servers[0]
+
+    return {
+        "title": resolved_title,
+        "subject_id": subject_id,
+        "best_server_id": best_server.get("id") if best_server else None,
+        "best_server": best_server,
+        "servers": tested_servers
+    }
+
+
 @app.get("/api/stream/{subject_id}")
 async def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Optional[str] = None, _bust: Optional[str] = None):
     if not subject_id or subject_id == "None":
@@ -1616,12 +1795,63 @@ async def trigger_server_deploy(secret: Optional[str] = Query(None)):
     return {"status": "success", "message": "Deployed latest GitHub commit", "log": res}
 
 
+@app.get("/api/hero-trending")
+def get_hero_trending():
+    cache_key = "feed:hero_daily_trending"
+    cached = app_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    feed = engine.get_curated_feed()
+    slides = []
+    seen = set()
+
+    # Prefer trending and cinema first, then hollywood
+    candidates = feed.get("trending", []) + feed.get("new_releases", []) + feed.get("hollywood", [])
+    for it in candidates:
+        sid = it.get("subject_id")
+        raw_title = it.get("title") or ""
+        clean = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
+        if not clean or clean.lower() in seen:
+            continue
+        seen.add(clean.lower())
+
+        backdrop = it.get("cover")
+        rating = it.get("rating") or "7.5"
+        year = it.get("year") or "2026"
+        genre = it.get("genre") or "Action, Cinema"
+
+        slides.append({
+            "title": clean,
+            "raw_title": raw_title,
+            "subject_id": sid,
+            "rating": rating,
+            "year": year,
+            "genre": genre,
+            "desc": f"Watch {clean} in crystal-clear 1080p Ultra HD streaming with verified CDN mirrors, multi-language dubs, and interactive cinema controls.",
+            "backdrop": backdrop,
+            "cover": it.get("cover"),
+            "type": it.get("type", "Movie")
+        })
+        if len(slides) >= 7:
+            break
+
+    res = {
+        "items": slides,
+        "count": len(slides),
+        "updated_at": int(time.time())
+    }
+    app_cache.set(cache_key, res, ttl=86400)  # 24-hour cache for daily auto-refresh
+    return res
+
+
 @app.get("/movies")
-def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", category: str = "all"):
+def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", category: str = "all", genre: str = "ALL"):
     feed = engine.get_curated_feed()
 
-    # Category shelf direct access
-    if category in ("hollywood", "bollywood", "cinema", "south_indian", "trending"):
+    # Dedicated shelf category direct access
+    shelf_keys = ["hollywood", "bollywood", "cinema", "south_indian", "trending", "action", "scifi", "comedy", "horror", "top_rated", "new_releases"]
+    if category in shelf_keys:
         items = feed.get(category, [])
         total = len(items)
         start = (page - 1) * per_page
@@ -1630,71 +1860,106 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
             "page": page,
             "per_page": per_page,
             "total": total,
+            "has_more": end < total,
             "category": category,
+            "genre": genre,
             "items": items[start:end]
         }
 
-    # Consolidated movies from verified curated shelves (100% genuine cinema, 0 songs)
-    curated_movies = []
+    curated_pool = []
     seen = set()
-    for cat in ["trending", "cinema", "hollywood", "bollywood", "south_indian"]:
+    for cat in ["trending", "new_releases", "top_rated", "hollywood", "action", "scifi", "comedy", "horror", "bollywood", "south_indian"]:
         for it in feed.get(cat, []):
-            if it["subject_id"] not in seen:
+            raw_t = it.get("title") or ""
+            clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip()
+            if it["subject_id"] not in seen and clean_name.lower() not in seen:
                 seen.add(it["subject_id"])
-                curated_movies.append(it)
+                seen.add(clean_name.lower())
+                c = dict(it)
+                c["raw_title"] = raw_t
+                c["title"] = clean_name
+                curated_pool.append(c)
 
-    cache_key = f"movies:{page}:{per_page}:{sort}:{category}"
+    cache_key = f"movies:{page}:{per_page}:{sort}:{category}:{genre}"
     cached = app_cache.get(cache_key)
     if cached is not None:
         return cached
 
-    filtered_items = []
+    # If page 1, serve the top curated pool directly for instant 0ms response
+    if page == 1 and category == "all" and genre == "ALL":
+        res = {
+            "page": 1,
+            "per_page": per_page,
+            "total": 10000,
+            "has_more": True,
+            "category": category,
+            "genre": genre,
+            "items": curated_pool[:per_page]
+        }
+        app_cache.set(cache_key, res, ttl=300)
+        return res
+
+    # For subsequent pages or specific queries, fetch from upstream filter API
+    items = []
     try:
         url = f"{API_BASE}/subject/filter"
         payload = {
             "tabId": 2,
-            "filter": {"sort": sort, "genre": "ALL", "country": "ALL", "year": "ALL", "language": "ALL"},
-            "page": page,
-            "perPage": per_page * 2
+            "page": str(page),
+            "perPage": str(per_page * 2)
         }
         resp = engine.session.post(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://movieboxhd.net/"}, json=payload, timeout=12)
         raw = resp.json().get("data", {}).get("items") or []
         for s in raw:
-            # strictly exclude clips, songs, and adult content
             if s.get("subjectType") == 6 or is_adult_content(s):
                 continue
             if not s.get("title"):
                 continue
             sid = str(s.get("subjectId"))
-            if sid not in seen:
+            clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', s.get("title") or '').strip()
+            clean_key = clean_title.lower()
+            if sid not in seen and clean_key not in seen:
                 seen.add(sid)
+                seen.add(clean_key)
                 cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
-                filtered_items.append({
-                    "title": s.get("title"),
+                items.append({
+                    "title": clean_title,
+                    "raw_title": s.get("title"),
                     "subject_id": sid,
-                    "subject_type": s.get("subjectType"),
+                    "subject_type": s.get("subjectType", 1),
                     "detail_path": s.get("detailPath"),
                     "cover": cover_url,
-                    "rating": s.get("imdbRatingValue"),
-                    "genre": s.get("genre"),
-                    "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else None,
-                    "type": "Movie" if s.get("subjectType") == 1 else "TV Series"
+                    "rating": s.get("imdbRatingValue") or "N/A",
+                    "genre": s.get("genre") or "Cinema",
+                    "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
+                    "type": "Movie"
                 })
+            if len(items) >= per_page:
+                break
     except Exception:
         pass
 
-    all_items = curated_movies + filtered_items
-    start = (page - 1) * per_page
-    end = start + per_page
+    # If upstream returned fewer than desired, backfill from pool slice
+    if len(items) < per_page:
+        start_idx = (page - 1) * per_page
+        for extra in curated_pool[start_idx:start_idx + per_page]:
+            if not any(x["subject_id"] == extra["subject_id"] for x in items):
+                items.append(extra)
+            if len(items) >= per_page:
+                break
+
     res = {
         "page": page,
         "per_page": per_page,
-        "total": len(all_items),
+        "total": 10000,
+        "has_more": True,
         "category": category,
-        "items": all_items[start:end]
+        "genre": genre,
+        "items": items[:per_page]
     }
     app_cache.set(cache_key, res, ttl=300)
     return res
+
 
 @app.get("/tv-series")
 def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", category: str = "all"):
@@ -1703,59 +1968,101 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
     seen = set()
     for cat in ["series", "anime", "asian_drama"]:
         for it in feed.get(cat, []):
-            if it["subject_id"] not in seen:
+            raw_t = it.get("title") or ""
+            clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip()
+            if it["subject_id"] not in seen and clean_name.lower() not in seen:
                 seen.add(it["subject_id"])
-                curated_series.append(it)
+                seen.add(clean_name.lower())
+                c = dict(it)
+                c["raw_title"] = raw_t
+                c["title"] = clean_name
+                curated_series.append(c)
+
+    if category in ["series", "anime", "asian_drama"]:
+        items = feed.get(category, [])
+        total = len(items)
+        start = (page - 1) * per_page
+        end = start + per_page
+        return {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "has_more": end < total,
+            "category": category,
+            "items": items[start:end]
+        }
 
     cache_key = f"tv:{page}:{per_page}:{sort}:{category}"
     cached = app_cache.get(cache_key)
     if cached is not None:
         return cached
 
-    filtered_items = []
+    if page == 1 and category == "all":
+        res = {
+            "page": 1,
+            "per_page": per_page,
+            "total": 5000,
+            "has_more": True,
+            "category": category,
+            "items": curated_series[:per_page]
+        }
+        app_cache.set(cache_key, res, ttl=300)
+        return res
+
+    items = []
     try:
         url = f"{API_BASE}/subject/filter"
         payload = {
             "tabId": 5,
-            "filter": {"sort": sort, "genre": "ALL", "country": "ALL", "year": "ALL", "language": "ALL"},
-            "page": page,
-            "perPage": per_page * 2
+            "page": str(page),
+            "perPage": str(per_page * 2)
         }
         resp = engine.session.post(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://movieboxhd.net/"}, json=payload, timeout=12)
         raw = resp.json().get("data", {}).get("items") or []
         for s in raw:
-            # strictly exclude clips, songs, and adult content
             if s.get("subjectType") == 6 or is_adult_content(s):
                 continue
             if not s.get("title"):
                 continue
             sid = str(s.get("subjectId"))
-            if sid not in seen:
+            clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', s.get("title") or '').strip()
+            clean_key = clean_title.lower()
+            if sid not in seen and clean_key not in seen:
                 seen.add(sid)
+                seen.add(clean_key)
                 cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
-                filtered_items.append({
-                    "title": s.get("title"),
+                items.append({
+                    "title": clean_title,
+                    "raw_title": s.get("title"),
                     "subject_id": sid,
-                    "subject_type": s.get("subjectType"),
+                    "subject_type": s.get("subjectType", 2),
                     "detail_path": s.get("detailPath"),
                     "cover": cover_url,
-                    "rating": s.get("imdbRatingValue"),
-                    "genre": s.get("genre"),
-                    "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else None,
+                    "rating": s.get("imdbRatingValue") or "N/A",
+                    "genre": s.get("genre") or "TV Series",
+                    "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
                     "type": "TV Series"
                 })
+            if len(items) >= per_page:
+                break
     except Exception:
         pass
 
-    all_items = curated_series + filtered_items
-    start = (page - 1) * per_page
-    end = start + per_page
+    if len(items) < per_page:
+        start_idx = (page - 1) * per_page
+        for extra in curated_series[start_idx:start_idx + per_page]:
+            if not any(x["subject_id"] == extra["subject_id"] for x in items):
+                items.append(extra)
+            if len(items) >= per_page:
+                break
+
     res = {
         "page": page,
         "per_page": per_page,
-        "total": len(all_items),
+        "total": 5000,
+        "has_more": True,
         "category": category,
-        "items": all_items[start:end]
+        "items": items[:per_page]
     }
     app_cache.set(cache_key, res, ttl=300)
     return res

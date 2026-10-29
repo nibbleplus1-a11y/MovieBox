@@ -338,6 +338,7 @@ document.addEventListener('DOMContentLoaded', () => {
     safeRun(initHeroCarousel, 'initHeroCarousel');
     safeRun(renderContinueWatching, 'renderContinueWatching');
     safeRun(loadHomeFeed, 'loadHomeFeed');
+    safeRun(setupCatalogInfiniteScroll, 'setupCatalogInfiniteScroll');
     safeRun(renderApiPlayground, 'renderApiPlayground');
     safeRun(updateWatchlistBadge, 'updateWatchlistBadge');
     safeRun(initKeyboardShortcuts, 'initKeyboardShortcuts');
@@ -387,27 +388,100 @@ function initNavigation() {
     });
 }
 
-// ─── HERO CAROUSEL ───────────────────────────────────────────────────────────
+// ─── HERO CAROUSEL (Daily Auto-Refresh, Manual Arrows, Dots & Touch Swipe) ─────
+let heroSlidesList = [...HERO_SLIDES];
+let isHeroAutoplayPaused = false;
+let heroTouchStartX = 0;
+let heroTouchEndX = 0;
+
+async function fetchDailyHeroSlides() {
+    try {
+        const res = await fetch('/api/hero-trending');
+        if (res.ok) {
+            const data = await res.json();
+            if (data.items && data.items.length >= 3) {
+                heroSlidesList = data.items;
+                renderHeroDots();
+                renderHeroSlide(0);
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to fetch daily hero trending, using defaults:', e);
+    }
+}
+
+function renderHeroDots() {
+    const dotsWrap = document.getElementById('heroDots');
+    if (!dotsWrap) return;
+    dotsWrap.innerHTML = heroSlidesList.map((_, i) => `<span class="dot ${i === currentHeroIndex ? 'active' : ''}" onclick="switchHeroSlide(${i})"></span>`).join('');
+}
+
 function initHeroCarousel() {
+    fetchDailyHeroSlides();
+    renderHeroDots();
     renderHeroSlide(0);
+    startHeroAutoplay();
+
+    const banner = document.getElementById('heroBanner');
+    if (!banner) return;
+
+    // Pause autoplay on mouse hover (desktop)
+    banner.addEventListener('mouseenter', () => { isHeroAutoplayPaused = true; });
+    banner.addEventListener('mouseleave', () => { isHeroAutoplayPaused = false; });
+
+    // Touch swipe and touch pause (mobile)
+    banner.addEventListener('touchstart', (e) => {
+        isHeroAutoplayPaused = true;
+        heroTouchStartX = e.changedTouches[0].screenX;
+    }, { passive: true });
+
+    banner.addEventListener('touchend', (e) => {
+        isHeroAutoplayPaused = false;
+        heroTouchEndX = e.changedTouches[0].screenX;
+        handleHeroSwipe();
+    }, { passive: true });
+}
+
+function handleHeroSwipe() {
+    const delta = heroTouchEndX - heroTouchStartX;
+    if (Math.abs(delta) > 45) {
+        if (delta < 0) {
+            nextHeroSlide();
+        } else {
+            prevHeroSlide();
+        }
+    }
+}
+
+function startHeroAutoplay() {
+    clearInterval(heroCarouselTimer);
     heroCarouselTimer = setInterval(() => {
-        currentHeroIndex = (currentHeroIndex + 1) % HERO_SLIDES.length;
-        renderHeroSlide(currentHeroIndex);
-    }, 8000);
+        if (!isHeroAutoplayPaused) {
+            nextHeroSlide();
+        }
+    }, 7000);
+}
+
+function prevHeroSlide() {
+    currentHeroIndex = (currentHeroIndex - 1 + heroSlidesList.length) % heroSlidesList.length;
+    renderHeroSlide(currentHeroIndex);
+    startHeroAutoplay();
+}
+
+function nextHeroSlide() {
+    currentHeroIndex = (currentHeroIndex + 1) % heroSlidesList.length;
+    renderHeroSlide(currentHeroIndex);
+    startHeroAutoplay();
 }
 
 function switchHeroSlide(index) {
-    clearInterval(heroCarouselTimer);
     currentHeroIndex = index;
     renderHeroSlide(index);
-    heroCarouselTimer = setInterval(() => {
-        currentHeroIndex = (currentHeroIndex + 1) % HERO_SLIDES.length;
-        renderHeroSlide(currentHeroIndex);
-    }, 8000);
+    startHeroAutoplay();
 }
 
 function renderHeroSlide(index) {
-    const slide = HERO_SLIDES[index];
+    const slide = heroSlidesList[index];
     if (!slide) return;
 
     const backdrop = document.getElementById('heroBackdrop');
@@ -418,19 +492,30 @@ function renderHeroSlide(index) {
     const playBtn = document.getElementById('heroPlayBtn');
     const detailsBtn = document.getElementById('heroDetailsBtn');
 
-    if (backdrop) backdrop.style.backgroundImage = `url('${slide.backdrop}')`;
+    if (backdrop && slide.backdrop) {
+        backdrop.style.backgroundImage = `url('${slide.backdrop}')`;
+    }
     if (title) title.textContent = slide.title;
-    if (desc) desc.textContent = slide.desc;
+    if (desc) desc.textContent = slide.desc || `Watch ${slide.title} in 1080p Ultra HD streaming with 5.1 surround dubs and full cinema controls.`;
     if (ratingBadge) ratingBadge.textContent = `★ ${slide.rating} IMDb`;
-    if (genreBadge) genreBadge.textContent = slide.genre;
+    if (genreBadge) genreBadge.textContent = slide.genre || 'Action • Cinema';
     if (playBtn) playBtn.onclick = () => quickPlay(slide.subject_id, slide.title);
     if (detailsBtn) detailsBtn.onclick = () => openDetailsModal(slide.subject_id);
 
     document.querySelectorAll('#heroDots .dot').forEach((d, i) => d.classList.toggle('active', i === index));
 }
 
+// ─── HORIZONTAL SHELF SCROLL CONTROLLER ───────────────────────────────────────
+function scrollShelf(rowId, direction) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    const scrollAmount = Math.max(300, Math.floor(row.clientWidth * 0.75));
+    row.scrollBy({ left: direction * scrollAmount, behavior: 'smooth' });
+}
+
 // ─── SKELETON HELPER ─────────────────────────────────────────────────────────
 function renderSkeletons(container, count = 12) {
+    if (!container) return;
     let html = '';
     for (let i = 0; i < count; i++) {
         html += `
@@ -445,96 +530,62 @@ function renderSkeletons(container, count = 12) {
     container.innerHTML = html;
 }
 
-// ─── HOME FEED (Real 2026/2025 movies with 1500x2222 posters, 0 songs) ───────
+// ─── HOME STREAMING FEED (13 Curated Horizontal Rows, Zero Song Clutter) ───────
 async function loadHomeFeed() {
-    const curatedGrid = document.getElementById('curatedGrid');
-    const hollywoodGrid = document.getElementById('hollywoodGrid');
-    const bollywoodGrid = document.getElementById('bollywoodGrid');
-    const southIndianGrid = document.getElementById('southIndianGrid');
-    const homeSeriesGrid = document.getElementById('homeSeriesGrid');
+    const shelfMap = [
+        { id: 'trendingRow', key: 'trending', type: 'Movie', countId: 'trendingCount' },
+        { id: 'newReleasesRow', key: 'new_releases', type: 'Movie' },
+        { id: 'topRatedRow', key: 'top_rated', type: 'Movie' },
+        { id: 'hollywoodRow', key: 'hollywood', type: 'Movie' },
+        { id: 'seriesRow', key: 'series', type: 'TV Series' },
+        { id: 'actionRow', key: 'action', type: 'Movie' },
+        { id: 'scifiRow', key: 'scifi', type: 'Movie' },
+        { id: 'comedyRow', key: 'comedy', type: 'Movie' },
+        { id: 'horrorRow', key: 'horror', type: 'Movie' },
+        { id: 'bollywoodRow', key: 'bollywood', type: 'Movie' },
+        { id: 'southIndianRow', key: 'south_indian', type: 'Movie' },
+        { id: 'animeRow', key: 'anime', type: 'TV Series' },
+        { id: 'asianDramaRow', key: 'asian_drama', type: 'TV Series' }
+    ];
 
-    if (curatedGrid) renderSkeletons(curatedGrid, 6);
-    if (hollywoodGrid) renderSkeletons(hollywoodGrid, 6);
-    if (bollywoodGrid) renderSkeletons(bollywoodGrid, 6);
-    if (southIndianGrid) renderSkeletons(southIndianGrid, 6);
-    if (homeSeriesGrid) renderSkeletons(homeSeriesGrid, 6);
+    shelfMap.forEach(s => {
+        const el = document.getElementById(s.id);
+        if (el) renderSkeletons(el, 7);
+    });
 
     try {
-        // Bust server-side cache on first page visit per session so new movies always appear fresh
         const bustOnce = !sessionStorage.getItem('home_feed_loaded');
         if (bustOnce) sessionStorage.setItem('home_feed_loaded', '1');
         const feedUrl = bustOnce ? `/api/feed/home-curated?_bust=${Date.now()}` : '/api/feed/home-curated';
         const res = await fetch(feedUrl);
         const feed = await res.json();
 
-        // 1. Trending & Fresh Cinema
-        let trendingList = feed.trending || [];
-        if (!trendingList.length) {
-            try {
-                const trRes = await fetch('/movies?page=1&per_page=12&sort=RECOMMEND');
-                const trData = await trRes.json();
-                trendingList = trData.items || [];
-            } catch (e) {}
-        }
-        if (curatedGrid) {
-            curatedGrid.innerHTML = trendingList.length
-                ? trendingList.slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('')
-                : '<div class="grid-loading">No trending movies found.</div>';
-        }
+        shelfMap.forEach(s => {
+            const el = document.getElementById(s.id);
+            if (!el) return;
+            const items = feed[s.key] || [];
+            if (items.length) {
+                el.innerHTML = items.map(item => createMediaCardHtml({ ...item, type: s.type })).join('');
+                if (s.countId) {
+                    const badge = document.getElementById(s.countId);
+                    if (badge) badge.textContent = `${items.length} Titles`;
+                }
+            } else {
+                el.innerHTML = '<div class="grid-loading">Content loading soon...</div>';
+            }
+        });
 
-        // 2. Hollywood Blockbusters
-        let hollywoodList = feed.hollywood || [];
-        if (!hollywoodList.length) {
-            try {
-                const hwRes = await fetch('/movies?page=1&per_page=12&category=hollywood');
-                const hwData = await hwRes.json();
-                hollywoodList = hwData.items || [];
-            } catch (e) {}
-        }
-        if (hollywoodGrid) {
-            hollywoodGrid.innerHTML = (hollywoodList.length ? hollywoodList : trendingList).slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('');
-        }
-
-        // 3. Bollywood Hits
-        let bollywoodList = feed.bollywood || [];
-        if (!bollywoodList.length) {
-            try {
-                const bwRes = await fetch('/movies?page=1&per_page=12&category=bollywood');
-                const bwData = await bwRes.json();
-                bollywoodList = bwData.items || [];
-            } catch (e) {}
-        }
-        if (bollywoodGrid) {
-            bollywoodGrid.innerHTML = (bollywoodList.length ? bollywoodList : trendingList.slice(3)).slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('');
-        }
-
-        // 4. South Indian Cinema
-        let southList = feed.south_indian || [];
-        if (!southList.length) {
-            try {
-                const siRes = await fetch('/movies?page=1&per_page=12&category=south_indian');
-                const siData = await siRes.json();
-                southList = siData.items || [];
-            } catch (e) {}
-        }
-        if (southIndianGrid) {
-            southIndianGrid.innerHTML = (southList.length ? southList : trendingList.slice(6)).slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('');
-        }
-
-        // 5. Top TV Series & Anime
-        let seriesList = [...(feed.series || []), ...(feed.anime || [])];
-        if (!seriesList.length) {
-            try {
-                const seRes = await fetch('/movies?page=1&per_page=12&category=series');
-                const seData = await seRes.json();
-                seriesList = seData.items || [];
-            } catch (e) {}
-        }
-        if (homeSeriesGrid) {
-            homeSeriesGrid.innerHTML = seriesList.slice(0, 12).map(item => createMediaCardHtml({ ...item, type: 'TV Series' })).join('');
+        // Backward compatibility for legacy grids if rendered
+        const legacyGrid = document.getElementById('curatedGrid');
+        if (legacyGrid && feed.trending) {
+            legacyGrid.innerHTML = feed.trending.map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('');
         }
     } catch (err) {
-        if (curatedGrid) curatedGrid.innerHTML = `<div class="grid-loading">Failed to load feed: ${escapeHtml(err.message)}</div>`;
+        console.error('Failed to load home streaming feed:', err);
+        shelfMap.forEach(s => {
+            const el = document.getElementById(s.id);
+            if (el) el.innerHTML = `<div class="grid-loading">Unable to load titles: ${escapeHtml(err.message)}</div>`;
+        });
     }
 }
 
@@ -584,16 +635,31 @@ function isMusicEntry(item) {
     return musicPatterns.some(k => t.includes(k));
 }
 
-// ─── MOVIES CATALOG ───────────────────────────────────────────────────────────
-async function loadMovies(page = 1, sort = moviesSort) {
+// ─── MOVIES CATALOG (Infinite Scroll & Multi-Page Pagination) ─────────────────
+let isMoviesLoadingMore = false;
+let isSeriesLoadingMore = false;
+
+async function loadMovies(page = 1, sort = moviesSort, append = false) {
+    if (append && isMoviesLoadingMore) return;
     moviesPage = page;
     moviesSort = sort;
     const grid = document.getElementById('moviesCatalogGrid');
     const indicator = document.getElementById('moviesPageIndicator');
     const prevBtn = document.getElementById('moviesPrevBtn');
+    const loadMoreBtn = document.getElementById('moviesLoadMoreBtn');
 
-    renderSkeletons(grid, 18);
-    grid.dataset.loaded = 'true';
+    if (!append) {
+        renderSkeletons(grid, 18);
+        grid.dataset.loaded = 'true';
+    } else {
+        isMoviesLoadingMore = true;
+        if (loadMoreBtn) {
+            const txt = loadMoreBtn.querySelector('.load-more-text');
+            const sp = loadMoreBtn.querySelector('.load-more-spinner');
+            if (txt) txt.style.display = 'none';
+            if (sp) sp.style.display = 'inline';
+        }
+    }
 
     try {
         const res = await fetch(`/movies?page=${page}&per_page=24&sort=${sort}&category=${currentMovieCategory}`);
@@ -605,16 +671,33 @@ async function loadMovies(page = 1, sort = moviesSort) {
         }
 
         if (items.length) {
-            grid.innerHTML = items.map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('');
-        } else {
+            const html = items.map(item => createMediaCardHtml({ ...item, type: 'Movie' })).join('');
+            if (append) {
+                grid.insertAdjacentHTML('beforeend', html);
+            } else {
+                grid.innerHTML = html;
+            }
+        } else if (!append) {
             grid.innerHTML = '<div class="grid-loading">No movies found in this category.</div>';
         }
 
         if (indicator) indicator.textContent = `Page ${page}`;
         if (prevBtn) prevBtn.disabled = page <= 1;
     } catch (err) {
-        grid.innerHTML = `<div class="grid-loading">Error: ${err.message}</div>`;
+        if (!append) grid.innerHTML = `<div class="grid-loading">Error: ${err.message}</div>`;
+    } finally {
+        isMoviesLoadingMore = false;
+        if (loadMoreBtn) {
+            const txt = loadMoreBtn.querySelector('.load-more-text');
+            const sp = loadMoreBtn.querySelector('.load-more-spinner');
+            if (txt) txt.style.display = 'inline';
+            if (sp) sp.style.display = 'none';
+        }
     }
+}
+
+function loadMoreMovies() {
+    loadMovies(moviesPage + 1, moviesSort, true);
 }
 
 function filterByGenre(genre, type = 'movies', btn) {
@@ -634,16 +717,28 @@ function setMoviesSort(sort, btn) {
     loadMovies(1, sort);
 }
 
-// ─── TV SERIES ───────────────────────────────────────────────────────────────
-async function loadTVSeries(page = 1, sort = seriesSort) {
+// ─── TV SERIES CATALOG (Infinite Scroll & Multi-Page Pagination) ──────────────
+async function loadTVSeries(page = 1, sort = seriesSort, append = false) {
+    if (append && isSeriesLoadingMore) return;
     seriesPage = page;
     seriesSort = sort;
     const grid = document.getElementById('seriesCatalogGrid');
     const indicator = document.getElementById('seriesPageIndicator');
     const prevBtn = document.getElementById('seriesPrevBtn');
+    const loadMoreBtn = document.getElementById('seriesLoadMoreBtn');
 
-    renderSkeletons(grid, 18);
-    grid.dataset.loaded = 'true';
+    if (!append) {
+        renderSkeletons(grid, 18);
+        grid.dataset.loaded = 'true';
+    } else {
+        isSeriesLoadingMore = true;
+        if (loadMoreBtn) {
+            const txt = loadMoreBtn.querySelector('.load-more-text');
+            const sp = loadMoreBtn.querySelector('.load-more-spinner');
+            if (txt) txt.style.display = 'none';
+            if (sp) sp.style.display = 'inline';
+        }
+    }
 
     try {
         const res = await fetch(`/tv-series?page=${page}&per_page=24&sort=${sort}&category=${currentSeriesCategory}`);
@@ -651,20 +746,66 @@ async function loadTVSeries(page = 1, sort = seriesSort) {
         const items = (data.items || []).filter(item => item.title && !isMusicEntry(item));
 
         if (items.length) {
-            grid.innerHTML = items.map(item => createMediaCardHtml({ ...item, type: 'TV Series' })).join('');
-        } else {
+            const html = items.map(item => createMediaCardHtml({ ...item, type: 'TV Series' })).join('');
+            if (append) {
+                grid.insertAdjacentHTML('beforeend', html);
+            } else {
+                grid.innerHTML = html;
+            }
+        } else if (!append) {
             grid.innerHTML = '<div class="grid-loading">No series found on this page.</div>';
         }
 
         if (indicator) indicator.textContent = `Page ${page}`;
         if (prevBtn) prevBtn.disabled = page <= 1;
     } catch (err) {
-        grid.innerHTML = `<div class="grid-loading">Error: ${err.message}</div>`;
+        if (!append) grid.innerHTML = `<div class="grid-loading">Error: ${err.message}</div>`;
+    } finally {
+        isSeriesLoadingMore = false;
+        if (loadMoreBtn) {
+            const txt = loadMoreBtn.querySelector('.load-more-text');
+            const sp = loadMoreBtn.querySelector('.load-more-spinner');
+            if (txt) txt.style.display = 'inline';
+            if (sp) sp.style.display = 'none';
+        }
     }
+}
+
+function loadMoreSeries() {
+    loadTVSeries(seriesPage + 1, seriesSort, true);
 }
 
 function changeSeriesPage(delta) {
     loadTVSeries(Math.max(1, seriesPage + delta));
+}
+
+// ─── CATALOG INFINITE SCROLL OBSERVER ─────────────────────────────────────────
+function setupCatalogInfiniteScroll() {
+    const movieSentinel = document.getElementById('moviesInfiniteSentinel');
+    const seriesSentinel = document.getElementById('seriesInfiniteSentinel');
+
+    if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    if (entry.target.id === 'moviesInfiniteSentinel') {
+                        const tabMovies = document.getElementById('tab-movies');
+                        if (tabMovies && tabMovies.classList.contains('active')) {
+                            loadMoreMovies();
+                        }
+                    } else if (entry.target.id === 'seriesInfiniteSentinel') {
+                        const tabSeries = document.getElementById('tab-series');
+                        if (tabSeries && tabSeries.classList.contains('active')) {
+                            loadMoreSeries();
+                        }
+                    }
+                }
+            });
+        }, { rootMargin: '350px' });
+
+        if (movieSentinel) observer.observe(movieSentinel);
+        if (seriesSentinel) observer.observe(seriesSentinel);
+    }
 }
 
 // ─── MEDIA CARD HTML ─────────────────────────────────────────────────────────
@@ -676,14 +817,28 @@ function createMediaCardHtml(item) {
     const year = item.year || (item.release_date ? item.release_date.slice(0, 4) : '');
     const type = item.type || (item.subject_type === 2 ? 'TV Series' : 'Movie');
     const safeId = String(item.subject_id || '');
-    const safeTitle = escapeAttr(item.title || 'Untitled');
+
+    // Extract audio dub badge from title or raw_title (e.g., [Hindi], [English], [Dual])
+    const rawTitle = item.raw_title || item.title || '';
+    let audioBadge = '';
+    const langMatch = rawTitle.match(/\[(.*?)\]|\((.*?)\)/);
+    if (langMatch) {
+        const lang = (langMatch[1] || langMatch[2] || '').trim();
+        if (lang && !['1080p', '720p', 'cam', 'hd', 'rip', 'hindi dubbed'].includes(lang.toLowerCase())) {
+            audioBadge = `<span class="card-badge-audio">${escapeHtml(lang)}</span>`;
+        } else if (lang.toLowerCase().includes('hindi') || lang.toLowerCase().includes('dubbed')) {
+            audioBadge = `<span class="card-badge-audio">Hindi Dub</span>`;
+        }
+    }
+    const cleanTitle = (item.title || 'Untitled').replace(/\[.*?\]|\(.*?\)/g, '').trim();
+    const safeTitle = escapeAttr(cleanTitle || 'Untitled');
 
     const isComingSoon = Boolean(item.coming_soon || (item.release_date && item.release_date.slice(0, 10) > new Date().toISOString().slice(0, 10)));
 
     return `
         <div class="media-card" onclick="openDetailsModal('${safeId}')" id="card-${safeId}">
             <div class="poster-wrap">
-                <img class="card-poster" src="${poster}" alt="${escapeHtml(item.title || '')}" loading="lazy" onerror="this.src='${fallback}'">
+                <img class="card-poster" src="${poster}" alt="${escapeHtml(cleanTitle)}" loading="lazy" onerror="this.src='${fallback}'">
                 ${rating ? `<span class="card-badge-rating">★ ${rating}</span>` : ''}
                 <span class="card-badge-type">${type}</span>
                 ${isComingSoon ? `<span class="card-badge-coming-soon">⏳ Coming Soon</span>` : ''}
@@ -700,8 +855,9 @@ function createMediaCardHtml(item) {
                 </div>`}
             </div>
             <div class="card-body">
-                <h3 class="card-title" title="${escapeHtml(item.title || '')}">
-                    ${escapeHtml(item.title || 'Untitled')}
+                <h3 class="card-title" title="${escapeHtml(cleanTitle)}">
+                    ${escapeHtml(cleanTitle)}
+                    ${audioBadge}
                     ${isComingSoon ? `<span class="badge-text-coming-soon">Coming Soon</span>` : ''}
                 </h3>
                 <div class="card-meta">
@@ -1919,9 +2075,103 @@ function isNoticeStream(s) {
     return false;
 }
 
-// ─── QUICK PLAY ───────────────────────────────────────────────────────────────
+// ─── UNIFIED STREAM SERVER TESTER & AUTO-SWITCHING ENGINE ─────────────────────
+let _currentProbeAbortController = null;
+let _testedServersList = [];
+let _activeServerObj = null;
+let _playbackStallTimer = null;
+let _lastObservedTime = 0;
+let _inactivityTimer = null;
+
+async function probeAndSelectServer(subjectId, title, year, isSeries, season, episode) {
+    if (_currentProbeAbortController) {
+        _currentProbeAbortController.abort();
+    }
+    _currentProbeAbortController = new AbortController();
+
+    const loadingState = document.getElementById('playerLoadingState');
+    const errorState = document.getElementById('playerErrorState');
+    const chipsWrap = document.getElementById('playerProbeChips');
+    if (loadingState) loadingState.style.display = 'flex';
+    if (errorState) errorState.style.display = 'none';
+
+    if (chipsWrap) {
+        chipsWrap.innerHTML = `
+            <span class="probe-chip" id="chip-direct"><span class="chip-dot"></span>S1: Direct 1080p</span>
+            <span class="probe-chip" id="chip-vidlink"><span class="chip-dot"></span>S2: VidLink</span>
+            <span class="probe-chip" id="chip-autoembed"><span class="chip-dot"></span>S3: AutoEmbed</span>
+            <span class="probe-chip" id="chip-multiembed"><span class="chip-dot"></span>S4: MultiEmbed</span>
+        `;
+    }
+
+    try {
+        const queryParams = new URLSearchParams({
+            subject_id: subjectId || '',
+            title: title || '',
+            year: year || '',
+            is_series: isSeries ? 'true' : 'false',
+            season: season || 0,
+            episode: episode || 0
+        });
+
+        const resp = await fetch(`/api/probe-servers?${queryParams.toString()}`, {
+            signal: _currentProbeAbortController.signal
+        });
+        const data = await resp.json();
+        _testedServersList = data.servers || [];
+
+        // Update probe chips visual status
+        _testedServersList.forEach(s => {
+            const chip = document.getElementById(`chip-${s.id}`);
+            if (chip) {
+                if (s.status === 'healthy') {
+                    chip.className = 'probe-chip healthy';
+                    chip.innerHTML = `<span class="chip-dot"></span>${s.name.replace('Server ', 'S').split('(')[0]} (${s.latency_ms}ms) ✓`;
+                } else {
+                    chip.className = 'probe-chip failed';
+                    chip.innerHTML = `<span class="chip-dot"></span>${s.name.replace('Server ', 'S').split('(')[0]} ✕`;
+                }
+            }
+        });
+
+        // Store active fallback servers for manual switching in settings menu
+        activeFallbackServers = _testedServersList.filter(s => s.id !== 'direct');
+
+        // Populate Gear Settings Server List
+        renderSettingsServerList(_testedServersList, data.best_server_id);
+
+        if (data.best_server) {
+            _activeServerObj = data.best_server;
+            setTimeout(() => {
+                if (loadingState) loadingState.style.display = 'none';
+            }, 300);
+            return data.best_server;
+        } else {
+            // All servers failed
+            if (loadingState) loadingState.style.display = 'none';
+            if (errorState) errorState.style.display = 'flex';
+            return null;
+        }
+    } catch (err) {
+        if (err.name === 'AbortError') return null;
+        console.warn('Probe servers error:', err);
+        if (loadingState) loadingState.style.display = 'none';
+        if (errorState) errorState.style.display = 'flex';
+        return null;
+    }
+}
+
+function retryStreamServers() {
+    const errorState = document.getElementById('playerErrorState');
+    if (errorState) errorState.style.display = 'none';
+    if (currentPlayingSubjectId) {
+        quickPlay(currentPlayingSubjectId, activeMediaMeta?.title || 'Movie', 0);
+    }
+}
+
+// ─── QUICK PLAY (WITH PARALLEL SERVER DETECTION) ─────────────────────────────
 async function quickPlay(subjectId, title, startTime = 0) {
-    showToast(`Loading "${title}"…`);
+    showToast(`Testing stream servers for "${title}"…`);
     currentPlayingSubjectId = subjectId;
     _drawerEpisodeData = null; // Clear episode cache for new title
 
@@ -1944,16 +2194,31 @@ async function quickPlay(subjectId, title, startTime = 0) {
     currentSeason = targetSe;
     currentEpisode = targetEp;
 
+    // Open modal container immediately so user sees the parallel test loading state
+    const modal = document.getElementById('playerModal');
+    if (modal) {
+        modal.style.display = '';
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+    const baseTitle = title || (activeMediaMeta && activeMediaMeta.title) || 'Movie';
+    const epSuffix = (isKnownSeries && targetEp > 0) ? ` • S${targetSe} E${targetEp}` : '';
+    safeText('inPlayerTitle', `${baseTitle}${epSuffix}`);
+
     try {
-        const [streamRes, captionRes, detailRes] = await Promise.allSettled([
-            fetch(`/api/stream/${subjectId}?se=${targetSe}&ep=${targetEp}`).then(r => r.json()),
-            fetch(`/api/stream/${subjectId}/captions?se=${targetSe}&ep=${targetEp}`).then(r => r.json()),
-            fetch(`/detail/${subjectId}`).then(r => r.json())
+        const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+
+        // Run parallel server health detection + fetch stream captions & detail concurrently
+        const [bestServer, streamRes, captionRes, detailRes] = await Promise.all([
+            probeAndSelectServer(subjectId, title, year, isKnownSeries, targetSe, targetEp),
+            fetch(`/api/stream/${subjectId}?se=${targetSe}&ep=${targetEp}`).then(r => r.json()).catch(() => ({ streams: [] })),
+            fetch(`/api/stream/${subjectId}/captions?se=${targetSe}&ep=${targetEp}`).then(r => r.json()).catch(() => ({ captions: [] })),
+            fetch(`/detail/${subjectId}`).then(r => r.json()).catch(() => null)
         ]);
 
-        const streamData  = streamRes.status  === 'fulfilled' ? streamRes.value  : { streams: [] };
-        const captionData = captionRes.status === 'fulfilled' ? captionRes.value : { captions: [] };
-        const detail      = detailRes.status  === 'fulfilled' ? detailRes.value  : null;
+        const streamData  = streamRes || { streams: [] };
+        const captionData = captionRes || { captions: [] };
+        const detail      = detailRes || null;
 
         const rawStreams  = streamData.streams || [];
         const cleanStreams = rawStreams.filter(s => !isNoticeStream(s));
@@ -1964,163 +2229,386 @@ async function quickPlay(subjectId, title, startTime = 0) {
             activeDubsList = dubs;
             currentTitleDubs = dubs;
         }
-        activeFallbackServers = streamData.fallback_servers || [];
         activeMediaMeta = detail || { title: title, cover: streamData.cover };
 
-        const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
-        const streamToPlay = playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0];
-        if (streamToPlay) {
-            playInCinemaModal(encodeURIComponent(JSON.stringify(streamToPlay)), startTime);
-            // If fallback servers not yet resolved (background IMDB lookup still running), fetch them in background
-            if (activeFallbackServers.length === 0 && title) {
-                setTimeout(async () => {
-                    try {
-                        const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
-                        const isSer = Boolean(activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series'));
-                        const fbRes = await fetch(`/api/fallback-sources?title=${encodeURIComponent(title)}&year=${year}&is_series=${isSer}`).then(r => r.json());
-                        if (fbRes.servers && fbRes.servers.length > 0 && activeFallbackServers.length === 0) {
-                            activeFallbackServers = fbRes.servers;
-                            updatePlayerServerSelect();
-                        }
-                    } catch {}
-                }, 1200);
-            }
-        } else {
-            // Check if this title is a TV Series (Season 1 Episode 1)
-            const s1Res = await fetch(`/api/stream/${subjectId}?se=1&ep=1`).then(r => r.json()).catch(() => null);
-            const s1Streams = ((s1Res && s1Res.streams) || []).filter(s => !isNoticeStream(s));
-            if (s1Streams.length > 0) {
-                activeStreamList = s1Streams;
-                currentSeason = 1;
-                currentEpisode = 1;
-                if (s1Res.dubs && s1Res.dubs.length > 0) {
-                    activeDubsList = s1Res.dubs;
-                    currentTitleDubs = s1Res.dubs;
-                }
-                if (s1Res.fallback_servers) {
-                    activeFallbackServers = s1Res.fallback_servers;
-                }
-                playInCinemaModal(encodeURIComponent(JSON.stringify(s1Streams[0])), startTime);
-                return;
-            }
+        // Populate dubs in Settings menu
+        renderSettingsAudioList(activeDubsList);
+        renderSettingsSubsList(activeCaptionList);
 
-            // Check if upcoming / pre-release - do NOT preview video, only notify
+        if (!bestServer) {
+            // Check if upcoming / pre-release
             if ((detail && detail.coming_soon) || (streamData && streamData.coming_soon)) {
                 showToast(`"${title}" has not been released yet (Coming Soon)`, 'info');
+                closePlayerModal();
                 return;
             }
+            const errState = document.getElementById('playerErrorState');
+            if (errState) errState.style.display = 'flex';
+            showToast(`All streaming mirrors failed for "${title}"`, 'error');
+            return;
+        }
 
-            // Check if backup servers are available (from streamData or on-demand resolution)
-            if (activeFallbackServers && activeFallbackServers.length > 0) {
-                const srvName = activeFallbackServers[0].name.split('(')[1]?.replace(')', '') || 'Cloud';
-                showToast(`CineScope Direct has no stream — playing from Backup Server (${srvName})…`, 'info');
-                playInCinemaModal(null, startTime, activeFallbackServers[0]);
-                return;
-            }
-
-            // Fallback resolver query on demand
-            try {
-                const year = (detail && detail.release_date) ? detail.release_date.slice(0, 4) : '';
-                const isSer = Boolean(detail && detail.type === 'Series');
-                const fbRes = await fetch(`/api/fallback-sources?title=${encodeURIComponent(title)}&year=${year}&is_series=${isSer}`).then(r => r.json());
-                if (fbRes.servers && fbRes.servers.length > 0) {
-                    activeFallbackServers = fbRes.servers;
-                    const srvName = fbRes.servers[0].name.split('(')[1]?.replace(')', '') || 'Cloud';
-                    showToast(`CineScope Direct has no stream — playing from Backup Server (${srvName})…`, 'info');
-                    playInCinemaModal(null, startTime, fbRes.servers[0]);
-                    return;
-                }
-            } catch {}
-
-            showToast(`No stream found for "${title}"`, 'error');
+        // Play the chosen best server in the single unified player!
+        if (bestServer.id === 'direct' && bestServer.stream_meta) {
+            playInCinemaModal(encodeURIComponent(JSON.stringify(bestServer.stream_meta)), startTime);
+        } else {
+            playInCinemaModal(null, startTime, bestServer);
         }
     } catch (err) {
-        showToast(`Failed to play: ${err.message}`, 'error');
+        showToast(`Failed to initialize stream: ${err.message}`, 'error');
     }
 }
 
-function updatePlayerServerSelect() {
-    const serverSelect = document.getElementById('playerServerSelect');
-    if (serverSelect) {
-        let optionsHtml = '';
-        if (activeStreamList && activeStreamList.length > 0) {
-            optionsHtml += `<option value="direct" ${currentSelectedServer === 'direct' ? 'selected' : ''}>Server 1 (CineScope Direct 1080p)</option>`;
-        } else {
-            optionsHtml += `<option value="direct" disabled>Server 1 (CineScope Direct - No Streams)</option>`;
-        }
-
-        if (activeFallbackServers && activeFallbackServers.length > 0) {
-            optionsHtml += activeFallbackServers.map(s =>
-                `<option value="${s.id}" ${currentSelectedServer === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`
-            ).join('');
-        }
-        serverSelect.innerHTML = optionsHtml;
+// ─── UNIFIED SETTINGS MENU CONTROLLER (GEAR ICON) ───────────────────────────
+function togglePlayerSettingsMenu(e) {
+    if (e) e.stopPropagation();
+    const menu = document.getElementById('playerUnifiedSettingsMenu');
+    if (!menu) return;
+    menu.classList.toggle('open');
+    if (menu.classList.contains('open')) {
+        backToSettingsMain();
     }
+}
 
-    // Populate In-Player Popover Menu (Top HUD dropdown)
-    const inPlayerServerList = document.getElementById('inPlayerServerList');
-    if (inPlayerServerList) {
-        let srvHtml = '';
-        if (activeStreamList && activeStreamList.length > 0) {
-            srvHtml += `<button class="popover-item ${currentSelectedServer === 'direct' ? 'active' : ''}" onclick="selectInPlayerServer('direct', 'Server 1 (Direct)')">
-                <span>⚡ Server 1 (MovieBox Direct 1080p)</span>
-                ${currentSelectedServer === 'direct' ? '<span>✓</span>' : ''}
-            </button>`;
+function openSettingsSubpage(subpage) {
+    const pages = document.querySelectorAll('.settings-menu-page');
+    pages.forEach(p => p.classList.remove('active'));
+    const target = document.getElementById(`settingsPage${subpage.charAt(0).toUpperCase() + subpage.slice(1)}`);
+    if (target) target.classList.add('active');
+}
+
+function backToSettingsMain() {
+    const pages = document.querySelectorAll('.settings-menu-page');
+    pages.forEach(p => p.classList.remove('active'));
+    const main = document.getElementById('settingsPageMain');
+    if (main) main.classList.add('active');
+}
+
+// Close settings menu when clicking outside
+document.addEventListener('click', (e) => {
+    const menu = document.getElementById('playerUnifiedSettingsMenu');
+    const gearBtn = document.getElementById('playerGearBtn');
+    if (menu && menu.classList.contains('open')) {
+        if (!menu.contains(e.target) && (!gearBtn || !gearBtn.contains(e.target))) {
+            menu.classList.remove('open');
         }
-        if (activeFallbackServers && activeFallbackServers.length > 0) {
-            srvHtml += activeFallbackServers.map(s => {
-                const isSel = currentSelectedServer === s.id;
-                const shortName = s.name.replace('Server ', 'S').replace(' (', ' - ').replace(')', '');
-                return `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerServer('${s.id}', '${escapeHtml(shortName)}')">
-                    <span>☁️ ${escapeHtml(s.name)}</span>
+    }
+});
+
+function renderSettingsServerList(servers, activeId) {
+    const wrap = document.getElementById('settingsServerOptions');
+    if (!wrap) return;
+    if (!servers || servers.length === 0) {
+        wrap.innerHTML = '<div style="padding:10px; color:#94a3b8; font-size:12px;">No servers detected</div>';
+        return;
+    }
+    wrap.innerHTML = servers.map(s => {
+        const isSel = (s.id === (currentSelectedServer || activeId));
+        const icon = s.id === 'direct' ? '⚡' : '☁';
+        const isHealthy = s.status === 'healthy';
+        const tag = isHealthy 
+            ? `<span style="color:#10b981; font-size:11px; font-weight:700;">${s.latency_ms ? s.latency_ms + 'ms' : 'Fast'} ✓</span>` 
+            : `<span style="color:#ef4444; font-size:11px;">Offline</span>`;
+        return `
+            <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="selectServerFromGear('${s.id}')">
+                <span>${icon} ${escapeHtml(s.name)}</span>
+                <span style="display:flex; align-items:center; gap:6px;">
+                    ${tag}
+                    ${isSel ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
+                </span>
+            </button>
+        `;
+    }).join('');
+}
+
+function selectServerFromGear(serverId) {
+    changePlayerServer(serverId);
+    const menu = document.getElementById('playerUnifiedSettingsMenu');
+    if (menu) menu.classList.remove('open');
+}
+
+function renderSettingsAudioList(dubs) {
+    const wrap = document.getElementById('settingsAudioOptions');
+    if (!wrap) return;
+    if (!dubs || dubs.length === 0) {
+        wrap.innerHTML = '<button class="settings-opt-item active">Original Audio ✓</button>';
+        safeText('settingsValAudio', 'Original');
+        return;
+    }
+    wrap.innerHTML = dubs.map(d => {
+        const isSel = (d.subject_id === currentPlayingSubjectId);
+        const name = d.lang_name || d.language || 'Audio Track';
+        if (isSel) safeText('settingsValAudio', name);
+        return `
+            <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="changePlayerAudioDub('${d.subject_id}')">
+                <span>🌐 ${escapeHtml(name)}</span>
+                ${isSel ? '<span>✓</span>' : ''}
+            </button>
+        `;
+    }).join('');
+}
+
+function renderSettingsSubsList(captions) {
+    const wrap = document.getElementById('settingsSubsOptions');
+    if (!wrap) return;
+    let html = `<button class="settings-opt-item ${(!currentSelectedCaption) ? 'active' : ''}" onclick="changePlayerSubtitle('')">
+        <span>Off</span>
+        ${(!currentSelectedCaption) ? '<span>✓</span>' : ''}
+    </button>`;
+    if (captions && captions.length > 0) {
+        html += captions.map(c => {
+            const isSel = (currentSelectedCaption === c.url);
+            const label = c.lang_name || c.language || 'English';
+            return `
+                <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="changePlayerSubtitle('${escapeAttr(c.url)}')">
+                    <span>${escapeHtml(label)}</span>
                     ${isSel ? '<span>✓</span>' : ''}
-                </button>`;
-            }).join('');
-        }
-        inPlayerServerList.innerHTML = srvHtml;
+                </button>
+            `;
+        }).join('');
     }
+    wrap.innerHTML = html;
+}
 
-    // Populate 1-Click Server Selector Strip (Below video stage)
-    const pillsWrap = document.getElementById('playerServerPills');
-    if (pillsWrap) {
-        let pillsHtml = '';
-        if (activeStreamList && activeStreamList.length > 0) {
-            const isDirectSel = currentSelectedServer === 'direct';
-            pillsHtml += `<button class="server-pill-tab ${isDirectSel ? 'active' : ''}" onclick="changePlayerServer('direct')">
-                <span class="server-pill-icon">⚡</span>
-                <span class="server-pill-name">S1: Direct (1080p)</span>
-                ${isDirectSel ? '<span class="server-pill-active-dot"></span>' : ''}
-            </button>`;
-        }
-        if (activeFallbackServers && activeFallbackServers.length > 0) {
-            pillsHtml += activeFallbackServers.map(s => {
-                const isSel = currentSelectedServer === s.id;
-                const short = s.name.replace('Server ', 'S').replace(' (', ' - ').replace(')', '');
-                return `<button class="server-pill-tab ${isSel ? 'active' : ''}" onclick="changePlayerServer('${s.id}')">
-                    <span class="server-pill-icon">☁</span>
-                    <span class="server-pill-name">${escapeHtml(short)}</span>
-                    ${isSel ? '<span class="server-pill-active-dot"></span>' : ''}
-                </button>`;
-            }).join('');
-        }
-        pillsWrap.innerHTML = pillsHtml;
+// ─── UNIFIED CONTROLS EVENT HANDLERS ────────────────────────────────────────
+function toggleCinemaPlayPause() {
+    const video = getCinemaVideoElement();
+    if (!video) return;
+    if (video.paused) {
+        video.play().catch(() => {});
+    } else {
+        video.pause();
     }
+    updatePlayPauseIcon();
+}
 
-    // Update Popout/External Player button in footer
-    const extBtn = document.getElementById('playerExternalLinkBtn');
-    if (extBtn) {
-        if (currentSelectedServer !== 'direct') {
-            const curTarget = (activeFallbackServers || []).find(s => s.id === currentSelectedServer);
-            if (curTarget && curTarget.url) {
-                extBtn.href = curTarget.url;
-                extBtn.style.display = 'inline-flex';
-            } else {
-                extBtn.style.display = 'none';
-            }
+function updatePlayPauseIcon() {
+    const video = getCinemaVideoElement();
+    const icon = document.getElementById('playPauseIcon');
+    if (!icon || !video) return;
+    if (video.paused) {
+        icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+    } else {
+        icon.innerHTML = '<rect width="4" height="16" x="6" y="4"/><rect width="4" height="16" x="14" y="4"/>';
+    }
+}
+
+function seekCinemaRelative(sec) {
+    const video = getCinemaVideoElement();
+    if (!video) return;
+    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + sec));
+    if (sec > 0) {
+        triggerSeekRipple('right');
+    } else {
+        triggerSeekRipple('left');
+    }
+    updateUnifiedPlayerTimeline();
+}
+
+function handleTimelineSeek(e) {
+    const video = getCinemaVideoElement();
+    const wrap = document.getElementById('playerTimelineWrap');
+    if (!video || !wrap || !video.duration) return;
+    const rect = wrap.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    video.currentTime = pos * video.duration;
+    updateUnifiedPlayerTimeline();
+}
+
+function handleTimelineHover(e) {
+    const video = getCinemaVideoElement();
+    const wrap = document.getElementById('playerTimelineWrap');
+    const tooltip = document.getElementById('playerTimeTooltip');
+    if (!video || !wrap || !tooltip || !video.duration) return;
+    const rect = wrap.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const hoverSec = pos * video.duration;
+    tooltip.textContent = formatTime(hoverSec);
+    tooltip.style.left = `${pos * 100}%`;
+    tooltip.style.display = 'block';
+}
+
+function hideTimelineHover() {
+    const tooltip = document.getElementById('playerTimeTooltip');
+    if (tooltip) tooltip.style.display = 'none';
+}
+
+function setCinemaVolume(val) {
+    const video = getCinemaVideoElement();
+    if (!video) return;
+    video.volume = parseFloat(val);
+    video.muted = (val <= 0);
+    updateVolumeIcon();
+}
+
+function toggleCinemaMute() {
+    const video = getCinemaVideoElement();
+    if (!video) return;
+    video.muted = !video.muted;
+    const slider = document.getElementById('playerVolumeSlider');
+    if (slider) slider.value = video.muted ? 0 : (video.volume || 1);
+    updateVolumeIcon();
+}
+
+function updateVolumeIcon() {
+    const video = getCinemaVideoElement();
+    const icon = document.getElementById('muteIcon');
+    if (!icon || !video) return;
+    if (video.muted || video.volume === 0) {
+        icon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" x2="17" y1="9" y2="15"/><line x1="17" x2="23" y1="9" y2="15"/>';
+    } else if (video.volume < 0.5) {
+        icon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>';
+    } else {
+        icon.innerHTML = '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>';
+    }
+}
+
+function setPlayerSpeed(spd) {
+    const video = getCinemaVideoElement();
+    if (video) video.playbackRate = spd;
+    if (plyrInstance) plyrInstance.speed = spd;
+    safeText('settingsValSpeed', `${spd}x`);
+    const opts = document.querySelectorAll('#settingsSpeedOptions .settings-opt-item');
+    opts.forEach(btn => {
+        if (btn.textContent.includes(`${spd}x`)) {
+            btn.classList.add('active');
+            btn.innerHTML = `${spd}x ${spd === 1.0 ? '(Normal) ' : ''}✓`;
         } else {
-            extBtn.style.display = 'none';
+            btn.classList.remove('active');
+            btn.textContent = btn.textContent.replace(' ✓', '');
         }
+    });
+    showToast(`Speed set to ${spd}x`);
+}
+
+function updateUnifiedPlayerTimeline() {
+    const video = getCinemaVideoElement();
+    if (!video) return;
+
+    const cur = video.currentTime || 0;
+    const dur = video.duration || 0;
+
+    safeText('playerCurrentTime', formatTime(cur));
+    safeText('playerDuration', formatTime(dur));
+
+    const progressEl = document.getElementById('playerProgressCurrent');
+    if (progressEl && dur > 0) {
+        const pct = (cur / dur) * 100;
+        progressEl.style.width = `${pct}%`;
     }
+
+    const bufferEl = document.getElementById('playerProgressBuffer');
+    if (bufferEl && dur > 0 && video.buffered && video.buffered.length > 0) {
+        try {
+            const bufEnd = video.buffered.end(video.buffered.length - 1);
+            bufferEl.style.width = `${(bufEnd / dur) * 100}%`;
+        } catch {}
+    }
+}
+
+// ─── MID-PLAYBACK STALL AUTO-FAILOVER WATCHDOG ───────────────────────────────
+function setupPlaybackWatchdog(video) {
+    if (!video) return;
+
+    const clearStallTimer = () => {
+        if (_playbackStallTimer) {
+            clearTimeout(_playbackStallTimer);
+            _playbackStallTimer = null;
+        }
+    };
+
+    video.addEventListener('timeupdate', () => {
+        if (video.currentTime > _lastObservedTime) {
+            _lastObservedTime = video.currentTime;
+            clearStallTimer();
+        }
+        updateUnifiedPlayerTimeline();
+    });
+
+    video.addEventListener('play', () => {
+        updatePlayPauseIcon();
+        resetInPlayerInactivityTimer();
+    });
+    video.addEventListener('pause', () => {
+        updatePlayPauseIcon();
+        resetInPlayerInactivityTimer();
+    });
+
+    video.addEventListener('waiting', () => {
+        clearStallTimer();
+        _playbackStallTimer = setTimeout(() => {
+            handleMidPlaybackStall(video);
+        }, 5500); // 5.5s stall threshold
+    });
+
+    video.addEventListener('stalled', () => {
+        clearStallTimer();
+        _playbackStallTimer = setTimeout(() => {
+            handleMidPlaybackStall(video);
+        }, 5500);
+    });
+
+    video.addEventListener('error', () => {
+        handleMidPlaybackStall(video);
+    });
+}
+
+function handleMidPlaybackStall(video) {
+    console.warn('Playback stalled or network error detected. Initiating automatic server failover...');
+    const resumeTime = (video && video.currentTime > 5) ? video.currentTime : _lastObservedTime;
+    
+    // Find next candidate from tested or fallback servers
+    const available = _testedServersList.filter(s => s.id !== currentSelectedServer && s.status !== 'failed');
+    const nextServer = available.length > 0 ? available[0] : (activeFallbackServers.find(s => s.id !== currentSelectedServer) || null);
+
+    if (nextServer) {
+        showToast(`Server stalled — switching to ${nextServer.name} at ${formatTime(resumeTime)}…`, 'info');
+        changePlayerServer(nextServer.id);
+    } else {
+        showToast('Stream buffering slowly. Tap Settings ⚙ to choose another server.', 'info');
+    }
+}
+
+// Auto-hide HUD on inactivity
+function resetInPlayerInactivityTimer() {
+    const stage = document.getElementById('videoStage');
+    if (!stage) return;
+    stage.classList.remove('hud-hidden');
+    stage.classList.remove('hide-cursor');
+
+    if (_inactivityTimer) clearTimeout(_inactivityTimer);
+
+    const video = getCinemaVideoElement();
+    const isPlaying = video && !video.paused && !video.ended;
+    const settingsOpen = document.getElementById('playerUnifiedSettingsMenu')?.classList.contains('open');
+
+    // Only auto-hide while playing and when settings menu isn't open
+    if (isPlaying && !settingsOpen) {
+        _inactivityTimer = setTimeout(() => {
+            const videoCheck = getCinemaVideoElement();
+            const stillPlaying = videoCheck && !videoCheck.paused;
+            const settingsStillOpen = document.getElementById('playerUnifiedSettingsMenu')?.classList.contains('open');
+            if (stillPlaying && !settingsStillOpen) {
+                stage.classList.add('hud-hidden');
+                stage.classList.add('hide-cursor');
+            }
+        }, 3500);
+    }
+}
+
+// Bind inactivity listeners to videoStage
+function initInPlayerInactivity() {
+    const stage = document.getElementById('videoStage');
+    if (!stage || stage._inactivityBound) return;
+    stage._inactivityBound = true;
+    ['mousemove', 'mousedown', 'touchstart', 'touchmove', 'keydown'].forEach(evt => {
+        stage.addEventListener(evt, resetInPlayerInactivityTimer, { passive: true });
+    });
+}
+
+// ─── SWITCHING SERVERS IN THE UNIFIED PLAYER ─────────────────────────────────
+function updatePlayerServerSelect() {
+    renderSettingsServerList(_testedServersList, currentSelectedServer);
 }
 
 function changePlayerServer(serverId) {
@@ -2128,14 +2616,14 @@ function changePlayerServer(serverId) {
     const iframe = document.getElementById('cinemaIframe');
     const plyrEl = document.querySelector('#videoStage .plyr');
     const stage = document.getElementById('videoStage');
-    const quickBar = document.getElementById('inPlayerQuickBar');
-    const qualityBadge = document.getElementById('inPlayerQualityBadge');
-    const dubBadge = document.getElementById('inPlayerDubBadge');
+    const serverBadge = document.getElementById('inPlayerServerBadge');
+    const customControls = document.getElementById('cinemaPlayerControls');
+
+    currentSelectedServer = serverId;
 
     if (serverId === 'direct') {
         if (!activeStreamList || activeStreamList.length === 0) {
-            showToast('MovieBox Direct has no stream for this title. Using Backup Server.', 'info');
-            updatePlayerServerSelect();
+            showToast('Direct stream unavailable for this title. Using Backup Server.', 'info');
             return;
         }
         if (stage) stage.classList.remove('is-iframe-mode');
@@ -2145,25 +2633,26 @@ function changePlayerServer(serverId) {
         }
         if (plyrEl) plyrEl.style.display = '';
         if (video) video.style.display = 'block';
-        if (quickBar) quickBar.style.display = 'flex';
-        if (qualityBadge) qualityBadge.style.display = '';
-        if (dubBadge) dubBadge.style.display = '';
+        if (customControls) customControls.style.display = 'flex';
+        if (serverBadge) {
+            serverBadge.textContent = '⚡ S1 Direct';
+            serverBadge.className = 'in-player-badge badge-server';
+        }
+        safeText('settingsValServer', 'Server 1 (Direct)');
 
-        currentSelectedServer = 'direct';
-        updatePlayerServerSelect();
-        safeText('inPlayerCurrentServerText', 'Server 1 (Direct)');
         if (currentPlayingStream) {
-            safeText('playerQualityTag', currentPlayingStream.quality || '1080p');
-            safeText('playerMediaSub', `${currentPlayingStream.format || 'MP4'} • ${currentPlayingStream.codec || 'H.264'}`);
             setCinemaVideoSource(getEffectiveStreamUrl(currentPlayingStream), currentPlayingStream, activeMediaMeta?.title);
         }
-        if (plyrInstance) plyrInstance.play().catch(() => {});
-        showToast('Switched to MovieBox Direct (Full Features)');
+        if (video) video.play().catch(() => {});
+        showToast('Switched to Server 1 (CineScope Direct 1080p)');
+        renderSettingsServerList(_testedServersList, 'direct');
         return;
     }
 
     // Switch to a fallback server
-    const targetServer = (activeFallbackServers || []).find(s => s.id === serverId);
+    const targetServer = (activeFallbackServers || []).find(s => s.id === serverId) ||
+                         (_testedServersList || []).find(s => s.id === serverId);
+
     if (!targetServer) {
         showToast('Server not found', 'error');
         return;
@@ -2173,36 +2662,29 @@ function changePlayerServer(serverId) {
         try { hlsInstance.destroy(); } catch {}
         hlsInstance = null;
     }
-    if (plyrInstance) {
-        try { plyrInstance.pause(); } catch {}
-    }
-    if (stage) stage.classList.add('is-iframe-mode');
-    if (plyrEl) plyrEl.style.display = 'none';
     if (video) {
-        video.style.display = 'none';
         try { video.pause(); } catch {}
+        video.style.display = 'none';
     }
-    // In iframe mode, direct controls DO NOT apply - hide quickbar completely
-    if (quickBar) quickBar.style.display = 'none';
-    if (qualityBadge) qualityBadge.style.display = 'none';
-    if (dubBadge) dubBadge.style.display = 'none';
+    if (plyrEl) plyrEl.style.display = 'none';
 
+    if (stage) stage.classList.add('is-iframe-mode');
     if (iframe) {
         iframe.style.display = 'block';
         iframe.src = targetServer.url;
     }
-    currentSelectedServer = targetServer.id;
-    updatePlayerServerSelect();
 
     const shortName = targetServer.name.replace('Server ', 'S').replace(' (', ' - ').replace(')', '');
-    safeText('inPlayerCurrentServerText', shortName);
+    if (serverBadge) {
+        serverBadge.textContent = `☁ ${shortName}`;
+        serverBadge.className = 'in-player-badge';
+    }
+    safeText('settingsValServer', shortName);
     safeText('playerQualityTag', 'Cloud HD');
     safeText('playerMediaSub', `${targetServer.name} • Embedded Player`);
-    safeText('playerSizeStat', 'Cloud Stream');
-    safeText('playerCodecStat', 'Auto Adaptive');
 
+    renderSettingsServerList(_testedServersList, targetServer.id);
     showToast(`Switched to ${targetServer.name}`);
-    // Keep series ribbon visible after server switch
     renderPlayerSeriesRibbon();
 }
 
@@ -2224,6 +2706,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     const epSuffix = (isSeries && currentEpisode > 0) ? ` • S${currentSeason || 1} E${currentEpisode}` : '';
     const titleText = `${baseTitle}${epSuffix}`;
     safeText('playerMediaTitle', titleText);
+    safeText('inPlayerTitle', titleText);
 
     // Ambient glow backlight
     const poster = activeMediaMeta ? activeMediaMeta.cover : null;
@@ -2240,93 +2723,38 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     // Episode buttons
     const nextEpBtn = document.getElementById('playerNextEpBtn');
     const epDrawerBtn = document.getElementById('inPlayerEpisodesBtn');
+    const bottomEpBtn = document.getElementById('bottomEpisodesBtn');
+    const bottomNextBtn = document.getElementById('bottomNextEpBtn');
+
     if (isSeries || currentEpisode > 0) {
         if (epDrawerBtn) epDrawerBtn.style.display = 'inline-flex';
+        if (bottomEpBtn) bottomEpBtn.style.display = 'inline-flex';
         if (nextEpBtn) {
             nextEpBtn.style.display = 'inline-flex';
             nextEpBtn.textContent = `Next Ep ${currentEpisode + 1} →`;
         }
+        if (bottomNextBtn) bottomNextBtn.style.display = 'inline-flex';
     } else {
         if (epDrawerBtn) epDrawerBtn.style.display = 'none';
+        if (bottomEpBtn) bottomEpBtn.style.display = 'none';
         if (nextEpBtn) nextEpBtn.style.display = 'none';
+        if (bottomNextBtn) bottomNextBtn.style.display = 'none';
     }
 
-    // Populate Audio dubs (always visible and selectable)
-    const audioGroup = document.getElementById('playerAudioGroup');
-    const audioSelect = document.getElementById('playerAudioSelect');
-    const dubsToUse = (currentTitleDubs && currentTitleDubs.length > 0) ? currentTitleDubs : activeDubsList;
-    if (dubsToUse && dubsToUse.length > 0) {
-        audioGroup.style.display = 'flex';
-        audioSelect.innerHTML = dubsToUse.map(d =>
-            `<option value="${d.subject_id}" ${d.subject_id === currentPlayingSubjectId ? 'selected' : ''}>${escapeHtml(d.lang_name || d.language || 'Audio Dub')}</option>`
-        ).join('');
-    } else {
-        audioGroup.style.display = 'flex';
-        audioSelect.innerHTML = '<option value="">Original Audio</option>';
-    }
-
-    if (window._resetFallbackFlag) window._resetFallbackFlag();
-
-    // Reset speed select
-    const speedSelect = document.getElementById('playerSpeedSelect');
-    if (speedSelect) speedSelect.value = '1';
-    if (plyrInstance) plyrInstance.speed = 1.0;
-
+    initInPlayerInactivity();
+    if (video) setupPlaybackWatchdog(video);
     closeMiniPlayer();
 
     // Check if we should play via fallback server or direct stream
     if (fallbackServer || (!stream && activeFallbackServers && activeFallbackServers.length > 0)) {
         const srv = fallbackServer || activeFallbackServers[0];
         currentSelectedServer = srv.id;
-        updatePlayerServerSelect();
-
-        const stage = document.getElementById('videoStage');
-        if (stage) stage.classList.add('is-iframe-mode');
-
-        if (hlsInstance) {
-            try { hlsInstance.destroy(); } catch {}
-            hlsInstance = null;
-        }
-        if (plyrInstance) {
-            try { plyrInstance.pause(); } catch {}
-        }
-        if (plyrEl) plyrEl.style.display = 'none';
-        if (video) {
-            video.style.display = 'none';
-            try { video.pause(); } catch {}
-        }
-
-        const quickBar = document.getElementById('inPlayerQuickBar');
-        if (quickBar) quickBar.style.display = 'none';
-        const qualityBadge = document.getElementById('inPlayerQualityBadge');
-        if (qualityBadge) {
-            qualityBadge.style.display = 'inline-flex';
-            qualityBadge.textContent = 'Cloud HD';
-        }
-        const dubBadge = document.getElementById('inPlayerDubBadge');
-        if (dubBadge) {
-            dubBadge.style.display = (dubsToUse && dubsToUse.length > 0) ? 'inline-flex' : 'none';
-        }
-
-        if (iframe) {
-            iframe.style.display = 'block';
-            iframe.src = srv.url;
-        }
-
-        safeText('inPlayerTitle', titleText);
-        const shortName = srv.name.replace('Server ', 'S').replace(' (', ' - ').replace(')', '');
-        safeText('inPlayerCurrentServerText', shortName);
-        safeText('playerQualityTag', 'Cloud HD');
-        safeText('playerMediaSub', `${srv.name} • Embedded Player`);
-        safeText('playerSizeStat', 'Cloud Stream');
-        safeText('playerCodecStat', 'Auto Adaptive');
-        safeAttr('playerExternalLink', 'href', srv.url);
+        changePlayerServer(srv.id);
 
         modal.style.display = '';
         modal.classList.add('active');
         document.body.style.overflow = 'hidden';
         renderPlayerSeriesRibbon();
-        showToast(`Streaming via ${srv.name}`);
 
         // Trigger pre-roll ad overlay if eligible
         if (typeof AdEngine !== 'undefined') {
@@ -2337,7 +2765,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
 
     // Playing direct stream
     currentSelectedServer = 'direct';
-    updatePlayerServerSelect();
+    changePlayerServer('direct');
 
     const stage = document.getElementById('videoStage');
     if (stage) stage.classList.remove('is-iframe-mode');
