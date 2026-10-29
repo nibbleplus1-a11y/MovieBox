@@ -15,6 +15,7 @@ let currentSeriesCategory = 'all';
 
 let activeStreamList = [];
 let activeCaptionList = [];
+let currentSelectedCaption = '';
 let activeDubsList = [];
 let currentTitleDubs = [];  // Persistent dubs for currently loaded title
 let activeFallbackServers = [];
@@ -2463,13 +2464,14 @@ function renderSettingsAudioList(dubs) {
 function renderSettingsSubsList(captions) {
     const wrap = document.getElementById('settingsSubsOptions');
     if (!wrap) return;
-    let html = `<button class="settings-opt-item ${(!currentSelectedCaption) ? 'active' : ''}" onclick="changePlayerSubtitle('')">
+    const curSub = (typeof currentSelectedCaption !== 'undefined') ? currentSelectedCaption : '';
+    let html = `<button class="settings-opt-item ${(!curSub) ? 'active' : ''}" onclick="changePlayerSubtitle('')">
         <span>Off</span>
-        ${(!currentSelectedCaption) ? '<span>✓</span>' : ''}
+        ${(!curSub) ? '<span>✓</span>' : ''}
     </button>`;
     if (captions && captions.length > 0) {
         html += captions.map(c => {
-            const isSel = (currentSelectedCaption === c.url);
+            const isSel = (curSub === c.url);
             const label = c.lang_name || c.language || 'English';
             return `
                 <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="changePlayerSubtitle('${escapeAttr(c.url)}')">
@@ -2980,6 +2982,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         const englishIndex = activeCaptionList.findIndex(c => (c.language || '').toLowerCase().includes('eng'));
         defaultIndex = englishIndex >= 0 ? englishIndex : 0;
         const selectedSub = activeCaptionList[defaultIndex];
+        currentSelectedCaption = selectedSub ? selectedSub.url : '';
 
         captionSelect.innerHTML = '<option value="">Subtitles Off</option>' +
             activeCaptionList.map((c, idx) => `<option value="${c.url}" ${idx === defaultIndex ? 'selected' : ''}>${escapeHtml(c.language || 'Unknown')}</option>`).join('');
@@ -3188,6 +3191,8 @@ function changePlayerQuality(encodedStream) {
 }
 
 function changePlayerSubtitle(subUrl) {
+    currentSelectedCaption = subUrl || '';
+    renderSettingsSubsList(activeCaptionList);
     const video = getCinemaVideoElement();
     if (video && video.querySelectorAll) {
         video.querySelectorAll('track').forEach(t => t.remove());
