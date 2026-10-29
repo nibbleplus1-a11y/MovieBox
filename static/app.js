@@ -2916,6 +2916,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     // Synchronize In-Player Top HUD & Badges
     safeText('inPlayerTitle', titleText);
     // Determine current dub name accurately — match by subject_id OR use the stream source language
+    const dubsToUse = (currentTitleDubs && currentTitleDubs.length > 0) ? currentTitleDubs : (activeDubsList || []);
     const currentDubObj = (dubsToUse && dubsToUse.find(d => d.subject_id === currentPlayingSubjectId)) || null;
     let currentDubName;
     if (currentDubObj) {
