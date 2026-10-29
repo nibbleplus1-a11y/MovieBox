@@ -685,26 +685,31 @@ class MovieBoxEngine:
         has_real_1080 = any(s.get("quality_value", 0) >= 1080 and (s.get("size_mb", 0) > 20 or s.get("format") == "DASH") for s in streams)
         if len(streams) < 2 or not has_real_1080:
             if not detail_path:
+                detail_path = app_cache.get(f"detail_path:{subject_id}")
+            if not detail_path:
                 try:
                     details = self.get_details(subject_id)
                     detail_path = details.get("detail_path", "") or ""
-                    # If this subject has no detail_path (e.g. English/Tamil dubs of Interstellar),
-                    # find any sibling dub that DOES have a detail_path and use that slug.
-                    if not detail_path:
-                        for dub in details.get("dubs", []):
-                            dub_sid = str(dub.get("subject_id") or "")
-                            if not dub_sid or dub_sid == subject_id:
-                                continue
+                    # If this subject has no detail_path (e.g. dubs), quickly inspect sibling dubs in parallel
+                    if not detail_path and details.get("dubs"):
+                        def _fetch_dub_path(dub):
+                            dsid = str(dub.get("subject_id") or "")
+                            if not dsid or dsid == subject_id:
+                                return None
                             try:
-                                dub_details = self.get_details(dub_sid)
-                                dub_path = dub_details.get("detail_path", "") or ""
-                                if dub_path:
-                                    detail_path = dub_path
-                                    break
+                                d_det = self.get_details(dsid)
+                                return d_det.get("detail_path") or None
                             except Exception:
-                                continue
+                                return None
+                        with ThreadPoolExecutor(max_workers=min(4, len(details["dubs"]))) as pool:
+                            for p in pool.map(_fetch_dub_path, details["dubs"]):
+                                if p:
+                                    detail_path = p
+                                    break
                 except Exception:
                     detail_path = ""
+            if detail_path:
+                app_cache.set(f"detail_path:{subject_id}", detail_path, ttl=86400)
             try:
                 token = self.bootstrap_token()
                 def _fetch_domain(domain: str):
@@ -1559,9 +1564,14 @@ async def probe_stream_servers(
         try:
             async with httpx.AsyncClient(timeout=3.0, follow_redirects=True, verify=False) as client:
                 if c_type == "direct":
-                    # Range probe on direct stream
+                    # Range probe on direct stream with authentic referer/origin
+                    meta_headers = candidate.get("stream_meta", {}).get("headers", {})
+                    ref = meta_headers.get("Referer", "https://123moviesfree.club/")
+                    origin = meta_headers.get("Origin", ref.rstrip("/"))
                     r = await client.get(c_url, headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer": ref,
+                        "Origin": origin,
                         "Range": "bytes=0-1024"
                     })
                     latency = round((time.time() - t_start) * 1000)

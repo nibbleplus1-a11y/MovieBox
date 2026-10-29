@@ -1634,11 +1634,20 @@ function toggleCinemaFullscreen() {
     );
 
     if (!isFs) {
+        // Lock screen orientation to landscape horizontally on mobile devices
         try {
             if (screen.orientation && screen.orientation.lock) {
-                screen.orientation.lock('landscape').catch(() => {});
+                screen.orientation.lock('landscape').catch(() => {
+                    screen.orientation.lock('landscape-primary').catch(() => {});
+                });
             }
         } catch {}
+
+        const video = getCinemaVideoElement();
+        // On iOS Safari / mobile WebKit, invoke native video enterFullscreen if available
+        if (video && video.webkitEnterFullscreen && !stage.classList.contains('is-iframe-mode')) {
+            try { video.webkitEnterFullscreen(); } catch {}
+        }
 
         const req = stage.requestFullscreen || stage.webkitRequestFullscreen || stage.msRequestFullscreen;
         if (req) {
@@ -1684,6 +1693,24 @@ function handleFullscreenStateChange() {
     if (stage) stage.classList.toggle('is-fullscreen', isFs);
     if (modal) modal.classList.toggle('stage-fullscreen', isFs);
     if (fsIcon) fsIcon.textContent = isFs ? '⤓' : '⤢';
+
+    // Auto rotate to horizontal landscape orientation when entering fullscreen
+    if (isFs) {
+        try {
+            if (screen.orientation && screen.orientation.lock) {
+                screen.orientation.lock('landscape').catch(() => {
+                    screen.orientation.lock('landscape-primary').catch(() => {});
+                });
+            }
+        } catch {}
+    } else {
+        try {
+            if (screen.orientation && screen.orientation.unlock) {
+                screen.orientation.unlock();
+            }
+        } catch {}
+    }
+
     resetInPlayerHudTimer();
 }
 
@@ -2169,13 +2196,39 @@ function retryStreamServers() {
     }
 }
 
-// ─── QUICK PLAY (WITH PARALLEL SERVER DETECTION) ─────────────────────────────
-async function quickPlay(subjectId, title, startTime = 0) {
-    showToast(`Testing stream servers for "${title}"…`);
-    currentPlayingSubjectId = subjectId;
-    _drawerEpisodeData = null; // Clear episode cache for new title
+// ─── LOAD FALLBACK SERVERS IN BACKGROUND (lazy, non-blocking) ────────────────
+async function _loadFallbackServersInBackground(subjectId, title, year, isSeries, season, episode) {
+    if (!title) return;
+    try {
+        const params = new URLSearchParams({
+            title,
+            year: year || '',
+            is_series: isSeries ? 'true' : 'false',
+            season: season || 0,
+            episode: episode || 0,
+            subject_id: subjectId || ''
+        });
+        const res = await fetch(`/api/fallback-sources?${params.toString()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.servers && data.servers.length > 0) {
+            activeFallbackServers = data.servers;
+            _testedServersList = [
+                { id: 'direct', name: 'Server 1 (Direct 1080p)', status: activeStreamList.length > 0 ? 'healthy' : 'unknown', type: 'direct' },
+                ...data.servers.map(s => ({ ...s, status: 'healthy' }))
+            ];
+            renderSettingsServerList(_testedServersList, currentSelectedServer || 'direct');
+        }
+    } catch {}
+}
 
-    // Check for saved resume progress (movie or TV series)
+// ─── QUICK PLAY (INSTANT — NO BLOCKING SERVER PROBE) ─────────────────────────
+async function quickPlay(subjectId, title, startTime = 0) {
+    showToast(`Loading "${title}"…`);
+    currentPlayingSubjectId = subjectId;
+    _drawerEpisodeData = null;
+
+    // Check for saved resume progress
     const saved = getLastWatchedProgress(subjectId);
     if (startTime <= 0 && saved) {
         if (saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
@@ -2194,7 +2247,7 @@ async function quickPlay(subjectId, title, startTime = 0) {
     currentSeason = targetSe;
     currentEpisode = targetEp;
 
-    // Open modal container immediately so user sees the parallel test loading state
+    // Open modal immediately — show loading state right away
     const modal = document.getElementById('playerModal');
     if (modal) {
         modal.style.display = '';
@@ -2205,16 +2258,28 @@ async function quickPlay(subjectId, title, startTime = 0) {
     const epSuffix = (isKnownSeries && targetEp > 0) ? ` • S${targetSe} E${targetEp}` : '';
     safeText('inPlayerTitle', `${baseTitle}${epSuffix}`);
 
-    try {
-        const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+    // Show loading state
+    const loadingState = document.getElementById('playerLoadingState');
+    const errorState = document.getElementById('playerErrorState');
+    if (loadingState) loadingState.style.display = 'flex';
+    if (errorState) errorState.style.display = 'none';
 
-        // Run parallel server health detection + fetch stream captions & detail concurrently
-        const [bestServer, streamRes, captionRes, detailRes] = await Promise.all([
-            probeAndSelectServer(subjectId, title, year, isKnownSeries, targetSe, targetEp),
-            fetch(`/api/stream/${subjectId}?se=${targetSe}&ep=${targetEp}`).then(r => r.json()).catch(() => ({ streams: [] })),
+    // Set clean connecting state
+    const chipsWrap = document.getElementById('playerProbeChips');
+    if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip healthy"><span class="chip-dot"></span>Connecting…</span>';
+
+    try {
+        const detailPath = (activeMediaMeta && activeMediaMeta.detail_path) ? activeMediaMeta.detail_path : '';
+        const streamEndpoint = `/api/stream/${subjectId}?se=${targetSe}&ep=${targetEp}${detailPath ? '&detail_path=' + encodeURIComponent(detailPath) : ''}`;
+
+        // ─── STEP 1: Fetch streams + captions + details IN PARALLEL (fast, ~0.5-1.5s)
+        const [streamRes, captionRes, detailRes] = await Promise.all([
+            fetch(streamEndpoint).then(r => r.json()).catch(() => ({ streams: [] })),
             fetch(`/api/stream/${subjectId}/captions?se=${targetSe}&ep=${targetEp}`).then(r => r.json()).catch(() => ({ captions: [] })),
             fetch(`/detail/${subjectId}`).then(r => r.json()).catch(() => null)
         ]);
+
+        if (loadingState) loadingState.style.display = 'none';
 
         const streamData  = streamRes || { streams: [] };
         const captionData = captionRes || { captions: [] };
@@ -2229,32 +2294,79 @@ async function quickPlay(subjectId, title, startTime = 0) {
             activeDubsList = dubs;
             currentTitleDubs = dubs;
         }
-        activeMediaMeta = detail || { title: title, cover: streamData.cover };
+        activeMediaMeta = detail || { title, cover: streamData.cover };
 
-        // Populate dubs in Settings menu
         renderSettingsAudioList(activeDubsList);
         renderSettingsSubsList(activeCaptionList);
 
-        if (!bestServer) {
-            // Check if upcoming / pre-release
-            if ((detail && detail.coming_soon) || (streamData && streamData.coming_soon)) {
-                showToast(`"${title}" has not been released yet (Coming Soon)`, 'info');
-                closePlayerModal();
-                return;
-            }
-            const errState = document.getElementById('playerErrorState');
-            if (errState) errState.style.display = 'flex';
-            showToast(`All streaming mirrors failed for "${title}"`, 'error');
+        // Coming soon check
+        if ((detail && detail.coming_soon && activeStreamList.length === 0) || (streamData && streamData.coming_soon && activeStreamList.length === 0)) {
+            showToast(`"${title}" has not been released yet (Coming Soon)`, 'info');
+            closePlayerModal();
             return;
         }
 
-        // Play the chosen best server in the single unified player!
-        if (bestServer.id === 'direct' && bestServer.stream_meta) {
-            playInCinemaModal(encodeURIComponent(JSON.stringify(bestServer.stream_meta)), startTime);
+        // ─── STEP 2: Play best available stream immediately
+        const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+
+        if (activeStreamList.length > 0) {
+            // Prefer MP4 streams (directly playable) over DASH
+            const playable = activeStreamList.filter(s => s.format !== 'DASH' && !s.url.includes('.mpd'));
+            const bestStream = playable.length > 0 ? playable[0] : activeStreamList[0];
+            currentSelectedServer = 'direct';
+
+            // Update chip to show direct stream is ready
+            if (chipsWrap) chipsWrap.innerHTML = `<span class="probe-chip healthy"><span class="chip-dot"></span>Direct ${bestStream.quality || '1080p'} ✓</span>`;
+
+            // Build server list entry for direct
+            _testedServersList = [{ id: 'direct', name: 'Server 1 (Direct 1080p)', status: 'healthy', latency_ms: 0, type: 'direct', stream_meta: bestStream }];
+            renderSettingsServerList(_testedServersList, 'direct');
+
+            // ─── STEP 3: Start playback immediately
+            playInCinemaModal(encodeURIComponent(JSON.stringify(bestStream)), startTime);
+
+            // ─── STEP 4: Load fallback servers in background (non-blocking)
+            // This won't delay playback at all
+            setTimeout(() => {
+                _loadFallbackServersInBackground(subjectId, title, year, isKnownSeries, targetSe, targetEp);
+            }, 3000); // Load after 3s so it doesn't compete with stream startup
+
         } else {
-            playInCinemaModal(null, startTime, bestServer);
+            // No direct streams — try fallback servers immediately
+            showToast(`Loading backup servers for "${title}"…`, 'info');
+            if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip"><span class="chip-dot"></span>Loading backup servers…</span>';
+
+            const params = new URLSearchParams({
+                title,
+                year: year || '',
+                is_series: isKnownSeries ? 'true' : 'false',
+                season: targetSe || 0,
+                episode: targetEp || 0,
+                subject_id: subjectId || ''
+            });
+            try {
+                const fbRes = await fetch(`/api/fallback-sources?${params.toString()}`).then(r => r.json()).catch(() => ({ servers: [] }));
+                activeFallbackServers = fbRes.servers || [];
+                if (activeFallbackServers.length > 0) {
+                    _testedServersList = [
+                        { id: 'direct', name: 'Server 1 (Direct 1080p)', status: 'failed', type: 'direct' },
+                        ...activeFallbackServers.map(s => ({ ...s, status: 'healthy' }))
+                    ];
+                    renderSettingsServerList(_testedServersList, activeFallbackServers[0].id);
+                    if (chipsWrap) chipsWrap.innerHTML = `<span class="probe-chip healthy"><span class="chip-dot"></span>${activeFallbackServers[0].name.split('(')[1]?.replace(')', '') || 'Backup'} ✓</span>`;
+                    playInCinemaModal(null, startTime, activeFallbackServers[0]);
+                } else {
+                    if (errorState) errorState.style.display = 'flex';
+                    showToast(`No streams found for "${title}"`, 'error');
+                }
+            } catch {
+                if (errorState) errorState.style.display = 'flex';
+                showToast(`Failed to load streams for "${title}"`, 'error');
+            }
         }
     } catch (err) {
+        if (loadingState) loadingState.style.display = 'none';
+        if (errorState) errorState.style.display = 'flex';
         showToast(`Failed to initialize stream: ${err.message}`, 'error');
     }
 }
@@ -2669,6 +2781,7 @@ function changePlayerServer(serverId) {
     if (plyrEl) plyrEl.style.display = 'none';
 
     if (stage) stage.classList.add('is-iframe-mode');
+    if (customControls) customControls.style.display = 'none';
     if (iframe) {
         iframe.style.display = 'block';
         iframe.src = targetServer.url;
@@ -3969,8 +4082,9 @@ function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0) {
     showToast(`Loading S${seasonNum}E${episodeNum}…`);
 
     const isCurrentlyFallback = currentSelectedServer && currentSelectedServer !== 'direct';
+    const detailPath = (activeMediaMeta && activeMediaMeta.detail_path) ? activeMediaMeta.detail_path : '';
 
-    fetch(`/api/stream/${subjectId}?se=${seasonNum}&ep=${episodeNum}`)
+    fetch(`/api/stream/${subjectId}?se=${seasonNum}&ep=${episodeNum}${detailPath ? '&detail_path=' + encodeURIComponent(detailPath) : ''}`)
         .then(async r => {
             const data = await r.json();
             const rawStreams = data.streams || [];
@@ -3981,32 +4095,22 @@ function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0) {
                 activeDubsList = data.dubs;
                 currentTitleDubs = data.dubs;
             }
-            // Fetch captions in background
+            // Fetch captions in background (non-blocking)
             fetch(`/api/stream/${subjectId}/captions?se=${seasonNum}&ep=${episodeNum}`)
                 .then(res => res.json())
                 .then(cd => { activeCaptionList = cd.captions || []; })
                 .catch(() => {});
-
-            activeFallbackServers = data.fallback_servers || [];
-
-            // If fallback servers came empty, fetch from /api/fallback-sources
-            if (activeFallbackServers.length === 0 && activeMediaMeta && activeMediaMeta.title) {
-                try {
-                    const t = activeMediaMeta.title;
-                    const year = (activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
-                    const fbRes = await fetch(`/api/fallback-sources?title=${encodeURIComponent(t)}&year=${year}&is_series=true&season=${seasonNum}&episode=${episodeNum}`).then(res => res.json());
-                    if (fbRes.servers && fbRes.servers.length > 0) {
-                        activeFallbackServers = fbRes.servers;
-                        updatePlayerServerSelect();
-                    }
-                } catch {}
-            }
 
             // If user was already streaming via an embedded backup server, keep them on that server
             if (isCurrentlyFallback && activeFallbackServers.length > 0) {
                 const target = activeFallbackServers.find(s => s.id === currentSelectedServer) || activeFallbackServers[0];
                 playInCinemaModal(null, seekTime, target);
                 renderPlayerSeriesRibbon();
+                // Update fallback servers for new episode in background
+                if (activeMediaMeta && activeMediaMeta.title) {
+                    const year = (activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+                    setTimeout(() => _loadFallbackServersInBackground(subjectId, activeMediaMeta.title, year, true, Number(seasonNum), Number(episodeNum)), 2000);
+                }
                 return;
             }
 
@@ -4015,12 +4119,29 @@ function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0) {
                 const streamToPlay = playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0];
                 playInCinemaModal(encodeURIComponent(JSON.stringify(streamToPlay)), seekTime);
                 renderPlayerSeriesRibbon();
-            } else if (activeFallbackServers && activeFallbackServers.length > 0) {
-                const srvName = activeFallbackServers[0].name.split('(')[1]?.replace(')', '') || 'Cloud';
-                showToast(`Direct stream unavailable — playing S${seasonNum}E${episodeNum} via Backup Server (${srvName})…`, 'info');
-                playInCinemaModal(null, seekTime, activeFallbackServers[0]);
-                renderPlayerSeriesRibbon();
+                // Load fallback servers lazily in background — doesn't delay playback
+                if (activeMediaMeta && activeMediaMeta.title) {
+                    const year = (activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+                    setTimeout(() => _loadFallbackServersInBackground(subjectId, activeMediaMeta.title, year, true, Number(seasonNum), Number(episodeNum)), 3000);
+                }
             } else {
+                // No direct streams — need fallback now, fetch them immediately
+                showToast(`No direct stream — loading backup server…`, 'info');
+                if (activeMediaMeta && activeMediaMeta.title) {
+                    const t = activeMediaMeta.title;
+                    const year = (activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+                    try {
+                        const fbRes = await fetch(`/api/fallback-sources?title=${encodeURIComponent(t)}&year=${year}&is_series=true&season=${seasonNum}&episode=${episodeNum}`).then(res => res.json());
+                        if (fbRes.servers && fbRes.servers.length > 0) {
+                            activeFallbackServers = fbRes.servers;
+                            const srvName = activeFallbackServers[0].name.split('(')[1]?.replace(')', '') || 'Cloud';
+                            showToast(`Playing S${seasonNum}E${episodeNum} via ${srvName}…`, 'info');
+                            playInCinemaModal(null, seekTime, activeFallbackServers[0]);
+                            renderPlayerSeriesRibbon();
+                            return;
+                        }
+                    } catch {}
+                }
                 showToast(`No stream for S${seasonNum}E${episodeNum}`, 'error');
             }
         })

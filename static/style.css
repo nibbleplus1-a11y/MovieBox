@@ -2199,8 +2199,12 @@ body {
 
 /* IFRAME EMBED MODE: Keep unified top bar & gear controls on top of iframe */
 .video-stage.is-iframe-mode #cinemaVideo,
-.video-stage.is-iframe-mode .plyr {
+.video-stage.is-iframe-mode .plyr,
+.video-stage.is-iframe-mode .cinema-player-controls,
+.video-stage.is-iframe-mode .video-buffering-spinner,
+.video-stage.is-iframe-mode .seek-ripple-overlay {
     display: none !important;
+    pointer-events: none !important;
 }
 
 .video-stage.is-iframe-mode .cinema-iframe {
@@ -2208,6 +2212,7 @@ body {
     width: 100% !important;
     height: 100% !important;
     z-index: 5 !important;
+    pointer-events: auto !important;
 }
 
 
