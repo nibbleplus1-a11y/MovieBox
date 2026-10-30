@@ -34,6 +34,26 @@ let nextEpSecondsLeft = 5;
 let plyrInstance = null;
 let hlsInstance = null;
 
+// ─── CLIENT-SIDE DETAIL CACHE (10-min TTL, eliminates redundant /detail/ fetches) ─
+const _detailCache = new Map(); // key: subjectId → {data, expiry}
+function _getCachedDetail(sid) {
+    const entry = _detailCache.get(String(sid));
+    if (entry && Date.now() < entry.expiry) return entry.data;
+    return null;
+}
+function _setCachedDetail(sid, data) {
+    _detailCache.set(String(sid), { data, expiry: Date.now() + 10 * 60 * 1000 });
+}
+async function _fetchDetail(sid, opts = {}) {
+    const cached = _getCachedDetail(sid);
+    if (cached) return cached;
+    const res = await fetch(`/detail/${sid}`, opts);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    if (d && d.title) _setCachedDetail(sid, d);
+    return d;
+}
+
 function safeText(id, text) {
     const el = document.getElementById(id);
     if (el) el.textContent = text;
@@ -1230,17 +1250,18 @@ function selectAndResolveEpisode(subjectId, seasonNum, episodeNum) {
     executeResolver();
 }
 
-// ─── STREAM WATCHDOG (gentle – only triggers after 30s of true stall) ──────────
+// ─── STREAM WATCHDOG (startup 12s + mid-playback 45s stall detection) ───────────
 let _streamWatchdogTimer = null;
+let _streamStartupTimer = null;  // fires after 12s if nothing plays yet
 
-function startStreamWatchdog(ms = 30000) {
+function startStreamWatchdog(ms = 45000) {
     clearStreamWatchdog();
     _streamWatchdogTimer = setTimeout(() => {
         const video = getCinemaVideoElement();
         if (!video) return;
-        // Only fire if we truly haven't made progress
-        if (video.currentTime < 1 && video.readyState < 3) {
-            console.warn('[Watchdog] Stream stalled – triggering auto-fallback');
+        // Only fire if truly stalled mid-playback (not progressing)
+        if (!video.paused && video.readyState < 3) {
+            console.warn('[Watchdog] Mid-play stall detected – triggering auto-fallback');
             window.triggerAutoStreamFallback && window.triggerAutoStreamFallback('stall');
         } else {
             clearStreamWatchdog();
@@ -1248,11 +1269,33 @@ function startStreamWatchdog(ms = 30000) {
     }, ms);
 }
 
+// Startup watchdog: if stream hasn't started within 12s of loadstart, switch to fallback
+function startStartupWatchdog() {
+    clearStartupWatchdog();
+    _streamStartupTimer = setTimeout(() => {
+        const video = getCinemaVideoElement();
+        if (!video) return;
+        // Still loading (currentTime < 0.5 = not really playing yet)
+        if (video.currentTime < 0.5 && currentSelectedServer === 'direct') {
+            console.warn('[StartupWatchdog] Direct stream too slow – auto-switching to fallback');
+            window.triggerAutoStreamFallback && window.triggerAutoStreamFallback('slow_start');
+        }
+    }, 12000);
+}
+
+function clearStartupWatchdog() {
+    if (_streamStartupTimer) {
+        clearTimeout(_streamStartupTimer);
+        _streamStartupTimer = null;
+    }
+}
+
 function clearStreamWatchdog() {
     if (_streamWatchdogTimer) {
         clearTimeout(_streamWatchdogTimer);
         _streamWatchdogTimer = null;
     }
+    clearStartupWatchdog();
 }
 
 // ─── PLYR & IN-PLAYER CINEMA ENGINE ──────────────────────────────────────────
@@ -1425,14 +1468,14 @@ function initPlyr() {
         }
     });
 
-    video.addEventListener('loadstart', () => showBuffering('Connecting to 1080p Stream...'));
-    video.addEventListener('waiting', () => showBuffering('Buffering 1080p Stream...'));
+    video.addEventListener('loadstart', () => { showBuffering('Connecting to 1080p Stream...'); startStartupWatchdog(); });
+    video.addEventListener('waiting', () => { showBuffering('Buffering 1080p Stream...'); if (currentSelectedServer === 'direct') startStreamWatchdog(45000); });
     video.addEventListener('seeking', () => showBuffering('Seeking...'));
-    video.addEventListener('playing', hideBuffering);
-    video.addEventListener('canplay', hideBuffering);
+    video.addEventListener('playing', () => { hideBuffering(); clearStartupWatchdog(); clearStreamWatchdog(); });
+    video.addEventListener('canplay', () => { hideBuffering(); clearStartupWatchdog(); });
     video.addEventListener('pause', hideBuffering);
 
-    plyrInstance.on('playing', hideBuffering);
+    plyrInstance.on('playing', () => { hideBuffering(); clearStartupWatchdog(); clearStreamWatchdog(); });
     plyrInstance.on('pause', hideBuffering);
     plyrInstance.on('waiting', () => showBuffering('Buffering 1080p Stream...'));
     plyrInstance.on('seeking', () => showBuffering('Seeking...'));
@@ -1558,10 +1601,11 @@ function initPlyr() {
 
     video.addEventListener('playing', () => {
         clearStreamWatchdog();
+        clearStartupWatchdog();
     });
 
     video.addEventListener('timeupdate', () => {
-        if (video.currentTime > 0.5) clearStreamWatchdog();
+        if (video.currentTime > 0.5) { clearStreamWatchdog(); clearStartupWatchdog(); }
     });
 
     if (plyrInstance) {
@@ -2297,11 +2341,14 @@ async function _loadFallbackServersInBackground(subjectId, title, year, isSeries
     } catch {}
 }
 
-// ─── QUICK PLAY (INSTANT — NO BLOCKING SERVER PROBE) ─────────────────────────
+// ─── QUICK PLAY (INSTANT — opens modal + starts ad IMMEDIATELY, streams load in parallel) ─
 async function quickPlay(subjectId, title, startTime = 0) {
-    showToast(`Loading "${title}"…`);
+    if (!subjectId || subjectId === 'None' || subjectId === 'undefined') {
+        showToast('Cannot play: invalid title ID', 'error');
+        return;
+    }
 
-    // Reset previous playback & server state so stale servers/streams from previous shows are never reused
+    // Reset previous playback & server state
     activeFallbackServers = [];
     _testedServersList = [];
     activeStreamList = [];
@@ -2310,34 +2357,27 @@ async function quickPlay(subjectId, title, startTime = 0) {
     currentSelectedServer = 'direct';
     _drawerEpisodeData = null;
 
-    // Reset iframe immediately to stop any playing backup audio/video from previous show
+    // Reset iframe immediately
     const iframe = document.getElementById('cinemaIframe');
-    if (iframe) {
-        iframe.src = 'about:blank';
-        iframe.style.display = 'none';
-    }
+    if (iframe) { iframe.src = 'about:blank'; iframe.style.display = 'none'; }
 
     if (!activeMediaMeta || String(activeMediaMeta.subject_id) !== String(subjectId)) {
         activeMediaMeta = null;
     }
     currentPlayingSubjectId = subjectId;
 
-    // Check for saved resume progress for THIS specific title only
+    // Determine resume + episode info from saved progress
     const saved = getLastWatchedProgress(subjectId);
     let targetSe = 0;
     let targetEp = 0;
     const isPreKnownMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
 
     if (saved && !isPreKnownMovie) {
-        if (startTime <= 0 && saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
-            startTime = saved.currentTime;
-        }
+        if (startTime <= 0 && saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) startTime = saved.currentTime;
         if (saved.season > 0) targetSe = Number(saved.season);
         if (saved.episode > 0) targetEp = Number(saved.episode);
     } else if (saved && isPreKnownMovie) {
-        if (startTime <= 0 && saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
-            startTime = saved.currentTime;
-        }
+        if (startTime <= 0 && saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) startTime = saved.currentTime;
     }
     currentSeason = targetSe;
     currentEpisode = targetEp;
@@ -2351,62 +2391,61 @@ async function quickPlay(subjectId, title, startTime = 0) {
     currentSeason = targetSe;
     currentEpisode = targetEp;
 
-    // Open modal immediately — show loading state right away
+    // ─── STEP 1: Open modal IMMEDIATELY (don't wait for network) ─────────────────
     const modal = document.getElementById('playerModal');
-    if (modal) {
-        modal.style.display = '';
-        modal.classList.add('active');
-        document.body.style.overflow = 'hidden';
-    }
+    if (modal) { modal.style.display = ''; modal.classList.add('active'); document.body.style.overflow = 'hidden'; }
     const baseTitle = title || (activeMediaMeta && activeMediaMeta.title) || 'Movie';
     const epSuffix = (isKnownSeries && targetEp > 0) ? ` • S${targetSe} E${targetEp}` : '';
     safeText('inPlayerTitle', `${baseTitle}${epSuffix}`);
 
-    // Show loading state
     const loadingState = document.getElementById('playerLoadingState');
     const errorState = document.getElementById('playerErrorState');
     if (loadingState) loadingState.style.display = 'flex';
     if (errorState) errorState.style.display = 'none';
 
-    // Set clean connecting state
     const chipsWrap = document.getElementById('playerProbeChips');
-    if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip healthy"><span class="chip-dot"></span>Connecting…</span>';
+    if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip healthy"><span class="chip-dot"></span>Loading Stream…</span>';
+
+    // ─── STEP 2: Kick off ad pre-roll IMMEDIATELY while streams fetch in background ─
+    // The ad and network calls happen in parallel — critical for fast perceived start
+    let adDoneResolve;
+    const adDonePromise = new Promise(res => { adDoneResolve = res; });
+    if (typeof AdEngine !== 'undefined') {
+        AdEngine.runPrerollIfEligible(() => adDoneResolve());
+    } else {
+        adDoneResolve(); // No ad engine — resolve instantly
+    }
+
+    // ─── STEP 3: Fetch streams + captions + details concurrently ─────────────────
+    const detailPath = (activeMediaMeta && activeMediaMeta.detail_path) ? activeMediaMeta.detail_path : '';
+    const streamEndpoint = `/api/stream/${subjectId}?se=${targetSe}&ep=${targetEp}${detailPath ? '&detail_path=' + encodeURIComponent(detailPath) : ''}`;
 
     try {
-        const detailPath = (activeMediaMeta && activeMediaMeta.detail_path) ? activeMediaMeta.detail_path : '';
-        const streamEndpoint = `/api/stream/${subjectId}?se=${targetSe}&ep=${targetEp}${detailPath ? '&detail_path=' + encodeURIComponent(detailPath) : ''}`;
-
-        // ─── STEP 1: Fetch streams + captions + details IN PARALLEL (fast, ~0.5-1.5s)
         const [streamRes, captionRes, detailRes] = await Promise.all([
             fetch(streamEndpoint).then(r => r.json()).catch(() => ({ streams: [] })),
             fetch(`/api/stream/${subjectId}/captions?se=${targetSe}&ep=${targetEp}`).then(r => r.json()).catch(() => ({ captions: [] })),
-            fetch(`/detail/${subjectId}`).then(r => r.json()).catch(() => null)
+            _fetchDetail(subjectId).catch(() => null)
         ]);
-
-        if (loadingState) loadingState.style.display = 'none';
 
         const streamData  = streamRes || { streams: [] };
         const captionData = captionRes || { captions: [] };
         const detail      = detailRes || null;
 
-        const rawStreams  = streamData.streams || [];
+        // Cache fetched detail for fast re-use in openDetailsModal
+        if (detail && detail.title) _setCachedDetail(subjectId, detail);
+
+        const rawStreams   = streamData.streams || [];
         const cleanStreams = rawStreams.filter(s => !isNoticeStream(s));
-        activeStreamList  = cleanStreams.length > 0 ? cleanStreams : rawStreams;
-        activeCaptionList = captionData.captions || [];
+        activeStreamList   = cleanStreams.length > 0 ? cleanStreams : rawStreams;
+        activeCaptionList  = captionData.captions || [];
         const dubs = streamData.dubs || (detail ? detail.dubs : []) || [];
-        if (dubs.length > 0) {
-            activeDubsList = dubs;
-            currentTitleDubs = dubs;
-        }
+        if (dubs.length > 0) { activeDubsList = dubs; currentTitleDubs = dubs; }
         activeMediaMeta = detail || { title, cover: streamData.cover };
 
-        // Post-fetch strict type check:
+        // Post-fetch strict type check
         const isActuallyMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
         if (isActuallyMovie) {
-            targetSe = 0;
-            targetEp = 0;
-            currentSeason = 0;
-            currentEpisode = 0;
+            targetSe = 0; targetEp = 0; currentSeason = 0; currentEpisode = 0;
         } else if (activeMediaMeta && (activeMediaMeta.subject_type === 2 || activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series')) {
             if (targetSe === 0) targetSe = 1;
             if (targetEp === 0) targetEp = 1;
@@ -2420,47 +2459,41 @@ async function quickPlay(subjectId, title, startTime = 0) {
 
         // Coming soon check
         if ((detail && detail.coming_soon && activeStreamList.length === 0) || (streamData && streamData.coming_soon && activeStreamList.length === 0)) {
+            if (loadingState) loadingState.style.display = 'none';
             showToast(`"${title}" has not been released yet (Coming Soon)`, 'info');
             closePlayerModal();
             return;
         }
 
-        // ─── STEP 2: Play best available stream immediately
+        // ─── STEP 4: Wait for ad to finish, then start playback ───────────────────
+        await adDonePromise;
+        if (loadingState) loadingState.style.display = 'none';
+
         const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
 
         if (activeStreamList.length > 0) {
-            // Prefer MP4 streams (directly playable) over DASH
             const playable = activeStreamList.filter(s => s.format !== 'DASH' && !s.url.includes('.mpd'));
             const bestStream = playable.length > 0 ? playable[0] : activeStreamList[0];
             currentSelectedServer = 'direct';
 
-            // Update chip to show direct stream is ready
             if (chipsWrap) chipsWrap.innerHTML = `<span class="probe-chip healthy"><span class="chip-dot"></span>Direct ${bestStream.quality || '1080p'} ✓</span>`;
-
-            // Build server list entry for direct
             _testedServersList = [{ id: 'direct', name: 'Server 1 (Direct 1080p)', status: 'healthy', latency_ms: 0, type: 'direct', stream_meta: bestStream }];
             renderSettingsServerList(_testedServersList, 'direct');
 
-            // ─── STEP 3: Start playback immediately
             playInCinemaModal(encodeURIComponent(JSON.stringify(bestStream)), startTime);
 
-            // ─── STEP 4: Load fallback servers in background (non-blocking)
-            // This won't delay playback at all
-            setTimeout(() => {
-                _loadFallbackServersInBackground(subjectId, title, year, isFinalSeries, targetSe, targetEp);
-            }, 3000); // Load after 3s so it doesn't compete with stream startup
+            // Preload fallback servers in background — non-blocking
+            setTimeout(() => { _loadFallbackServersInBackground(subjectId, title, year, isFinalSeries, targetSe, targetEp); }, 2000);
 
         } else {
-            // No direct streams — try fallback servers immediately
+            // No direct streams — use fallback immediately
             showToast(`Loading backup servers for "${title}"…`, 'info');
-            if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip"><span class="chip-dot"></span>Loading backup servers…</span>';
+            if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip"><span class="chip-dot"></span>Backup servers loading…</span>';
 
             const params = new URLSearchParams({
-                title,
-                year: year || '',
+                title, year: year || '',
                 is_series: isFinalSeries ? 'true' : 'false',
-                season: targetSe || 0,
-                episode: targetEp || 0,
+                season: targetSe || 0, episode: targetEp || 0,
                 subject_id: subjectId || ''
             });
             try {
@@ -2476,17 +2509,17 @@ async function quickPlay(subjectId, title, startTime = 0) {
                     playInCinemaModal(null, startTime, activeFallbackServers[0]);
                 } else {
                     if (errorState) errorState.style.display = 'flex';
-                    showToast(`No streams found for "${title}"`, 'error');
+                    showToast(`No streams available for "${title}"`, 'error');
                 }
             } catch {
                 if (errorState) errorState.style.display = 'flex';
-                showToast(`Failed to load streams for "${title}"`, 'error');
+                showToast(`Failed to load backup servers for "${title}"`, 'error');
             }
         }
     } catch (err) {
         if (loadingState) loadingState.style.display = 'none';
         if (errorState) errorState.style.display = 'flex';
-        showToast(`Failed to initialize stream: ${err.message}`, 'error');
+        showToast(`Stream failed: ${err.message}`, 'error');
     }
 }
 
@@ -3311,13 +3344,11 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         }
     };
 
-    if (typeof AdEngine !== 'undefined') {
-        AdEngine.runPrerollIfEligible(startPlayback);
-    } else {
-        setTimeout(startPlayback, 100);
-        if (video) {
-            video.addEventListener('canplay', () => { startPlayback(); }, { once: true });
-        }
+    // playInCinemaModal only reaches here after quickPlay already ran the ad — start immediately
+    // (quickPlay now runs the ad before calling playInCinemaModal)
+    setTimeout(startPlayback, 80);
+    if (video) {
+        video.addEventListener('canplay', () => { startPlayback(); }, { once: true });
     }
     renderPlayerSeriesRibbon();
 
@@ -4000,13 +4031,14 @@ async function openDetailsModal(subjectId) {
     document.getElementById('detailDubsSection').style.display = 'none';
 
     try {
-        const [detail, episodes] = await Promise.allSettled([
-            fetch(`/detail/${subjectId}`).then(r => r.json()),
-            fetch(`/episodes/${subjectId}`).then(r => r.json())
+        // Use cache-first fetch for detail + parallel episodes fetch
+        const [detailResult, episodesResult] = await Promise.allSettled([
+            _fetchDetail(subjectId),
+            fetch(`/episodes/${subjectId}`).then(r => r.json()).catch(() => null)
         ]);
 
-        const d = detail.status === 'fulfilled' ? detail.value : null;
-        const ep = episodes.status === 'fulfilled' ? episodes.value : null;
+        const d = detailResult.status === 'fulfilled' ? detailResult.value : null;
+        const ep = episodesResult.status === 'fulfilled' ? episodesResult.value : null;
 
         if (!d || !d.title) throw new Error('Failed to load details');
 
@@ -4237,9 +4269,39 @@ async function openDetailsModal(subjectId) {
         }
 
     } catch (err) {
+        console.warn('[openDetailsModal] Error:', err.message);
+        // Retry once after a short delay (network hiccup)
+        const retryAfter = 1500;
+        document.getElementById('detailTitleText').textContent = 'Retrying…';
+        await new Promise(res => setTimeout(res, retryAfter));
+        try {
+            _detailCache.delete(String(subjectId)); // clear stale cache entry before retry
+            const d2 = await _fetchDetail(subjectId);
+            if (d2 && d2.title) {
+                // Re-invoke with fresh data
+                document.getElementById('detailTitleText').textContent = d2.title;
+                document.getElementById('detailPlotText').textContent = d2.description || 'No synopsis available.';
+                activeDetailItem = { subject_id: subjectId, title: d2.title, cover: d2.cover, type: d2.type || 'Movie' };
+                const streamBtn = document.getElementById('detailStreamBtn');
+                if (streamBtn) {
+                    streamBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>Stream Now</span>`;
+                    streamBtn.className = 'btn btn-primary btn-block';
+                    streamBtn.onclick = () => { closeDetailModal(true); quickPlay(subjectId, d2.title); };
+                }
+                showToast('Title loaded', 'success');
+                return;
+            }
+        } catch { /* retry failed */ }
         document.getElementById('detailTitleText').textContent = 'Title Unavailable';
-        document.getElementById('detailPlotText').textContent = 'Could not load metadata for this title. Please try searching or selecting an alternative version.';
-        showToast('Unable to load title details', 'error');
+        document.getElementById('detailPlotText').textContent = 'Could not load metadata. Tap Stream Now below to try playing directly, or search for another title.';
+        // Still offer a play button so the user isn't stuck
+        const streamBtnFallback = document.getElementById('detailStreamBtn');
+        if (streamBtnFallback) {
+            streamBtnFallback.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>Try Stream Anyway</span>`;
+            streamBtnFallback.className = 'btn btn-primary btn-block';
+            streamBtnFallback.onclick = () => { closeDetailModal(true); quickPlay(subjectId, 'Unknown Title'); };
+        }
+        showToast('Metadata unavailable — you can still try streaming', 'warning');
     }
 }
 

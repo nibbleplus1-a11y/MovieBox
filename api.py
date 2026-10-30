@@ -1335,14 +1335,21 @@ def get_detail(subject_id: str):
     if coming_soon and release_date:
         res["coming_soon_date"] = release_date[:10]
 
-    # Only for date-confirmed unreleased movies, verify with a stream probe.
-    # If streams ARE available, the title is released even if the date says future.
+    # For coming-soon movies, check stream availability in background to avoid blocking.
+    # First check if a previous bg probe already confirmed streams exist.
     if coming_soon and res.get("type") == "Movie":
-        try:
-            if engine.get_streams(subject_id, season=0, episode=0):
-                coming_soon = False  # streams exist → already released
-        except Exception:
-            pass
+        override = app_cache.get(f"cs_override:{subject_id}")
+        if override is not None:
+            coming_soon = bool(override)
+        else:
+            # Fire background probe; don't block the response
+            def _bg_cs_check():
+                try:
+                    if engine.get_streams(subject_id, season=0, episode=0):
+                        app_cache.set(f"cs_override:{subject_id}", False, ttl=1800)
+                except Exception:
+                    pass
+            _bg_executor.submit(_bg_cs_check)
 
     res["coming_soon"] = coming_soon
     return res
