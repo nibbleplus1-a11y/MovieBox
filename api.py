@@ -878,6 +878,11 @@ class MovieBoxEngine:
                 for s in subs:
                     if s.get("subjectType") == 6 or is_adult_content(s):
                         continue
+                    stype = s.get("subjectType")
+                    if target_key in ["series", "anime", "asian_drama"] and stype == 1:
+                        continue
+                    if target_key in ["cinema", "hollywood"] and stype == 2:
+                        continue
                     cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
                     item = {
                         "title": s.get("title"),
@@ -1112,7 +1117,10 @@ def get_stream_proxy_client() -> httpx.AsyncClient:
         _STREAM_PROXY_CLIENT = httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True)
     return _STREAM_PROXY_CLIENT
 
-_WORKING_REFERERS: Dict[str, str] = {}
+_WORKING_REFERERS: Dict[str, str] = {
+    "bcdnxw.hakunaymatata.com": "https://123moviesfree.club/",
+    "hakunaymatata.com": "https://123moviesfree.club/"
+}
 
 @app.api_route("/api/proxy/stream", methods=["GET", "HEAD", "OPTIONS"])
 async def proxy_stream(request: Request, url: str = Query(...), referer: Optional[str] = None, download: bool = False, filename: Optional[str] = None, subject_id: Optional[str] = None):
@@ -1129,11 +1137,14 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     # Smart candidate referers to prevent 429 rate-limiting from hakunaymatata CDN
     candidate_refs = []
+    if "hakunaymatata.com" in url or "hakunaymatata.com" in url_domain:
+        candidate_refs.append("https://123moviesfree.club/")
+
     # Prioritize previously successful referer for this domain
-    if url_domain in _WORKING_REFERERS:
+    if url_domain in _WORKING_REFERERS and _WORKING_REFERERS[url_domain] not in candidate_refs:
         candidate_refs.append(_WORKING_REFERERS[url_domain])
 
-    if referer and "aoneroom.com" not in referer:
+    if referer and "aoneroom.com" not in referer and referer not in candidate_refs:
         candidate_refs.append(referer)
     if "hakunaymatata.com" in url:
         candidate_refs.extend(["https://123moviesfree.club/", "https://movieboxonline.net/", "https://moviebox.ph/"])
@@ -1483,16 +1494,36 @@ async def get_fallback_sources(
     subject_id: Optional[str] = Query(None)
 ):
     loop = asyncio.get_event_loop()
-    imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(title, year=year, is_series=is_series))
+    real_is_series = is_series
+    real_season = season
+    real_episode = episode
+
+    if subject_id and subject_id != "None":
+        try:
+            details = await loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
+            if details:
+                st = details.get("subject_type")
+                if st == 1 or details.get("type") == "Movie":
+                    real_is_series = False
+                    real_season = 0
+                    real_episode = 0
+                elif st == 2 or details.get("type") in ["Series", "TV Series"]:
+                    real_is_series = True
+                    if real_season == 0: real_season = 1
+                    if real_episode == 0: real_episode = 1
+        except Exception:
+            pass
+
+    imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(title, year=year, is_series=real_is_series))
     if not imdb_id:
         return {"title": title, "imdb_id": None, "servers": []}
-    servers = get_backup_servers(imdb_id, is_series=is_series, season=season, episode=episode)
+    servers = get_backup_servers(imdb_id, is_series=real_is_series, season=real_season, episode=real_episode)
     return {
         "title": title,
         "imdb_id": imdb_id,
-        "is_series": is_series,
-        "season": season,
-        "episode": episode,
+        "is_series": real_is_series,
+        "season": real_season,
+        "episode": real_episode,
         "servers": servers
     }
 
@@ -1671,8 +1702,14 @@ async def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Op
     # Check cache for IMDB/fallback servers first (avoids the slow 13s Cinemeta call)
     imdb_id = None
     fallback_servers = []
-    if title and not is_coming_soon:
+    if details and (details.get("subject_type") == 1 or det_type == "Movie"):
+        local_se = 0
+        local_ep = 0
+        is_ser = False
+    else:
         is_ser = bool(det_type == "Series" or local_se > 0 or local_ep > 0)
+
+    if title and not is_coming_soon:
         cache_key_imdb = f"imdb_id:{re.sub(r'[\[\(].*?[\]\)]', '', title).strip()}:{det_release or ''}:{is_ser}"
         imdb_id = app_cache.get(cache_key_imdb)
         if imdb_id:
@@ -1880,6 +1917,9 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
     seen = set()
     for cat in ["trending", "new_releases", "top_rated", "hollywood", "action", "scifi", "comedy", "horror", "bollywood", "south_indian"]:
         for it in feed.get(cat, []):
+            # Strict filter: ONLY movies belong in the movie catalog!
+            if it.get("subject_type") == 2 or it.get("type") in ["Series", "TV Series"]:
+                continue
             raw_t = it.get("title") or ""
             clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip()
             if it["subject_id"] not in seen and clean_name.lower() not in seen:
@@ -1888,6 +1928,7 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
                 c = dict(it)
                 c["raw_title"] = raw_t
                 c["title"] = clean_name
+                c["type"] = "Movie"
                 curated_pool.append(c)
 
     cache_key = f"movies:{page}:{per_page}:{sort}:{category}:{genre}"
@@ -1923,6 +1964,8 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
         for s in raw:
             if s.get("subjectType") == 6 or is_adult_content(s):
                 continue
+            if s.get("subjectType") == 2:
+                continue
             if not s.get("title"):
                 continue
             sid = str(s.get("subjectId"))
@@ -1936,7 +1979,7 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
                     "title": clean_title,
                     "raw_title": s.get("title"),
                     "subject_id": sid,
-                    "subject_type": s.get("subjectType", 1),
+                    "subject_type": 1,
                     "detail_path": s.get("detailPath"),
                     "cover": cover_url,
                     "rating": s.get("imdbRatingValue") or "N/A",
@@ -1976,8 +2019,11 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
     feed = engine.get_curated_feed()
     curated_series = []
     seen = set()
-    for cat in ["series", "anime", "asian_drama"]:
+    for cat in ["series", "anime", "asian_drama", "trending", "bollywood", "south_indian"]:
         for it in feed.get(cat, []):
+            # Strict filter: ONLY TV Series belong in the TV series catalog!
+            if it.get("subject_type") == 1 or it.get("type") == "Movie":
+                continue
             raw_t = it.get("title") or ""
             clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip()
             if it["subject_id"] not in seen and clean_name.lower() not in seen:
@@ -1986,10 +2032,12 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
                 c = dict(it)
                 c["raw_title"] = raw_t
                 c["title"] = clean_name
+                c["type"] = "TV Series"
                 curated_series.append(c)
 
     if category in ["series", "anime", "asian_drama"]:
         items = feed.get(category, [])
+        items = [x for x in items if x.get("subject_type") != 1 and x.get("type") != "Movie"]
         total = len(items)
         start = (page - 1) * per_page
         end = start + per_page
@@ -2032,6 +2080,8 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
         for s in raw:
             if s.get("subjectType") == 6 or is_adult_content(s):
                 continue
+            if s.get("subjectType") == 1:
+                continue
             if not s.get("title"):
                 continue
             sid = str(s.get("subjectId"))
@@ -2045,7 +2095,7 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
                     "title": clean_title,
                     "raw_title": s.get("title"),
                     "subject_id": sid,
-                    "subject_type": s.get("subjectType", 2),
+                    "subject_type": 2,
                     "detail_path": s.get("detailPath"),
                     "cover": cover_url,
                     "rating": s.get("imdbRatingValue") or "N/A",

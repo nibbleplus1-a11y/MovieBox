@@ -2326,17 +2326,23 @@ async function quickPlay(subjectId, title, startTime = 0) {
     const saved = getLastWatchedProgress(subjectId);
     let targetSe = 0;
     let targetEp = 0;
-    if (saved) {
+    const isPreKnownMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
+
+    if (saved && !isPreKnownMovie) {
         if (startTime <= 0 && saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
             startTime = saved.currentTime;
         }
         if (saved.season > 0) targetSe = Number(saved.season);
         if (saved.episode > 0) targetEp = Number(saved.episode);
+    } else if (saved && isPreKnownMovie) {
+        if (startTime <= 0 && saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
+            startTime = saved.currentTime;
+        }
     }
     currentSeason = targetSe;
     currentEpisode = targetEp;
 
-    const isKnownSeries = Boolean(
+    const isKnownSeries = !isPreKnownMovie && Boolean(
         (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2)) ||
         (targetSe > 0 || targetEp > 0)
     );
@@ -2394,6 +2400,21 @@ async function quickPlay(subjectId, title, startTime = 0) {
         }
         activeMediaMeta = detail || { title, cover: streamData.cover };
 
+        // Post-fetch strict type check:
+        const isActuallyMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
+        if (isActuallyMovie) {
+            targetSe = 0;
+            targetEp = 0;
+            currentSeason = 0;
+            currentEpisode = 0;
+        } else if (activeMediaMeta && (activeMediaMeta.subject_type === 2 || activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series')) {
+            if (targetSe === 0) targetSe = 1;
+            if (targetEp === 0) targetEp = 1;
+            currentSeason = targetSe;
+            currentEpisode = targetEp;
+        }
+        const isFinalSeries = !isActuallyMovie && Boolean(activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2));
+
         renderSettingsAudioList(activeDubsList);
         renderSettingsSubsList(activeCaptionList);
 
@@ -2426,7 +2447,7 @@ async function quickPlay(subjectId, title, startTime = 0) {
             // ─── STEP 4: Load fallback servers in background (non-blocking)
             // This won't delay playback at all
             setTimeout(() => {
-                _loadFallbackServersInBackground(subjectId, title, year, isKnownSeries, targetSe, targetEp);
+                _loadFallbackServersInBackground(subjectId, title, year, isFinalSeries, targetSe, targetEp);
             }, 3000); // Load after 3s so it doesn't compete with stream startup
 
         } else {
@@ -2437,7 +2458,7 @@ async function quickPlay(subjectId, title, startTime = 0) {
             const params = new URLSearchParams({
                 title,
                 year: year || '',
-                is_series: isKnownSeries ? 'true' : 'false',
+                is_series: isFinalSeries ? 'true' : 'false',
                 season: targetSe || 0,
                 episode: targetEp || 0,
                 subject_id: subjectId || ''
@@ -2764,7 +2785,8 @@ function updateUnifiedPlayerTimeline() {
 
 // ─── MID-PLAYBACK STALL AUTO-FAILOVER WATCHDOG ───────────────────────────────
 function setupPlaybackWatchdog(video) {
-    if (!video) return;
+    if (!video || video._watchdogInitialized) return;
+    video._watchdogInitialized = true;
 
     const clearStallTimer = () => {
         if (_playbackStallTimer) {
@@ -2780,7 +2802,14 @@ function setupPlaybackWatchdog(video) {
         }
         updateUnifiedPlayerTimeline();
     });
-    video.addEventListener('loadedmetadata', updateUnifiedPlayerTimeline);
+    video.addEventListener('loadedmetadata', () => {
+        clearStallTimer();
+        updateUnifiedPlayerTimeline();
+    });
+    video.addEventListener('canplay', () => {
+        clearStallTimer();
+        hideBuffering();
+    });
     video.addEventListener('durationchange', updateUnifiedPlayerTimeline);
     video.addEventListener('progress', updateUnifiedPlayerTimeline);
 
@@ -2793,21 +2822,33 @@ function setupPlaybackWatchdog(video) {
         resetInPlayerInactivityTimer();
     });
 
+    // Gentle mid-playback stall detection: ONLY triggers if actively playing and stalled for 30s
+    // Never kills initial buffering!
     video.addEventListener('waiting', () => {
         clearStallTimer();
-        _playbackStallTimer = setTimeout(() => {
-            handleMidPlaybackStall(video);
-        }, 5500); // 5.5s stall threshold
+        if (currentSelectedServer === 'direct' && video.currentTime > 1 && !video.paused) {
+            _playbackStallTimer = setTimeout(() => {
+                if (video.currentTime <= _lastObservedTime && !video.paused) {
+                    handleMidPlaybackStall(video);
+                }
+            }, 30000);
+        }
     });
 
     video.addEventListener('stalled', () => {
         clearStallTimer();
-        _playbackStallTimer = setTimeout(() => {
-            handleMidPlaybackStall(video);
-        }, 5500);
+        if (currentSelectedServer === 'direct' && video.currentTime > 1 && !video.paused) {
+            _playbackStallTimer = setTimeout(() => {
+                if (video.currentTime <= _lastObservedTime && !video.paused) {
+                    handleMidPlaybackStall(video);
+                }
+            }, 30000);
+        }
     });
 
     video.addEventListener('error', () => {
+        // Ignore user/script aborts (code 1)
+        if (!video.error || video.error.code === 1) return;
         handleMidPlaybackStall(video);
     });
 }
@@ -2965,7 +3006,15 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     const plyrEl = document.querySelector('#videoStage .plyr');
 
     const baseTitle = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'MovieBox Stream';
-    const isSeries = Boolean(currentEpisode > 0 || (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series')));
+    const isMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
+    if (isMovie) {
+        currentSeason = 0;
+        currentEpisode = 0;
+    }
+    const isSeries = !isMovie && Boolean(
+        (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2)) ||
+        (currentEpisode > 0 && currentSeason > 0)
+    );
     const epSuffix = (isSeries && currentEpisode > 0) ? ` • S${currentSeason || 1} E${currentEpisode}` : '';
     const titleText = `${baseTitle}${epSuffix}`;
     safeText('playerMediaTitle', titleText);
@@ -2983,13 +3032,13 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         }
     }
 
-    // Episode buttons
+    // Episode buttons - STRICTLY hidden for movies
     const nextEpBtn = document.getElementById('playerNextEpBtn');
     const epDrawerBtn = document.getElementById('inPlayerEpisodesBtn');
     const bottomEpBtn = document.getElementById('bottomEpisodesBtn');
     const bottomNextBtn = document.getElementById('bottomNextEpBtn');
 
-    if (isSeries || currentEpisode > 0) {
+    if (isSeries && currentEpisode > 0) {
         if (epDrawerBtn) epDrawerBtn.style.display = 'inline-flex';
         if (bottomEpBtn) bottomEpBtn.style.display = 'inline-flex';
         if (nextEpBtn) {
@@ -3638,6 +3687,10 @@ function closePlayerModal() {
 
     // Reset stream state so next open is fresh
     currentPlayingStream = null;
+    currentPlayingSubjectId = null;
+    currentSeason = 0;
+    currentEpisode = 0;
+    activeMediaMeta = null;
 
     // Show exit interstitial if eligible
     if (typeof AdEngine !== 'undefined') {
@@ -3649,11 +3702,16 @@ async function renderPlayerSeriesRibbon() {
     const ribbon = document.getElementById('playerSeriesRibbon');
     if (!ribbon) return;
     const mediaType = activeMediaMeta && (activeMediaMeta.type || '');
+    const isMovie = Boolean(mediaType === 'Movie' || (activeMediaMeta && activeMediaMeta.subject_type === 1));
+    if (isMovie) {
+        ribbon.style.display = 'none';
+        return;
+    }
     const isSeries = Boolean(
-        currentEpisode > 0 ||
         mediaType === 'Series' ||
         mediaType === 'TV Series' ||
-        (activeMediaMeta && activeMediaMeta.subject_type && activeMediaMeta.subject_type !== 1)
+        (activeMediaMeta && activeMediaMeta.subject_type === 2) ||
+        (currentEpisode > 0 && currentSeason > 0)
     );
     if (!isSeries) {
         ribbon.style.display = 'none';
@@ -3785,7 +3843,12 @@ function getContinueWatching() {
 function getLastWatchedProgress(subjectId) {
     if (!subjectId) return null;
     const list = getContinueWatching();
-    return list.find(i => String(i.subject_id) === String(subjectId)) || null;
+    const item = list.find(i => String(i.subject_id) === String(subjectId)) || null;
+    if (item && activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie')) {
+        item.season = 0;
+        item.episode = 0;
+    }
+    return item;
 }
 
 function saveContinueWatching() {
@@ -3795,6 +3858,7 @@ function saveContinueWatching() {
     const totalDuration = (plyrInstance && !isNaN(plyrInstance.duration)) ? plyrInstance.duration : (v ? v.duration : 0);
     if (curTime < 5) return;
     const list = getContinueWatching().filter(i => String(i.subject_id) !== String(currentPlayingSubjectId));
+    const isMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
     list.unshift({
         subject_id: String(currentPlayingSubjectId),
         title: (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'Stream',
@@ -3802,8 +3866,8 @@ function saveContinueWatching() {
         currentTime: Math.floor(curTime),
         duration: Math.floor(totalDuration || 0),
         progress: totalDuration > 0 ? (curTime / totalDuration) * 100 : 0,
-        season: Number(currentSeason || 0),
-        episode: Number(currentEpisode || 0),
+        season: isMovie ? 0 : Number(currentSeason || 0),
+        episode: isMovie ? 0 : Number(currentEpisode || 0),
         savedAt: Date.now()
     });
     localStorage.setItem('moviebox_continue', JSON.stringify(list.slice(0, 30)));
@@ -4065,15 +4129,16 @@ async function openDetailsModal(subjectId) {
         const seasons = ep ? ep.seasons : null;
 
         const saved = getLastWatchedProgress(subjectId);
-        const hasSeries = Boolean(seasons && seasons.length > 0);
+        const isMovie = Boolean(d.subject_type === 1 || d.type === 'Movie');
+        const hasSeries = !isMovie && Boolean(seasons && seasons.length > 0);
         
         let resumeSeason = 1;
         let resumeEpisode = 1;
         let resumeTime = 0;
         
         if (saved) {
-            if (saved.season > 0) resumeSeason = saved.season;
-            if (saved.episode > 0) resumeEpisode = saved.episode;
+            if (!isMovie && saved.season > 0) resumeSeason = saved.season;
+            if (!isMovie && saved.episode > 0) resumeEpisode = saved.episode;
             if (saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
                 resumeTime = saved.currentTime;
             }

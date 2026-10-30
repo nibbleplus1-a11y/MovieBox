@@ -1562,9 +1562,13 @@ body {
 .video-stage.is-iframe-mode .in-player-top-bar {
     background: linear-gradient(180deg, rgba(6, 8, 14, 0.96) 0%, rgba(6, 8, 14, 0.6) 70%, transparent 100%) !important;
     box-shadow: none !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    transform: none !important;
+    z-index: 90 !important;
 }
 
-.video-stage.hud-hidden .in-player-top-bar,
+.video-stage:not(.is-iframe-mode).hud-hidden .in-player-top-bar,
 .video-stage.hud-hidden .in-player-quick-bar {
     opacity: 0 !important;
     pointer-events: none !important;
