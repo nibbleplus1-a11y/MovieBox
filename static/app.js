@@ -1361,6 +1361,18 @@ function setCinemaVideoSource(src, stream, titleText) {
     }
 }
 
+function showBuffering(text = 'Buffering 1080p Stream...') {
+    const spinner = document.getElementById('videoBufferingSpinner');
+    const txt = document.getElementById('videoBufferingText');
+    if (txt) txt.textContent = text;
+    if (spinner) spinner.style.display = 'flex';
+}
+
+function hideBuffering() {
+    const spinner = document.getElementById('videoBufferingSpinner');
+    if (spinner) spinner.style.display = 'none';
+}
+
 function initPlyr() {
     const video = getCinemaVideoElement();
     if (!video || typeof Plyr === 'undefined') return;
@@ -1405,8 +1417,6 @@ function initPlyr() {
         const modal = document.getElementById('playerModal');
         if (!modal || !modal.classList.contains('active')) return;
         const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
-        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-
         if (e.key === 'f' || e.key === 'F') {
             e.preventDefault();
             toggleCinemaFullscreen();
@@ -1415,17 +1425,7 @@ function initPlyr() {
         }
     });
 
-    const showBuffering = (text = 'Buffering 1080p Stream...') => {
-        const spinner = document.getElementById('videoBufferingSpinner');
-        const txt = document.getElementById('videoBufferingText');
-        if (txt) txt.textContent = text;
-        if (spinner) spinner.style.display = 'flex';
-    };
-    const hideBuffering = () => {
-        const spinner = document.getElementById('videoBufferingSpinner');
-        if (spinner) spinner.style.display = 'none';
-    };
-
+    video.addEventListener('loadstart', () => showBuffering('Connecting to 1080p Stream...'));
     video.addEventListener('waiting', () => showBuffering('Buffering 1080p Stream...'));
     video.addEventListener('seeking', () => showBuffering('Seeking...'));
     video.addEventListener('playing', hideBuffering);
@@ -1439,6 +1439,8 @@ function initPlyr() {
 
     plyrInstance.on('timeupdate', () => {
         hideBuffering();
+        // ── FIX: Always update the custom progress bar via Plyr's own timeupdate ──
+        updateUnifiedPlayerTimeline();
         if (!currentPlayingSubjectId || plyrInstance.currentTime < 5) return;
         // Save progress every 5 seconds for pinpoint resume accuracy
         if (!plyrInstance._lastSave || Date.now() - plyrInstance._lastSave > 5000) {
@@ -1446,6 +1448,9 @@ function initPlyr() {
             saveContinueWatching();
         }
     });
+
+    plyrInstance.on('loadedmetadata', updateUnifiedPlayerTimeline);
+    plyrInstance.on('progress', updateUnifiedPlayerTimeline);
 
     plyrInstance.on('ended', () => {
         if (currentEpisode > 0) {
@@ -1751,7 +1756,56 @@ document.addEventListener('click', (e) => {
     if (!e.target.closest('.in-player-dropdown-wrap')) {
         closeAllInPlayerMenus();
     }
+    // Close the in-player server badge dropdown if clicked outside it
+    if (!e.target.closest('.in-player-server-wrap')) {
+        const dd = document.getElementById('inPlayerServerDropdown');
+        if (dd) dd.style.display = 'none';
+    }
 });
+
+// ─── IN-PLAYER SERVER BADGE DROPDOWN ─────────────────────────────────────────
+function toggleInPlayerServerDropdown(event) {
+    if (event) event.stopPropagation();
+    const dd = document.getElementById('inPlayerServerDropdown');
+    if (!dd) return;
+    const isOpen = dd.style.display !== 'none';
+    if (isOpen) {
+        dd.style.display = 'none';
+        return;
+    }
+    renderInPlayerServerDropdown();
+    dd.style.display = 'flex';
+}
+
+function renderInPlayerServerDropdown() {
+    const dd = document.getElementById('inPlayerServerDropdown');
+    if (!dd) return;
+
+    const servers = _testedServersList && _testedServersList.length > 0
+        ? _testedServersList
+        : [
+            { id: 'direct', name: 'Server 1 (Direct 1080p)', status: 'unknown', type: 'direct' },
+            ...((activeFallbackServers || []).map(s => ({ ...s, status: 'healthy' })))
+          ];
+
+    if (servers.length === 0) {
+        dd.innerHTML = '<span style="color:#94a3b8;font-size:0.8rem;padding:8px 12px;">No servers available</span>';
+        return;
+    }
+
+    dd.innerHTML = servers.map(s => {
+        const isActive = s.id === currentSelectedServer;
+        const isDirect = s.id === 'direct';
+        const icon = isDirect ? '⚡' : '☁';
+        const label = s.name.replace('Server ', 'S').replace(' (Direct 1080p)', ' Direct').replace(' (', ' – ').replace(')', '');
+        const statusDot = s.status === 'healthy'
+            ? '<span style="color:#22c55e;font-size:10px;">●</span>'
+            : s.status === 'failed'
+            ? '<span style="color:#ef4444;font-size:10px;">●</span>'
+            : '<span style="color:#f59e0b;font-size:10px;">●</span>';
+        return `<button class="server-opt-btn${isActive ? ' active' : ''}" onclick="toggleInPlayerServerDropdown(null); changePlayerServer('${s.id}')">${statusDot} ${icon} ${label}${isActive ? ' ✓' : ''}</button>`;
+    }).join('');
+}
 
 function selectInPlayerAudio(dubId, dubName) {
     closeAllInPlayerMenus();
@@ -1936,10 +1990,11 @@ function dismissResumePlayback() {
 function togglePlayerEpisodesDrawer() {
     const drawer = document.getElementById('playerEpisodesDrawer');
     if (!drawer) return;
-    const isVisible = drawer.style.display === 'block';
-    drawer.style.display = isVisible ? 'none' : 'block';
-
-    if (!isVisible) {
+    const isVisible = drawer.style.display !== 'none';
+    if (isVisible) {
+        drawer.style.display = 'none';
+    } else {
+        drawer.style.display = 'block';
         renderPlayerDrawerEpisodes();
     }
 }
@@ -1952,80 +2007,97 @@ async function renderPlayerDrawerEpisodes() {
     const episodesGrid = document.getElementById('playerDrawerEpisodesGrid');
     if (!currentPlayingSubjectId || !episodesGrid) return;
 
+    episodesGrid.innerHTML = '<div style="color:var(--text-muted);padding:14px;font-size:0.9rem;">Loading episodes…</div>';
+
     try {
-        // Use cached data if subject matches, otherwise fetch fresh
-        let seasons;
-        if (_drawerEpisodeData && _drawerEpisodeData.subject_id === currentPlayingSubjectId) {
+        let seasons = [];
+        if (_drawerEpisodeData && _drawerEpisodeData.subject_id === currentPlayingSubjectId && _drawerEpisodeData.seasons.length > 0) {
             seasons = _drawerEpisodeData.seasons;
+        } else if (activeMediaMeta && activeMediaMeta.seasons && activeMediaMeta.seasons.length > 0) {
+            seasons = activeMediaMeta.seasons;
+            _drawerEpisodeData = { subject_id: currentPlayingSubjectId, seasons };
         } else {
             const res = await fetch(`/episodes/${currentPlayingSubjectId}`);
             const data = await res.json();
             seasons = data.seasons || [];
             _drawerEpisodeData = { subject_id: currentPlayingSubjectId, seasons };
+            if (activeMediaMeta && (!activeMediaMeta.seasons || !activeMediaMeta.seasons.length)) {
+                activeMediaMeta.seasons = seasons;
+            }
         }
 
-        if (!seasons.length) {
-            episodesGrid.innerHTML = '<div style="color:var(--text-muted);padding:10px;">No episodes available.</div>';
+        if (!seasons || !seasons.length) {
+            episodesGrid.innerHTML = '<div style="color:var(--text-muted);padding:14px;font-size:0.9rem;">No episodes available.</div>';
             return;
         }
 
-        // Use 'season' key (not 'season_num') — matches what api.py returns
-        const activeSe = seasons.find(s => s.season === currentSeason) || seasons[0];
-        const activeSeNum = activeSe.season;
+        const curSeNum = Number(currentSeason || 1);
+        const activeSe = seasons.find(s => Number(s.season ?? s.season_number ?? 1) === curSeNum) || seasons[0];
+        const activeSeNum = Number(activeSe.season ?? activeSe.season_number ?? 1);
 
         if (seasonTabs) {
-            seasonTabs.innerHTML = seasons.map(s => `
-                <button class="filter-pill ${s.season === activeSeNum ? 'active' : ''}" onclick="switchPlayerDrawerSeason(${s.season})">
-                    Season ${s.season}
-                </button>
-            `).join('');
+            seasonTabs.innerHTML = seasons.map(s => {
+                const sNum = Number(s.season ?? s.season_number ?? 1);
+                return `
+                    <button class="filter-pill ${sNum === activeSeNum ? 'active' : ''}" onclick="switchPlayerDrawerSeason(${sNum})">
+                        Season ${sNum}
+                    </button>
+                `;
+            }).join('');
         }
 
-        const eps = activeSe.episodes || [];
-        episodesGrid.innerHTML = eps.map(e => `
-            <button class="episode-btn ${e.episode === currentEpisode && e.season === currentSeason ? 'active' : ''}" onclick="selectDrawerEpisode(${e.season}, ${e.episode})">
-                <span class="ep-num">EP ${e.episode}</span>
-                <span class="ep-res-badge">▶</span>
-            </button>
-        `).join('');
+        renderDrawerGridForSeason(activeSe);
     } catch (err) {
-        if (episodesGrid) episodesGrid.innerHTML = '<div style="color:var(--rose);padding:10px;">Failed to load episodes.</div>';
+        if (episodesGrid) episodesGrid.innerHTML = '<div style="color:var(--rose);padding:14px;font-size:0.9rem;">Failed to load episodes.</div>';
     }
+}
+
+function renderDrawerGridForSeason(seasonObj) {
+    const episodesGrid = document.getElementById('playerDrawerEpisodesGrid');
+    if (!episodesGrid || !seasonObj) return;
+
+    const seNum = Number(seasonObj.season ?? seasonObj.season_number ?? 1);
+    let eps = seasonObj.episodes || [];
+    if (!eps.length && seasonObj.episode_count) {
+        eps = [];
+        for (let i = 1; i <= seasonObj.episode_count; i++) {
+            eps.push({ season: seNum, episode: i, title: `Episode ${i}` });
+        }
+    }
+
+    const curSeNum = Number(currentSeason || 1);
+    const curEpNum = Number(currentEpisode || 1);
+
+    episodesGrid.innerHTML = eps.map(e => {
+        const epNum = Number(e.episode);
+        const isPlaying = (seNum === curSeNum && epNum === curEpNum);
+        return `
+            <button class="episode-btn ${isPlaying ? 'active' : ''}" onclick="selectDrawerEpisode(${seNum}, ${epNum})">
+                <span class="ep-num">EP ${epNum}</span>
+                <span class="ep-res-badge">${isPlaying ? '▶' : '•'}</span>
+            </button>
+        `;
+    }).join('');
 }
 
 function switchPlayerDrawerSeason(seasonNum) {
-    currentSeason = seasonNum;
-    // Update active tab UI immediately
+    const sNum = Number(seasonNum);
     document.querySelectorAll('#playerDrawerSeasonTabs .filter-pill').forEach(btn => {
-        btn.classList.toggle('active', btn.textContent.trim() === `Season ${seasonNum}`);
+        btn.classList.toggle('active', btn.textContent.trim() === `Season ${sNum}`);
     });
-    // Re-render only the episodes grid for the new season (no re-fetch needed)
-    const seasonTabs = document.getElementById('playerDrawerSeasonTabs');
-    const episodesGrid = document.getElementById('playerDrawerEpisodesGrid');
-    if (_drawerEpisodeData && episodesGrid) {
-        const seasons = _drawerEpisodeData.seasons || [];
-        const activeSe = seasons.find(s => s.season === seasonNum);
-        if (activeSe) {
-            const eps = activeSe.episodes || [];
-            episodesGrid.innerHTML = eps.map(e => `
-                <button class="episode-btn ${e.episode === currentEpisode && e.season === currentSeason ? 'active' : ''}" onclick="selectDrawerEpisode(${e.season}, ${e.episode})">
-                    <span class="ep-num">EP ${e.episode}</span>
-                    <span class="ep-res-badge">▶</span>
-                </button>
-            `).join('');
-            return;
-        }
+    const seasons = (_drawerEpisodeData && _drawerEpisodeData.seasons) || (activeMediaMeta && activeMediaMeta.seasons) || [];
+    const targetSe = seasons.find(s => Number(s.season ?? s.season_number ?? 1) === sNum);
+    if (targetSe) {
+        renderDrawerGridForSeason(targetSe);
     }
-    // If cache miss, fall back to full re-render
-    renderPlayerDrawerEpisodes();
 }
 
 function selectDrawerEpisode(seasonNum, episodeNum) {
-    currentSeason = seasonNum;
-    currentEpisode = episodeNum;
     const drawer = document.getElementById('playerEpisodesDrawer');
     if (drawer) drawer.style.display = 'none';
-    playDetailEpisode(currentPlayingSubjectId, seasonNum, episodeNum);
+    currentSeason = Number(seasonNum);
+    currentEpisode = Number(episodeNum);
+    playDetailEpisode(currentPlayingSubjectId, currentSeason, currentEpisode);
 }
 
 function triggerSeekRipple(direction) {
@@ -2165,8 +2237,9 @@ async function probeAndSelectServer(subjectId, title, year, isSeries, season, ep
         // Store active fallback servers for manual switching in settings menu
         activeFallbackServers = _testedServersList.filter(s => s.id !== 'direct');
 
-        // Populate Gear Settings Server List
+        // Populate Gear Settings Server List + top-bar badge dropdown
         renderSettingsServerList(_testedServersList, data.best_server_id);
+        renderInPlayerServerDropdown();
 
         if (data.best_server) {
             _activeServerObj = data.best_server;
@@ -2219,6 +2292,7 @@ async function _loadFallbackServersInBackground(subjectId, title, year, isSeries
                 ...data.servers.map(s => ({ ...s, status: 'healthy' }))
             ];
             renderSettingsServerList(_testedServersList, currentSelectedServer || 'direct');
+            renderInPlayerServerDropdown();
         }
     } catch {}
 }
@@ -2226,25 +2300,48 @@ async function _loadFallbackServersInBackground(subjectId, title, year, isSeries
 // ─── QUICK PLAY (INSTANT — NO BLOCKING SERVER PROBE) ─────────────────────────
 async function quickPlay(subjectId, title, startTime = 0) {
     showToast(`Loading "${title}"…`);
-    currentPlayingSubjectId = subjectId;
+
+    // Reset previous playback & server state so stale servers/streams from previous shows are never reused
+    activeFallbackServers = [];
+    _testedServersList = [];
+    activeStreamList = [];
+    activeCaptionList = [];
+    currentPlayingStream = null;
+    currentSelectedServer = 'direct';
     _drawerEpisodeData = null;
 
-    // Check for saved resume progress
+    // Reset iframe immediately to stop any playing backup audio/video from previous show
+    const iframe = document.getElementById('cinemaIframe');
+    if (iframe) {
+        iframe.src = 'about:blank';
+        iframe.style.display = 'none';
+    }
+
+    if (!activeMediaMeta || String(activeMediaMeta.subject_id) !== String(subjectId)) {
+        activeMediaMeta = null;
+    }
+    currentPlayingSubjectId = subjectId;
+
+    // Check for saved resume progress for THIS specific title only
     const saved = getLastWatchedProgress(subjectId);
-    if (startTime <= 0 && saved) {
-        if (saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
+    let targetSe = 0;
+    let targetEp = 0;
+    if (saved) {
+        if (startTime <= 0 && saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
             startTime = saved.currentTime;
         }
-        if (saved.season > 0) currentSeason = saved.season;
-        if (saved.episode > 0) currentEpisode = saved.episode;
+        if (saved.season > 0) targetSe = Number(saved.season);
+        if (saved.episode > 0) targetEp = Number(saved.episode);
     }
+    currentSeason = targetSe;
+    currentEpisode = targetEp;
 
     const isKnownSeries = Boolean(
         (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2)) ||
-        (currentSeason > 0 || currentEpisode > 0)
+        (targetSe > 0 || targetEp > 0)
     );
-    const targetSe = isKnownSeries ? (currentSeason || 1) : 0;
-    const targetEp = isKnownSeries ? (currentEpisode || 1) : 0;
+    if (isKnownSeries && targetSe === 0) targetSe = 1;
+    if (isKnownSeries && targetEp === 0) targetEp = 1;
     currentSeason = targetSe;
     currentEpisode = targetEp;
 
@@ -2507,10 +2604,30 @@ function updatePlayPauseIcon() {
     }
 }
 
+function formatTime(seconds) {
+    if (!seconds || isNaN(seconds) || !isFinite(seconds) || seconds < 0) return '00:00';
+    const totalSecs = Math.floor(seconds);
+    const hrs = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    const secs = totalSecs % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    if (hrs > 0) {
+        return `${hrs}:${pad(mins)}:${pad(secs)}`;
+    }
+    return `${pad(mins)}:${pad(secs)}`;
+}
+
 function seekCinemaRelative(sec) {
     const video = getCinemaVideoElement();
-    if (!video) return;
-    video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + sec));
+    const dur = (plyrInstance && typeof plyrInstance.duration === 'number' && isFinite(plyrInstance.duration)) ? plyrInstance.duration : (video && isFinite(video.duration) ? video.duration : 0);
+    const cur = (plyrInstance && typeof plyrInstance.currentTime === 'number' && !isNaN(plyrInstance.currentTime)) ? plyrInstance.currentTime : (video ? (video.currentTime || 0) : 0);
+    const target = Math.max(0, Math.min(dur || Infinity, cur + sec));
+    if (plyrInstance) {
+        try { plyrInstance.currentTime = target; } catch {}
+    }
+    if (video) {
+        try { video.currentTime = target; } catch {}
+    }
     if (sec > 0) {
         triggerSeekRipple('right');
     } else {
@@ -2522,10 +2639,20 @@ function seekCinemaRelative(sec) {
 function handleTimelineSeek(e) {
     const video = getCinemaVideoElement();
     const wrap = document.getElementById('playerTimelineWrap');
-    if (!video || !wrap || !video.duration) return;
+    if (!wrap) return;
+    const dur = (plyrInstance && typeof plyrInstance.duration === 'number' && isFinite(plyrInstance.duration) && plyrInstance.duration > 0)
+        ? plyrInstance.duration
+        : (video && isFinite(video.duration) && video.duration > 0 ? video.duration : 0);
+    if (!dur || dur <= 0) return;
     const rect = wrap.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    video.currentTime = pos * video.duration;
+    const target = pos * dur;
+    if (plyrInstance) {
+        try { plyrInstance.currentTime = target; } catch {}
+    }
+    if (video) {
+        try { video.currentTime = target; } catch {}
+    }
     updateUnifiedPlayerTimeline();
 }
 
@@ -2533,10 +2660,17 @@ function handleTimelineHover(e) {
     const video = getCinemaVideoElement();
     const wrap = document.getElementById('playerTimelineWrap');
     const tooltip = document.getElementById('playerTimeTooltip');
-    if (!video || !wrap || !tooltip || !video.duration) return;
+    if (!wrap || !tooltip) return;
+    const dur = (plyrInstance && typeof plyrInstance.duration === 'number' && isFinite(plyrInstance.duration) && plyrInstance.duration > 0)
+        ? plyrInstance.duration
+        : (video && isFinite(video.duration) && video.duration > 0 ? video.duration : 0);
+    if (!dur || dur <= 0) {
+        tooltip.style.display = 'none';
+        return;
+    }
     const rect = wrap.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const hoverSec = pos * video.duration;
+    const hoverSec = pos * dur;
     tooltip.textContent = formatTime(hoverSec);
     tooltip.style.left = `${pos * 100}%`;
     tooltip.style.display = 'block';
@@ -2597,26 +2731,34 @@ function setPlayerSpeed(spd) {
 
 function updateUnifiedPlayerTimeline() {
     const video = getCinemaVideoElement();
-    if (!video) return;
-
-    const cur = video.currentTime || 0;
-    const dur = video.duration || 0;
+    const cur = (plyrInstance && typeof plyrInstance.currentTime === 'number' && !isNaN(plyrInstance.currentTime))
+        ? plyrInstance.currentTime
+        : (video && typeof video.currentTime === 'number' ? video.currentTime : 0);
+    const dur = (plyrInstance && typeof plyrInstance.duration === 'number' && !isNaN(plyrInstance.duration) && plyrInstance.duration > 0 && isFinite(plyrInstance.duration))
+        ? plyrInstance.duration
+        : (video && typeof video.duration === 'number' && isFinite(video.duration) && video.duration > 0 ? video.duration : 0);
 
     safeText('playerCurrentTime', formatTime(cur));
     safeText('playerDuration', formatTime(dur));
 
     const progressEl = document.getElementById('playerProgressCurrent');
-    if (progressEl && dur > 0) {
-        const pct = (cur / dur) * 100;
+    if (progressEl) {
+        const pct = (dur > 0) ? Math.min(100, Math.max(0, (cur / dur) * 100)) : 0;
         progressEl.style.width = `${pct}%`;
     }
 
     const bufferEl = document.getElementById('playerProgressBuffer');
-    if (bufferEl && dur > 0 && video.buffered && video.buffered.length > 0) {
-        try {
-            const bufEnd = video.buffered.end(video.buffered.length - 1);
-            bufferEl.style.width = `${(bufEnd / dur) * 100}%`;
-        } catch {}
+    if (bufferEl) {
+        let bufEnd = 0;
+        if (plyrInstance && typeof plyrInstance.buffered === 'number') {
+            bufEnd = plyrInstance.buffered * (dur || 1);
+        } else if (video && video.buffered && video.buffered.length > 0) {
+            try {
+                bufEnd = video.buffered.end(video.buffered.length - 1);
+            } catch {}
+        }
+        const bufPct = (dur > 0) ? Math.min(100, Math.max(0, (bufEnd / dur) * 100)) : 0;
+        bufferEl.style.width = `${bufPct}%`;
     }
 }
 
@@ -2638,6 +2780,9 @@ function setupPlaybackWatchdog(video) {
         }
         updateUnifiedPlayerTimeline();
     });
+    video.addEventListener('loadedmetadata', updateUnifiedPlayerTimeline);
+    video.addEventListener('durationchange', updateUnifiedPlayerTimeline);
+    video.addEventListener('progress', updateUnifiedPlayerTimeline);
 
     video.addEventListener('play', () => {
         updatePlayPauseIcon();
@@ -2749,8 +2894,8 @@ function changePlayerServer(serverId) {
         if (video) video.style.display = 'block';
         if (customControls) customControls.style.display = 'flex';
         if (serverBadge) {
-            serverBadge.textContent = '⚡ S1 Direct';
-            serverBadge.className = 'in-player-badge badge-server';
+            serverBadge.textContent = '⚡ S1 Direct ▾';
+            serverBadge.className = 'in-player-badge badge-server in-player-server-btn';
         }
         safeText('settingsValServer', 'Server 1 (Direct)');
 
@@ -2760,6 +2905,7 @@ function changePlayerServer(serverId) {
         if (video) video.play().catch(() => {});
         showToast('Switched to Server 1 (CineScope Direct 1080p)');
         renderSettingsServerList(_testedServersList, 'direct');
+        renderInPlayerServerDropdown();
         return;
     }
 
@@ -2782,23 +2928,25 @@ function changePlayerServer(serverId) {
     }
     if (plyrEl) plyrEl.style.display = 'none';
 
+    // Add iframe mode class — CSS hides video/plyr/buffering/progress controls
+    // We do NOT hide customControls via JS so the server-pill strip stays accessible.
     if (stage) stage.classList.add('is-iframe-mode');
-    if (customControls) customControls.style.display = 'none';
     if (iframe) {
         iframe.style.display = 'block';
         iframe.src = targetServer.url;
     }
 
-    const shortName = targetServer.name.replace('Server ', 'S').replace(' (', ' - ').replace(')', '');
+    const shortName = targetServer.name.replace('Server ', 'S').replace(' (', ' – ').replace(')', '');
     if (serverBadge) {
-        serverBadge.textContent = `☁ ${shortName}`;
-        serverBadge.className = 'in-player-badge';
+        serverBadge.textContent = `☁ ${shortName} ▾`;
+        serverBadge.className = 'in-player-badge badge-server in-player-server-btn';
     }
     safeText('settingsValServer', shortName);
     safeText('playerQualityTag', 'Cloud HD');
     safeText('playerMediaSub', `${targetServer.name} • Embedded Player`);
 
     renderSettingsServerList(_testedServersList, targetServer.id);
+    renderInPlayerServerDropdown();
     showToast(`Switched to ${targetServer.name}`);
     renderPlayerSeriesRibbon();
 }
@@ -3550,16 +3698,31 @@ async function renderPlayerSeriesRibbon() {
 
     if (epWrap) {
         const curSeasonObj = seasonList.find(s => Number(s.season ?? s.season_number ?? 1) === curSeNum);
-        const maxEp = (curSeasonObj && curSeasonObj.episode_count) ? curSeasonObj.episode_count : ((activeMediaMeta && activeMediaMeta.episode_count) ? activeMediaMeta.episode_count : 24);
+        // ── FIX: Use actual episode list from API to avoid phantom episode buttons ──
+        // Prefer explicit episodes array, then episode_count from season, then episode_count from meta
+        // Never fall back to a hardcoded 24 — only render what actually exists
+        let episodeNumbers = [];
+        if (curSeasonObj && curSeasonObj.episodes && curSeasonObj.episodes.length > 0) {
+            episodeNumbers = curSeasonObj.episodes.map(e => e.episode);
+        } else if (curSeasonObj && curSeasonObj.episode_count) {
+            const maxEp = curSeasonObj.episode_count;
+            for (let i = 1; i <= maxEp; i++) episodeNumbers.push(i);
+        } else if (activeMediaMeta && activeMediaMeta.episode_count) {
+            const maxEp = activeMediaMeta.episode_count;
+            for (let i = 1; i <= maxEp; i++) episodeNumbers.push(i);
+        } else if (seasonList.length > 0) {
+            // As last resort, show 1 episode placeholder until the user clicks into it
+            episodeNumbers = [1];
+        }
         const curEpNum = Number(currentEpisode || 1);
         let epHtml = '';
-        for (let ep = 1; ep <= maxEp; ep++) {
+        for (const ep of episodeNumbers) {
             const isPlaying = ep === curEpNum;
             epHtml += `<button class="ribbon-ep-btn ${isPlaying ? 'active' : ''}" onclick="playDetailEpisode('${currentPlayingSubjectId}', ${curSeNum}, ${ep})">
                 Ep ${ep} ${isPlaying ? '▶' : ''}
             </button>`;
         }
-        epWrap.innerHTML = epHtml;
+        epWrap.innerHTML = epHtml || '<span style="color:var(--text-muted);font-size:0.85rem;padding:6px">Episodes loading…</span>';
     }
 }
 
@@ -4067,91 +4230,154 @@ function renderDetailEpisodes(subjectId, seasonNum, epCount, activeEp = 1) {
     }
 }
 
-function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0) {
+async function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0) {
+    const sNum = Number(seasonNum || 1);
+    const eNum = Number(episodeNum || 1);
+
     if (seekTime <= 0) {
         const saved = getLastWatchedProgress(subjectId);
-        if (saved && saved.season === Number(seasonNum) && saved.episode === Number(episodeNum) && saved.currentTime > 15) {
+        if (saved && Number(saved.season) === sNum && Number(saved.episode) === eNum && saved.currentTime > 15) {
             seekTime = saved.currentTime;
         }
     }
-    // Update active state in episode grid before closing modal
+
+    // Update active state in detail modal grid if open
     const detailGrid = document.getElementById('detailEpisodesGrid');
     if (detailGrid) {
         detailGrid.querySelectorAll('.episode-btn').forEach((btn, idx) => {
-            btn.classList.toggle('active', idx + 1 === Number(episodeNum));
+            btn.classList.toggle('active', idx + 1 === eNum);
         });
     }
+
     closeDetailModal(true);
     currentPlayingSubjectId = subjectId;
-    currentSeason = Number(seasonNum);
-    currentEpisode = Number(episodeNum);
-    showToast(`Loading S${seasonNum}E${episodeNum}…`);
+    currentSeason = sNum;
+    currentEpisode = eNum;
+    showToast(`Loading S${sNum}E${eNum}…`);
 
-    const isCurrentlyFallback = currentSelectedServer && currentSelectedServer !== 'direct';
+    // Reset playback server state for the new episode so stale URLs from previous episodes are never reused
+    activeFallbackServers = [];
+    _testedServersList = [];
+    currentSelectedServer = 'direct';
+
+    // Reset iframe immediately to prevent old episode audio/video from playing
+    const iframe = document.getElementById('cinemaIframe');
+    if (iframe) {
+        iframe.src = 'about:blank';
+        iframe.style.display = 'none';
+    }
+
+    // Show loading overlay
+    const loadingState = document.getElementById('playerLoadingState');
+    const errorState = document.getElementById('playerErrorState');
+    if (loadingState) loadingState.style.display = 'flex';
+    if (errorState) errorState.style.display = 'none';
+
+    // Open player modal immediately so user sees loading state
+    const modal = document.getElementById('playerModal');
+    if (modal) {
+        modal.style.display = '';
+        modal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    // Ensure we have activeMediaMeta for this subject
+    if (!activeMediaMeta || String(activeMediaMeta.subject_id) !== String(subjectId)) {
+        try {
+            const metaRes = await fetch(`/detail/${subjectId}`).then(r => r.json());
+            if (metaRes && metaRes.title) {
+                activeMediaMeta = metaRes;
+            }
+        } catch {}
+    }
+
     const detailPath = (activeMediaMeta && activeMediaMeta.detail_path) ? activeMediaMeta.detail_path : '';
 
-    fetch(`/api/stream/${subjectId}?se=${seasonNum}&ep=${episodeNum}${detailPath ? '&detail_path=' + encodeURIComponent(detailPath) : ''}`)
-        .then(async r => {
-            const data = await r.json();
-            const rawStreams = data.streams || [];
-            const streams = rawStreams.filter(s => !isNoticeStream(s));
-            activeStreamList = streams.length > 0 ? streams : rawStreams;
-            activeCaptionList = [];
-            if (data.dubs && data.dubs.length > 0) {
-                activeDubsList = data.dubs;
-                currentTitleDubs = data.dubs;
-            }
-            // Fetch captions in background (non-blocking)
-            fetch(`/api/stream/${subjectId}/captions?se=${seasonNum}&ep=${episodeNum}`)
-                .then(res => res.json())
-                .then(cd => { activeCaptionList = cd.captions || []; })
-                .catch(() => {});
+    try {
+        const streamEndpoint = `/api/stream/${subjectId}?se=${sNum}&ep=${eNum}${detailPath ? '&detail_path=' + encodeURIComponent(detailPath) : ''}`;
+        const [streamRes, captionRes] = await Promise.all([
+            fetch(streamEndpoint).then(r => r.json()).catch(() => ({ streams: [] })),
+            fetch(`/api/stream/${subjectId}/captions?se=${sNum}&ep=${eNum}`).then(r => r.json()).catch(() => ({ captions: [] }))
+        ]);
 
-            // If user was already streaming via an embedded backup server, keep them on that server
-            if (isCurrentlyFallback && activeFallbackServers.length > 0) {
-                const target = activeFallbackServers.find(s => s.id === currentSelectedServer) || activeFallbackServers[0];
-                playInCinemaModal(null, seekTime, target);
-                renderPlayerSeriesRibbon();
-                // Update fallback servers for new episode in background
-                if (activeMediaMeta && activeMediaMeta.title) {
-                    const year = (activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
-                    setTimeout(() => _loadFallbackServersInBackground(subjectId, activeMediaMeta.title, year, true, Number(seasonNum), Number(episodeNum)), 2000);
-                }
-                return;
-            }
+        if (loadingState) loadingState.style.display = 'none';
 
-            if (activeStreamList.length > 0) {
-                const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
-                const streamToPlay = playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0];
-                playInCinemaModal(encodeURIComponent(JSON.stringify(streamToPlay)), seekTime);
-                renderPlayerSeriesRibbon();
-                // Load fallback servers lazily in background — doesn't delay playback
-                if (activeMediaMeta && activeMediaMeta.title) {
-                    const year = (activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
-                    setTimeout(() => _loadFallbackServersInBackground(subjectId, activeMediaMeta.title, year, true, Number(seasonNum), Number(episodeNum)), 3000);
-                }
-            } else {
-                // No direct streams — need fallback now, fetch them immediately
-                showToast(`No direct stream — loading backup server…`, 'info');
-                if (activeMediaMeta && activeMediaMeta.title) {
-                    const t = activeMediaMeta.title;
-                    const year = (activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
-                    try {
-                        const fbRes = await fetch(`/api/fallback-sources?title=${encodeURIComponent(t)}&year=${year}&is_series=true&season=${seasonNum}&episode=${episodeNum}`).then(res => res.json());
-                        if (fbRes.servers && fbRes.servers.length > 0) {
-                            activeFallbackServers = fbRes.servers;
-                            const srvName = activeFallbackServers[0].name.split('(')[1]?.replace(')', '') || 'Cloud';
-                            showToast(`Playing S${seasonNum}E${episodeNum} via ${srvName}…`, 'info');
-                            playInCinemaModal(null, seekTime, activeFallbackServers[0]);
-                            renderPlayerSeriesRibbon();
-                            return;
-                        }
-                    } catch {}
-                }
-                showToast(`No stream for S${seasonNum}E${episodeNum}`, 'error');
+        const rawStreams = streamRes.streams || [];
+        const streams = rawStreams.filter(s => !isNoticeStream(s));
+        activeStreamList = streams.length > 0 ? streams : rawStreams;
+        activeCaptionList = captionRes.captions || [];
+
+        if (streamRes.dubs && streamRes.dubs.length > 0) {
+            activeDubsList = streamRes.dubs;
+            currentTitleDubs = streamRes.dubs;
+        }
+
+        if (!activeMediaMeta) {
+            activeMediaMeta = {
+                subject_id: subjectId,
+                title: streamRes.title || 'Series',
+                cover: streamRes.cover,
+                type: 'Series'
+            };
+        }
+
+        // 1. Direct stream available — always prefer direct stream!
+        if (activeStreamList.length > 0) {
+            const playableStreams = activeStreamList.filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
+            const streamToPlay = playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0];
+            currentSelectedServer = 'direct';
+
+            _testedServersList = [{ id: 'direct', name: 'Server 1 (Direct 1080p)', status: 'healthy', latency_ms: 0, type: 'direct', stream_meta: streamToPlay }];
+            renderSettingsServerList(_testedServersList, 'direct');
+
+            playInCinemaModal(encodeURIComponent(JSON.stringify(streamToPlay)), seekTime);
+            renderPlayerSeriesRibbon();
+
+            // Load backup servers in background (non-blocking)
+            if (activeMediaMeta && activeMediaMeta.title) {
+                const year = (activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+                setTimeout(() => _loadFallbackServersInBackground(subjectId, activeMediaMeta.title, year, true, sNum, eNum), 3000);
             }
-        })
-        .catch(err => showToast(`Error: ${err.message}`, 'error'));
+        } else {
+            // 2. No direct streams — fetch fresh backup servers for this EXACT season & episode
+            showToast(`Loading backup server for S${sNum}E${eNum}…`, 'info');
+            const title = (activeMediaMeta && activeMediaMeta.title) || streamRes.title || 'Series';
+            const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
+
+            try {
+                const params = new URLSearchParams({
+                    title,
+                    year: year || '',
+                    is_series: 'true',
+                    season: sNum,
+                    episode: eNum,
+                    subject_id: subjectId
+                });
+                const fbRes = await fetch(`/api/fallback-sources?${params.toString()}`).then(r => r.json());
+                activeFallbackServers = fbRes.servers || [];
+
+                if (activeFallbackServers.length > 0) {
+                    _testedServersList = [
+                        { id: 'direct', name: 'Server 1 (Direct 1080p)', status: 'failed', type: 'direct' },
+                        ...activeFallbackServers.map(s => ({ ...s, status: 'healthy' }))
+                    ];
+                    renderSettingsServerList(_testedServersList, activeFallbackServers[0].id);
+                    playInCinemaModal(null, seekTime, activeFallbackServers[0]);
+                    renderPlayerSeriesRibbon();
+                } else {
+                    if (errorState) errorState.style.display = 'flex';
+                    showToast(`No streams available for S${sNum}E${eNum}`, 'error');
+                }
+            } catch {
+                if (errorState) errorState.style.display = 'flex';
+                showToast(`Failed to load backup streams for S${sNum}E${eNum}`, 'error');
+            }
+        }
+    } catch (err) {
+        if (loadingState) loadingState.style.display = 'none';
+        if (errorState) errorState.style.display = 'flex';
+        showToast(`Error: ${err.message}`, 'error');
+    }
 }
 
 function closeDetailModal(isTransitionToPlay = false) {
