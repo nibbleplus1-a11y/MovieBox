@@ -183,11 +183,16 @@ const AdEngine = {
         if (!this.config || !this.config.enabled) return false;
         if (!this.config.monetag || !this.config.monetag.preroll_enabled) return false;
 
-        const cooldown = (this.config.monetag.preroll_cooldown_seconds || 300) * 1000;
         const lastPreroll = parseInt(localStorage.getItem('cinescope_last_preroll_time') || '0', 10);
         const now = Date.now();
 
-        // If cooldown has not elapsed, skip preroll to keep UX snappy
+        // In test mode, allow preroll to appear without long 5-minute lockout
+        if (this.config.test_mode) {
+            if (now - lastPreroll < 2000) return false; // 2s debounce
+            return true;
+        }
+
+        const cooldown = (this.config.monetag.preroll_cooldown_seconds || 300) * 1000;
         if (now - lastPreroll < cooldown) {
             return false;
         }
@@ -1269,18 +1274,9 @@ function startStreamWatchdog(ms = 45000) {
     }, ms);
 }
 
-// Startup watchdog: if stream hasn't started within 12s of loadstart, switch to fallback
+// Startup watchdog: Do not arbitrarily kill Server 1 during initial load or while ad is playing
 function startStartupWatchdog() {
     clearStartupWatchdog();
-    _streamStartupTimer = setTimeout(() => {
-        const video = getCinemaVideoElement();
-        if (!video) return;
-        // Still loading (currentTime < 0.5 = not really playing yet)
-        if (video.currentTime < 0.5 && currentSelectedServer === 'direct') {
-            console.warn('[StartupWatchdog] Direct stream too slow – auto-switching to fallback');
-            window.triggerAutoStreamFallback && window.triggerAutoStreamFallback('slow_start');
-        }
-    }, 12000);
 }
 
 function clearStartupWatchdog() {
@@ -4408,6 +4404,15 @@ async function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0)
         document.body.style.overflow = 'hidden';
     }
 
+    // Kick off ad pre-roll if eligible while streams fetch in background
+    let adDoneResolve;
+    const adDonePromise = new Promise(res => { adDoneResolve = res; });
+    if (typeof AdEngine !== 'undefined') {
+        AdEngine.runPrerollIfEligible(() => adDoneResolve());
+    } else {
+        adDoneResolve();
+    }
+
     // Ensure we have activeMediaMeta for this subject
     if (!activeMediaMeta || String(activeMediaMeta.subject_id) !== String(subjectId)) {
         try {
@@ -4427,6 +4432,7 @@ async function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0)
             fetch(`/api/stream/${subjectId}/captions?se=${sNum}&ep=${eNum}`).then(r => r.json()).catch(() => ({ captions: [] }))
         ]);
 
+        await adDonePromise;
         if (loadingState) loadingState.style.display = 'none';
 
         const rawStreams = streamRes.streams || [];

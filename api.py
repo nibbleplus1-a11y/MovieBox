@@ -818,7 +818,7 @@ class MovieBoxEngine:
             s.get("size_mb", 0)
         ), reverse=True)
         if streams:
-            app_cache.set(cache_key, streams, ttl=600)
+            app_cache.set(cache_key, streams, ttl=180)
         return streams
 
     def get_curated_feed(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -1138,7 +1138,7 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
     # Smart candidate referers to prevent 429 rate-limiting from hakunaymatata CDN
     candidate_refs = []
     if "hakunaymatata.com" in url or "hakunaymatata.com" in url_domain:
-        candidate_refs.append("https://123moviesfree.club/")
+        candidate_refs.extend(["https://123moviesfree.club/", "https://movie-box.co/", "https://movieboxonline.net/", "https://moviebox.ph/"])
 
     # Prioritize previously successful referer for this domain
     if url_domain in _WORKING_REFERERS and _WORKING_REFERERS[url_domain] not in candidate_refs:
@@ -1146,10 +1146,10 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     if referer and "aoneroom.com" not in referer and referer not in candidate_refs:
         candidate_refs.append(referer)
-    if "hakunaymatata.com" in url:
-        candidate_refs.extend(["https://123moviesfree.club/", "https://movieboxonline.net/", "https://moviebox.ph/"])
+    if "hakunaymatata.com" in url or "hakunaymatata.com" in url_domain:
+        candidate_refs.extend(["https://123moviesfree.club/", "https://movie-box.co/", "https://movieboxonline.net/", "https://moviebox.ph/"])
     else:
-        candidate_refs.extend(["https://movieboxonline.net/", "https://api3.aoneroom.com/"])
+        candidate_refs.extend(["https://movieboxonline.net/", "https://movie-box.co/", "https://api3.aoneroom.com/"])
 
     seen_refs = set()
     unique_refs = []
@@ -1714,7 +1714,12 @@ async def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Op
         local_ep = 0
         is_ser = False
     else:
-        is_ser = bool(det_type == "Series" or local_se > 0 or local_ep > 0)
+        is_ser = bool(det_type in ("Series", "TV Series") or details.get("subject_type") == 2 or local_se > 0 or local_ep > 0)
+        if is_ser and se == 0 and ep == 0:
+            local_se, local_ep = 1, 1
+            s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path))
+            if s1_streams:
+                streams = s1_streams
 
     if title and not is_coming_soon:
         cache_key_imdb = f"imdb_id:{re.sub(r'[\[\(].*?[\]\)]', '', title).strip()}:{det_release or ''}:{is_ser}"
