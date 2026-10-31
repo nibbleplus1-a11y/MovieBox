@@ -1658,6 +1658,18 @@ function initPlyr() {
     if (stage) {
         stage.addEventListener('dblclick', (e) => {
             if (isScreenLocked) return;
+            // Ignore double-clicks on any player control buttons, sliders, menus, or overlays
+            if (e.target && (
+                e.target.closest('.cinema-player-controls') ||
+                e.target.closest('button') ||
+                e.target.closest('input') ||
+                e.target.closest('.in-player-top-bar') ||
+                e.target.closest('.player-settings-menu') ||
+                e.target.closest('.in-player-server-dropdown') ||
+                e.target.closest('.video-buffering-spinner')
+            )) {
+                return;
+            }
             const rect = stage.getBoundingClientRect();
             const clickX = e.clientX - rect.left;
             const width = rect.width;
@@ -1675,6 +1687,17 @@ function initPlyr() {
         let lastTouchTapX = 0;
         stage.addEventListener('touchend', (e) => {
             if (isScreenLocked) return;
+            if (e.target && (
+                e.target.closest('.cinema-player-controls') ||
+                e.target.closest('button') ||
+                e.target.closest('input') ||
+                e.target.closest('.in-player-top-bar') ||
+                e.target.closest('.player-settings-menu') ||
+                e.target.closest('.in-player-server-dropdown') ||
+                e.target.closest('.video-buffering-spinner')
+            )) {
+                return;
+            }
             const now = Date.now();
             const touch = e.changedTouches && e.changedTouches[0];
             if (!touch) return;
@@ -2259,8 +2282,9 @@ async function tryDirectThenProxy(stream, titleText, seekToTime = 0) {
     const proxyUrl = getProxyStreamUrl(stream);
     const video = getCinemaVideoElement();
 
-    // If we already know direct doesn't work this session, go straight to proxy
-    if (_directStreamFailed) {
+    // If URL requires specific Referer header (e.g. hakunaymatata), browser <video>
+    // cannot send spoofed referers and gets 429/403. Go straight to proxy for instant playback.
+    if (_directStreamFailed || directUrl.includes('hakunaymatata.com')) {
         setCinemaVideoSource(proxyUrl, stream, titleText);
         _doSeekAfterPlay(seekToTime);
         return;
@@ -3209,8 +3233,8 @@ function changePlayerServer(serverId) {
         iframe.src = serverUrl;
     }
 
-    // Keep the custom player controls bar visible so users can switch servers from same UI
-    if (customControls) customControls.style.display = 'flex';
+    // In iframe mode, hide custom controls so embed players have full native interactive controls
+    if (customControls) customControls.style.display = 'none';
 
     const shortName = targetServer.name.replace('Server ', 'S').replace(' (', ' – ').replace(')', '');
     if (serverBadge) {
