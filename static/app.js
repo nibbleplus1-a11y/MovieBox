@@ -2228,11 +2228,117 @@ function playNextEpisodeImmediately() {
     playNextEpisode();
 }
 
-function getEffectiveStreamUrl(stream) {
+// ─── STREAM URL RESOLUTION ────────────────────────────────────────────────────
+// Tracks whether direct CDN worked for the current session.
+let _directStreamWorked = false;
+let _directStreamFailed = false;
+
+function getProxyStreamUrl(stream) {
     if (!stream || !stream.url) return '';
     const sidParam = currentPlayingSubjectId ? `&subject_id=${encodeURIComponent(currentPlayingSubjectId)}` : '';
     const ref = (stream.headers && stream.headers.Referer) ? stream.headers.Referer : 'https://movieboxonline.net/';
     return `/api/proxy/stream?url=${encodeURIComponent(stream.url)}&referer=${encodeURIComponent(ref)}${sidParam}`;
+}
+
+function getEffectiveStreamUrl(stream) {
+    if (!stream || !stream.url) return '';
+    // Always use proxy — direct CDN is handled via tryDirectThenProxy
+    return getProxyStreamUrl(stream);
+}
+
+/**
+ * Tries to play stream directly from CDN (fast, no VPS bottleneck).
+ * On CORS/network error, automatically falls back to the VPS proxy.
+ * If direct CDN starts playing but then errors, switches to proxy mid-playback.
+ */
+async function tryDirectThenProxy(stream, titleText, seekToTime = 0) {
+    if (!stream || !stream.url) return;
+
+    const ref = (stream.headers && stream.headers.Referer) ? stream.headers.Referer : 'https://123moviesfree.club/';
+    const directUrl = stream.url;
+    const proxyUrl = getProxyStreamUrl(stream);
+    const video = getCinemaVideoElement();
+
+    // If we already know direct doesn't work this session, go straight to proxy
+    if (_directStreamFailed) {
+        setCinemaVideoSource(proxyUrl, stream, titleText);
+        _doSeekAfterPlay(seekToTime);
+        return;
+    }
+
+    // Test direct CDN reachability with a quick HEAD request
+    let directOk = false;
+    try {
+        const testResp = await fetch(directUrl, {
+            method: 'HEAD',
+            mode: 'cors',
+            signal: AbortSignal.timeout(3500)
+        });
+        // Any non-error response means browser can reach CDN directly
+        if (testResp.status < 500) {
+            directOk = true;
+        }
+    } catch (e) {
+        // CORS opaque response, network error, or timeout — try anyway since video element
+        // doesn't require CORS headers for plain MP4 video playback
+        console.log('[CineScope] Direct HEAD check:', e.message);
+        // Still try direct since <video> tag doesn't enforce CORS like fetch() does
+        directOk = true;
+    }
+
+    if (directOk) {
+        console.log('[CineScope] Attempting direct CDN stream (bypassing VPS proxy):', directUrl);
+        _directStreamWorked = false;  // Will be set true on first successful timeupdate
+
+        // Set direct URL — video element doesn't require CORS headers for MP4
+        setCinemaVideoSource(directUrl, stream, titleText);
+
+        // Install one-time error handler: if direct CDN fails on the <video> element, 
+        // immediately fall back to proxy without needing user action
+        if (video) {
+            const onDirectError = () => {
+                if (_directStreamWorked) return; // Already played successfully, don't fallback
+                console.warn('[CineScope] Direct CDN stream failed on <video> — falling back to proxy');
+                _directStreamFailed = true;
+                const resumeTime = video.currentTime || seekToTime || 0;
+                setCinemaVideoSource(proxyUrl, stream, titleText);
+                if (resumeTime > 0) {
+                    video.addEventListener('canplay', () => { video.currentTime = resumeTime; }, { once: true });
+                }
+            };
+            video.addEventListener('error', onDirectError, { once: true });
+
+            // Mark as "worked" once we see actual playback progress — prevent fallback after that
+            const onFirstPlay = () => {
+                _directStreamWorked = true;
+                video.removeEventListener('error', onDirectError);
+                showToast('⚡ High-speed direct stream', 'info');
+            };
+            video.addEventListener('timeupdate', onFirstPlay, { once: true });
+        }
+
+        _doSeekAfterPlay(seekToTime);
+        return;
+    }
+
+    // Fall back to proxy
+    _directStreamFailed = true;
+    setCinemaVideoSource(proxyUrl, stream, titleText);
+    _doSeekAfterPlay(seekToTime);
+}
+
+function _doSeekAfterPlay(seekToTime) {
+    if (seekToTime > 0) {
+        const video = getCinemaVideoElement();
+        const doSeek = () => {
+            if (plyrInstance) plyrInstance.currentTime = seekToTime;
+            else if (video) video.currentTime = seekToTime;
+        };
+        if (video) {
+            video.addEventListener('canplay', doSeek, { once: true });
+        }
+        setTimeout(doSeek, 1500);
+    }
 }
 
 function switchToDirectMode() {
@@ -2397,6 +2503,8 @@ async function quickPlay(subjectId, title, startTime = 0) {
     currentPlayingStream = null;
     currentSelectedServer = 'direct';
     _drawerEpisodeData = null;
+    _directStreamWorked = false;
+    _directStreamFailed = false;  // Reset direct CDN test for each new title
 
     // Reset iframe immediately
     const iframe = document.getElementById('cinemaIframe');
@@ -2923,6 +3031,9 @@ function setupPlaybackWatchdog(video) {
     video.addEventListener('error', () => {
         // Ignore user/script aborts (code 1)
         if (!video.error || video.error.code === 1) return;
+        // If tryDirectThenProxy just handled the fallback (set _directStreamFailed),
+        // don't also trigger server switching — it's already handled
+        if (_directStreamFailed && !_directStreamWorked) return;
         handleMidPlaybackStall(video);
     });
 }
@@ -3387,9 +3498,9 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     }
 
     // Set video source and load via unified player engine (HLS.js / Plyr / HTML5)
+    // Uses tryDirectThenProxy: tries direct CDN first (full speed), falls back to VPS proxy
     if (stream) {
-        const src = getEffectiveStreamUrl(stream);
-        setCinemaVideoSource(src, stream, titleText);
+        tryDirectThenProxy(stream, titleText, seekToTime);
     }
 
     modal.style.display = 'flex';

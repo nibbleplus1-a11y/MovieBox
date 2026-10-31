@@ -1122,6 +1122,43 @@ _WORKING_REFERERS: Dict[str, str] = {
     "hakunaymatata.com": "https://123moviesfree.club/"
 }
 
+# Cache of direct-accessible CDN URLs (tested in last 5 min)
+_DIRECT_URL_CACHE: Dict[str, tuple] = {}  # url -> (final_url, timestamp)
+
+@app.get("/api/resolve-stream")
+async def resolve_stream_url(url: str = Query(...), referer: Optional[str] = None):
+    """
+    Resolve a stream URL to its final CDN URL and return it so the browser
+    can fetch directly (bypassing the VPS bandwidth bottleneck).
+    Also tests if the URL is directly accessible from this server.
+    Returns: {direct_url, headers_needed, can_direct_access}
+    """
+    from urllib.parse import urlparse
+    url_domain = urlparse(url).netloc
+
+    # Check cache (5 min TTL)
+    cached = _DIRECT_URL_CACHE.get(url)
+    if cached and (time.time() - cached[1]) < 300:
+        return {"direct_url": cached[0], "referer": referer or _WORKING_REFERERS.get(url_domain, ""), "ok": True}
+
+    best_ref = referer or _WORKING_REFERERS.get(url_domain) or "https://123moviesfree.club/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": best_ref,
+    }
+
+    try:
+        client = get_stream_proxy_client()
+        # HEAD request to resolve final URL (follows redirects) and check accessibility
+        req = client.build_request("HEAD", url, headers=headers)
+        r = await client.send(req, stream=False)
+        final_url = str(r.url)  # After redirect resolution
+        await r.aclose() if hasattr(r, 'aclose') else None
+        _DIRECT_URL_CACHE[url] = (final_url, time.time())
+        return {"direct_url": final_url, "referer": best_ref, "ok": r.status_code < 400}
+    except Exception as e:
+        return {"direct_url": url, "referer": best_ref, "ok": False, "error": str(e)}
+
 @app.api_route("/api/proxy/stream", methods=["GET", "HEAD", "OPTIONS"])
 async def proxy_stream(request: Request, url: str = Query(...), referer: Optional[str] = None, download: bool = False, filename: Optional[str] = None, subject_id: Optional[str] = None):
     if request.method == "OPTIONS":
