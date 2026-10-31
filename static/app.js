@@ -1414,19 +1414,10 @@ function showBuffering(text = 'Buffering 1080p Stream...') {
         _slowBufferingTimer = setTimeout(() => {
             if (spinner && spinner.style.display !== 'none' && currentSelectedServer === 'direct') {
                 if (actions) actions.style.display = 'flex';
-                if (txt) txt.textContent = 'Server 1 slow — auto-switching to high-speed mirror…';
-                
-                // If stream is still stuck buffering after 4 more seconds, auto-switch without making user wait
-                if (!_autoSwitchTimer) {
-                    _autoSwitchTimer = setTimeout(() => {
-                        const vid = getCinemaVideoElement();
-                        if (vid && vid.currentTime < 1 && currentSelectedServer === 'direct' && spinner && spinner.style.display !== 'none') {
-                            switchBufferingToFastServer();
-                        }
-                    }, 4000);
-                }
+                if (txt) txt.textContent = 'Server 1 slow — switching to high-speed mirror…';
+                switchBufferingToFastServer();
             }
-        }, 4000);
+        }, 3000);
     }
 }
 
@@ -3044,16 +3035,15 @@ function setupPlaybackWatchdog(video) {
         resetInPlayerInactivityTimer();
     });
 
-    // Responsive stall detection: triggers if stalled for 6s at start or 8s mid-playback
+    // Responsive stall detection: triggers if stalled for 3.5s
     const onStallDetected = () => {
         clearStallTimer();
         if (currentSelectedServer === 'direct' && !video.paused) {
-            const timeoutMs = (video.currentTime < 2) ? 6000 : 8000;
             _playbackStallTimer = setTimeout(() => {
-                if (!video.paused && (video.currentTime <= _lastObservedTime || video.currentTime < 1)) {
+                if (!video.paused && currentSelectedServer === 'direct') {
                     handleMidPlaybackStall(video);
                 }
-            }, timeoutMs);
+            }, 3500);
         }
     };
 
@@ -3163,6 +3153,7 @@ function renderPlayerServerPills() {
 }
 
 function changePlayerServer(serverId) {
+    hideBuffering();
     const video = getCinemaVideoElement();
     const iframe = document.getElementById('cinemaIframe');
     const plyrEl = document.querySelector('#videoStage .plyr');
