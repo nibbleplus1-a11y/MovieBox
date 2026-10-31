@@ -1400,25 +1400,11 @@ function setCinemaVideoSource(src, stream, titleText) {
     }
 }
 
-let _slowBufferingTimer = null;
-let _autoSwitchTimer = null;
-
 function showBuffering(text = 'Buffering 1080p Stream...') {
     const spinner = document.getElementById('videoBufferingSpinner');
     const txt = document.getElementById('videoBufferingText');
-    const actions = document.getElementById('videoBufferingActions');
     if (txt) txt.textContent = text;
     if (spinner) spinner.style.display = 'flex';
-
-    if (!_slowBufferingTimer && currentSelectedServer === 'direct') {
-        _slowBufferingTimer = setTimeout(() => {
-            if (spinner && spinner.style.display !== 'none' && currentSelectedServer === 'direct') {
-                if (actions) actions.style.display = 'flex';
-                if (txt) txt.textContent = 'Server 1 slow — switching to high-speed mirror…';
-                switchBufferingToFastServer();
-            }
-        }, 3000);
-    }
 }
 
 function hideBuffering() {
@@ -1426,14 +1412,6 @@ function hideBuffering() {
     const actions = document.getElementById('videoBufferingActions');
     if (spinner) spinner.style.display = 'none';
     if (actions) actions.style.display = 'none';
-    if (_slowBufferingTimer) {
-        clearTimeout(_slowBufferingTimer);
-        _slowBufferingTimer = null;
-    }
-    if (_autoSwitchTimer) {
-        clearTimeout(_autoSwitchTimer);
-        _autoSwitchTimer = null;
-    }
 }
 
 function switchBufferingToFastServer() {
@@ -3035,47 +3013,21 @@ function setupPlaybackWatchdog(video) {
         resetInPlayerInactivityTimer();
     });
 
-    // Responsive stall detection: triggers if stalled for 3.5s
-    const onStallDetected = () => {
-        clearStallTimer();
-        if (currentSelectedServer === 'direct' && !video.paused) {
-            _playbackStallTimer = setTimeout(() => {
-                if (!video.paused && currentSelectedServer === 'direct') {
-                    handleMidPlaybackStall(video);
-                }
-            }, 3500);
-        }
-    };
-
-    video.addEventListener('waiting', onStallDetected);
-    video.addEventListener('stalled', onStallDetected);
+    // Video buffering events: show/hide buffering indicator without forcing server changes
+    video.addEventListener('waiting', () => {
+        showBuffering('Buffering stream…');
+    });
+    video.addEventListener('stalled', () => {
+        showBuffering('Buffering stream…');
+    });
+    video.addEventListener('playing', () => {
+        hideBuffering();
+    });
 
     video.addEventListener('error', () => {
-        // Ignore user/script aborts (code 1)
         if (!video.error || video.error.code === 1) return;
-        // If tryDirectThenProxy just handled the fallback (set _directStreamFailed),
-        // don't also trigger server switching — it's already handled
-        if (_directStreamFailed && !_directStreamWorked) return;
-        handleMidPlaybackStall(video);
+        showToast('Stream encountered an issue. Tap a backup server below to switch.', 'warning');
     });
-}
-
-function handleMidPlaybackStall(video) {
-    console.warn('Playback stalled or network error detected. Initiating automatic server failover...');
-    const resumeTime = (video && video.currentTime > 5) ? video.currentTime : _lastObservedTime;
-    
-    // Find next candidate from tested or fallback servers, preferring high-speed AutoEmbed or MultiEmbed
-    const available = _testedServersList.filter(s => s.id !== currentSelectedServer && s.status !== 'failed');
-    const nextServer = available.find(s => s.id === 'autoembed') ||
-                       available.find(s => s.id === 'multiembed') ||
-                       (available.length > 0 ? available[0] : (activeFallbackServers.find(s => s.id !== currentSelectedServer) || null));
-
-    if (nextServer) {
-        showToast(`Server stalled — switching to ${nextServer.name} at ${formatTime(resumeTime)}…`, 'info');
-        changePlayerServer(nextServer.id);
-    } else {
-        showToast('Stream buffering slowly. Tap Settings ⚙ to choose another server.', 'info');
-    }
 }
 
 // Auto-hide HUD on inactivity
@@ -3523,9 +3475,9 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     }
 
     // Set video source and load via unified player engine (HLS.js / Plyr / HTML5)
-    // Uses tryDirectThenProxy: tries direct CDN first (full speed), falls back to VPS proxy
     if (stream) {
-        tryDirectThenProxy(stream, titleText, seekToTime);
+        const src = getEffectiveStreamUrl(stream);
+        setCinemaVideoSource(src, stream, titleText);
     }
 
     modal.style.display = 'flex';
