@@ -1112,7 +1112,7 @@ _STREAM_PROXY_CLIENT: Optional[httpx.AsyncClient] = None
 def get_stream_proxy_client() -> httpx.AsyncClient:
     global _STREAM_PROXY_CLIENT
     if _STREAM_PROXY_CLIENT is None or _STREAM_PROXY_CLIENT.is_closed:
-        timeout = httpx.Timeout(connect=4.5, read=None, write=30.0, pool=30.0)
+        timeout = httpx.Timeout(connect=15.0, read=None, write=30.0, pool=30.0)
         limits = httpx.Limits(max_keepalive_connections=120, max_connections=350, keepalive_expiry=60.0)
         _STREAM_PROXY_CLIENT = httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True)
     return _STREAM_PROXY_CLIENT
@@ -1196,6 +1196,8 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
         "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
         "Access-Control-Allow-Headers": "*",
         "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges, Content-Type",
+        "X-Accel-Buffering": "no",
+        "Cache-Control": "no-cache, no-transform",
     }
     for h in ["content-range", "content-length", "content-type", "accept-ranges", "etag", "last-modified"]:
         if h in resp.headers:
@@ -1225,7 +1227,8 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     async def content_iterator():
         try:
-            async for chunk in resp.aiter_bytes(chunk_size=262144):
+            # 64KB chunks yield 4x faster than 256KB, drastically reducing initial buffering latency
+            async for chunk in resp.aiter_bytes(chunk_size=65536):
                 yield chunk
         except Exception:
             pass

@@ -1469,6 +1469,17 @@ function initPlyr() {
     video.addEventListener('seeking', () => showBuffering('Seeking...'));
     video.addEventListener('playing', () => { hideBuffering(); clearStartupWatchdog(); clearStreamWatchdog(); });
     video.addEventListener('canplay', () => { hideBuffering(); clearStartupWatchdog(); });
+    video.addEventListener('canplaythrough', () => { hideBuffering(); clearStartupWatchdog(); });
+    video.addEventListener('loadeddata', () => { updateUnifiedPlayerTimeline(); });
+    video.addEventListener('progress', () => {
+        updateUnifiedPlayerTimeline();
+        if (video.buffered && video.buffered.length > 0 && video.currentTime < 1 && !video.paused) {
+            const bufSec = video.buffered.end(video.buffered.length - 1);
+            if (bufSec > 0.5) {
+                showBuffering(`Buffering 1080p Stream (${bufSec.toFixed(1)}s ready)…`);
+            }
+        }
+    });
     video.addEventListener('pause', hideBuffering);
 
     plyrInstance.on('playing', () => { hideBuffering(); clearStartupWatchdog(); clearStreamWatchdog(); });
