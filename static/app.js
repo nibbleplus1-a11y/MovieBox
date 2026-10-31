@@ -1259,14 +1259,14 @@ function selectAndResolveEpisode(subjectId, seasonNum, episodeNum) {
 let _streamWatchdogTimer = null;
 let _streamStartupTimer = null;  // fires after 12s if nothing plays yet
 
-function startStreamWatchdog(ms = 45000) {
+function startStreamWatchdog(ms = 60000) {
     clearStreamWatchdog();
     _streamWatchdogTimer = setTimeout(() => {
         const video = getCinemaVideoElement();
         if (!video) return;
-        // Only fire if truly stalled mid-playback (not progressing)
-        if (!video.paused && video.readyState < 3) {
-            console.warn('[Watchdog] Mid-play stall detected – triggering auto-fallback');
+        // Only fire if truly stalled mid-playback with meaningful progress already made (>10s)
+        if (!video.paused && video.readyState < 3 && video.currentTime > 10) {
+            console.warn('[Watchdog] Mid-play stall detected after 10s of playback – triggering auto-fallback');
             window.triggerAutoStreamFallback && window.triggerAutoStreamFallback('stall');
         } else {
             clearStreamWatchdog();
@@ -1465,7 +1465,7 @@ function initPlyr() {
     });
 
     video.addEventListener('loadstart', () => { showBuffering('Connecting to 1080p Stream...'); startStartupWatchdog(); });
-    video.addEventListener('waiting', () => { showBuffering('Buffering 1080p Stream...'); if (currentSelectedServer === 'direct') startStreamWatchdog(45000); });
+    video.addEventListener('waiting', () => { showBuffering('Buffering 1080p Stream...'); if (currentSelectedServer === 'direct') startStreamWatchdog(60000); });
     video.addEventListener('seeking', () => showBuffering('Seeking...'));
     video.addEventListener('playing', () => { hideBuffering(); clearStartupWatchdog(); clearStreamWatchdog(); });
     video.addEventListener('canplay', () => { hideBuffering(); clearStartupWatchdog(); });
@@ -1587,12 +1587,12 @@ function initPlyr() {
     });
 
     video.addEventListener('waiting', () => {
-        // 30-second gentle watchdog — won't fire if video is actually making progress
-        if (currentSelectedServer === 'direct') startStreamWatchdog(30000);
+        // 60-second gentle watchdog — only fires if stalled for 60s WITH 10s of prior playback
+        if (currentSelectedServer === 'direct') startStreamWatchdog(60000);
     });
 
     video.addEventListener('stalled', () => {
-        if (currentSelectedServer === 'direct') startStreamWatchdog(30000);
+        if (currentSelectedServer === 'direct') startStreamWatchdog(60000);
     });
 
     video.addEventListener('playing', () => {
@@ -2851,27 +2851,28 @@ function setupPlaybackWatchdog(video) {
         resetInPlayerInactivityTimer();
     });
 
-    // Gentle mid-playback stall detection: ONLY triggers if actively playing and stalled for 30s
-    // Never kills initial buffering!
+    // Gentle mid-playback stall detection: ONLY triggers if actively playing and stalled for 60s
+    // Requires at least 10 seconds of actual playback before considering a server switch.
+    // This prevents premature switching during initial slow-loading streams (e.g. Nocturne).
     video.addEventListener('waiting', () => {
         clearStallTimer();
-        if (currentSelectedServer === 'direct' && video.currentTime > 1 && !video.paused) {
+        if (currentSelectedServer === 'direct' && video.currentTime > 10 && !video.paused) {
             _playbackStallTimer = setTimeout(() => {
                 if (video.currentTime <= _lastObservedTime && !video.paused) {
                     handleMidPlaybackStall(video);
                 }
-            }, 30000);
+            }, 60000);
         }
     });
 
     video.addEventListener('stalled', () => {
         clearStallTimer();
-        if (currentSelectedServer === 'direct' && video.currentTime > 1 && !video.paused) {
+        if (currentSelectedServer === 'direct' && video.currentTime > 10 && !video.paused) {
             _playbackStallTimer = setTimeout(() => {
                 if (video.currentTime <= _lastObservedTime && !video.paused) {
                     handleMidPlaybackStall(video);
                 }
-            }, 30000);
+            }, 60000);
         }
     });
 
@@ -2979,7 +2980,7 @@ function changePlayerServer(serverId) {
         return;
     }
 
-    // Switch to a fallback server
+    // Switch to a fallback server (iframe-based embed)
     const targetServer = (activeFallbackServers || []).find(s => s.id === serverId) ||
                          (_testedServersList || []).find(s => s.id === serverId);
 
@@ -2998,13 +2999,16 @@ function changePlayerServer(serverId) {
     }
     if (plyrEl) plyrEl.style.display = 'none';
 
-    // Add iframe mode class — CSS hides video/plyr/buffering/progress controls
-    // We do NOT hide customControls via JS so the server-pill strip stays accessible.
+    // Add iframe mode class — CSS hides video/plyr/buffering/seek-ripple elements
+    // The player container, top bar, and server-switch controls remain fully visible.
     if (stage) stage.classList.add('is-iframe-mode');
     if (iframe) {
         iframe.style.display = 'block';
         iframe.src = targetServer.url;
     }
+
+    // Keep the custom player controls bar visible so users can switch servers from same UI
+    if (customControls) customControls.style.display = 'flex';
 
     const shortName = targetServer.name.replace('Server ', 'S').replace(' (', ' – ').replace(')', '');
     if (serverBadge) {
@@ -3013,7 +3017,7 @@ function changePlayerServer(serverId) {
     }
     safeText('settingsValServer', shortName);
     safeText('playerQualityTag', 'Cloud HD');
-    safeText('playerMediaSub', `${targetServer.name} • Embedded Player`);
+    safeText('playerMediaSub', `${targetServer.name} • Embedded`);
 
     renderSettingsServerList(_testedServersList, targetServer.id);
     renderInPlayerServerDropdown();
