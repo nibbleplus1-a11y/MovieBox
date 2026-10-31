@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
 import asyncio
 import threading
 import base64
@@ -13,7 +14,7 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 import urllib.parse
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,29 +67,34 @@ class SimpleCache:
         self.maxsize = maxsize
         self.default_ttl = default_ttl
         self.cache = OrderedDict()
+        self._lock = threading.Lock()
 
     def get(self, key: str) -> Optional[Any]:
-        if key in self.cache:
-            val, exp = self.cache[key]
-            if time.time() < exp:
-                return val
-            del self.cache[key]
-        return None
+        with self._lock:
+            if key in self.cache:
+                val, exp = self.cache[key]
+                if time.time() < exp:
+                    return val
+                del self.cache[key]
+            return None
 
     def set(self, key: str, val: Any, ttl: Optional[int] = None) -> None:
         if ttl is None:
             ttl = self.default_ttl
-        if len(self.cache) >= self.maxsize:
-            self.cache.popitem(last=False)
-        self.cache[key] = (val, time.time() + ttl)
+        with self._lock:
+            if len(self.cache) >= self.maxsize:
+                self.cache.popitem(last=False)
+            self.cache[key] = (val, time.time() + ttl)
 
     def delete(self, key: str) -> None:
-        self.cache.pop(key, None)
+        with self._lock:
+            self.cache.pop(key, None)
 
     def delete_prefix(self, prefix: str) -> None:
-        keys = [k for k in self.cache if k.startswith(prefix)]
-        for k in keys:
-            del self.cache[k]
+        with self._lock:
+            keys = [k for k in list(self.cache.keys()) if k.startswith(prefix)]
+            for k in keys:
+                self.cache.pop(k, None)
 
 app_cache = SimpleCache()
 _bg_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="bg_imdb")
@@ -448,7 +454,6 @@ class MovieBoxEngine:
             is_cs = False
             if rel_date:
                 try:
-                    from datetime import date
                     if date.fromisoformat(rel_date[:10]) > date.today():
                         is_cs = True
                 except Exception:
@@ -545,7 +550,6 @@ class MovieBoxEngine:
         release_date = data.get("releaseDate") or ""
         if release_date:
             try:
-                from datetime import date
                 rd = date.fromisoformat(release_date[:10])
                 if rd > date.today():
                     coming_soon = True
@@ -1123,7 +1127,7 @@ _WORKING_REFERERS: Dict[str, str] = {
 }
 
 # Cache of direct-accessible CDN URLs (tested in last 5 min)
-_DIRECT_URL_CACHE: Dict[str, tuple] = {}  # url -> (final_url, timestamp)
+_direct_url_cache = SimpleCache(maxsize=1000, default_ttl=300)
 
 @app.get("/api/resolve-stream")
 async def resolve_stream_url(url: str = Query(...), referer: Optional[str] = None):
@@ -1133,13 +1137,12 @@ async def resolve_stream_url(url: str = Query(...), referer: Optional[str] = Non
     Also tests if the URL is directly accessible from this server.
     Returns: {direct_url, headers_needed, can_direct_access}
     """
-    from urllib.parse import urlparse
     url_domain = urlparse(url).netloc
 
     # Check cache (5 min TTL)
-    cached = _DIRECT_URL_CACHE.get(url)
-    if cached and (time.time() - cached[1]) < 300:
-        return {"direct_url": cached[0], "referer": referer or _WORKING_REFERERS.get(url_domain, ""), "ok": True}
+    cached = _direct_url_cache.get(url)
+    if cached:
+        return {"direct_url": cached, "referer": referer or _WORKING_REFERERS.get(url_domain, ""), "ok": True}
 
     best_ref = referer or _WORKING_REFERERS.get(url_domain) or "https://123moviesfree.club/"
     headers = {
@@ -1154,7 +1157,7 @@ async def resolve_stream_url(url: str = Query(...), referer: Optional[str] = Non
         r = await client.send(req, stream=False)
         final_url = str(r.url)  # After redirect resolution
         await r.aclose() if hasattr(r, 'aclose') else None
-        _DIRECT_URL_CACHE[url] = (final_url, time.time())
+        _direct_url_cache.set(url, final_url, ttl=300)
         return {"direct_url": final_url, "referer": best_ref, "ok": r.status_code < 400}
     except Exception as e:
         return {"direct_url": url, "referer": best_ref, "ok": False, "error": str(e)}
@@ -1169,20 +1172,17 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
             "Access-Control-Max-Age": "86400"
         })
 
-    from urllib.parse import urlparse
     url_domain = urlparse(url).netloc
 
     # Smart candidate referers to prevent 429 rate-limiting from hakunaymatata CDN
     candidate_refs = []
-    if "hakunaymatata.com" in url or "hakunaymatata.com" in url_domain:
-        candidate_refs.extend(["https://123moviesfree.club/", "https://movie-box.co/", "https://movieboxonline.net/", "https://moviebox.ph/"])
-
     # Prioritize previously successful referer for this domain
     if url_domain in _WORKING_REFERERS and _WORKING_REFERERS[url_domain] not in candidate_refs:
         candidate_refs.append(_WORKING_REFERERS[url_domain])
 
     if referer and "aoneroom.com" not in referer and referer not in candidate_refs:
         candidate_refs.append(referer)
+
     if "hakunaymatata.com" in url or "hakunaymatata.com" in url_domain:
         candidate_refs.extend(["https://123moviesfree.club/", "https://movie-box.co/", "https://movieboxonline.net/", "https://moviebox.ph/"])
     else:
@@ -1863,9 +1863,9 @@ def get_home_curated(_bust: Optional[str] = None):
     return engine.get_curated_feed()
 
 @app.post("/api/admin/deploy")
-@app.get("/api/admin/deploy")
 async def trigger_server_deploy(secret: Optional[str] = Query(None)):
-    if secret != "moviebox_deploy_2026":
+    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
+    if not secret or not secrets.compare_digest(secret, expected):
         raise HTTPException(status_code=403, detail="Unauthorized deploy secret")
 
     def _pull_and_restart():
@@ -2181,9 +2181,20 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
 
 @app.get("/home")
 def get_home():
+    cache_key = "feed:raw_home"
+    cached = app_cache.get(cache_key)
+    if cached:
+        return cached
     url = f"{API_BASE}/home?host=moviebox.ph"
-    resp = engine.session.get(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://moviebox.ph/"}, timeout=20)
-    return resp.json()
+    try:
+        resp = engine.session.get(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://moviebox.ph/"}, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            app_cache.set(cache_key, data, ttl=300)
+            return data
+        return {"data": {}, "status": "error", "code": resp.status_code}
+    except Exception as e:
+        return {"data": {}, "status": "error", "message": str(e)}
 
 @app.get("/api/ads/config")
 def get_ads_config():

@@ -52,10 +52,17 @@ export interface DetailData {
   dubs?: { subject_id: string; lang_name: string }[];
 }
 
+export interface FallbackServer {
+  id: string;
+  name: string;
+  url: string;
+  type?: string;
+}
+
 export interface StreamData {
   title?: string;
   streams: StreamSource[];
-  fallback_servers?: { id: string; name: string; url: string; type: string }[];
+  fallback_servers?: FallbackServer[];
   dubs?: { subject_id: string; lang_name: string }[];
 }
 

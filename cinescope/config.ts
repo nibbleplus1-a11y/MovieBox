@@ -8,8 +8,8 @@ export const CONFIG = {
   // CHANGE THIS after Play Store approves your app:
   // Set it to your Railway URL e.g. "https://moviebox-xxx.up.railway.app"
   // ═══════════════════════════════════════════════════════════════
-  // Active Streaming Platform URL (loads automatically without manual configuration)
-  APP_URL: 'http://192.168.100.151:8000',
+  // Active Streaming Platform URL (supports EXPO_PUBLIC_API_URL env var for prod/dev)
+  APP_URL: process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.151:8000',
 
   // Optional: URL to a JSON endpoint or Firebase / GitHub Gist returning {"app_url": "..."}
   // When empty, it uses APP_URL directly
