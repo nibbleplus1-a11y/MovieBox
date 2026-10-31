@@ -1400,16 +1400,49 @@ function setCinemaVideoSource(src, stream, titleText) {
     }
 }
 
+let _slowBufferingTimer = null;
+
 function showBuffering(text = 'Buffering 1080p Stream...') {
     const spinner = document.getElementById('videoBufferingSpinner');
     const txt = document.getElementById('videoBufferingText');
+    const actions = document.getElementById('videoBufferingActions');
     if (txt) txt.textContent = text;
     if (spinner) spinner.style.display = 'flex';
+
+    if (!_slowBufferingTimer && currentSelectedServer === 'direct') {
+        _slowBufferingTimer = setTimeout(() => {
+            if (actions && spinner && spinner.style.display !== 'none' && currentSelectedServer === 'direct') {
+                actions.style.display = 'flex';
+                if (txt) txt.textContent = 'Stream buffering slowly on Server 1…';
+            }
+        }, 5000);
+    }
 }
 
 function hideBuffering() {
     const spinner = document.getElementById('videoBufferingSpinner');
+    const actions = document.getElementById('videoBufferingActions');
     if (spinner) spinner.style.display = 'none';
+    if (actions) actions.style.display = 'none';
+    if (_slowBufferingTimer) {
+        clearTimeout(_slowBufferingTimer);
+        _slowBufferingTimer = null;
+    }
+}
+
+function switchBufferingToFastServer() {
+    hideBuffering();
+    const servers = (activeFallbackServers && activeFallbackServers.length > 0)
+        ? activeFallbackServers
+        : (_testedServersList || []).filter(s => s.id !== 'direct');
+    if (servers.length > 0) {
+        const target = servers[0];
+        showToast(`Switching to ${target.name} for instant playback…`, 'info');
+        changePlayerServer(target.id);
+    } else {
+        showToast('Finding high-speed mirrors…', 'info');
+        triggerAutoStreamFallback('stall');
+    }
 }
 
 function initPlyr() {
@@ -2344,6 +2377,7 @@ async function _loadFallbackServersInBackground(subjectId, title, year, isSeries
             ];
             renderSettingsServerList(_testedServersList, currentSelectedServer || 'direct');
             renderInPlayerServerDropdown();
+            renderPlayerServerPills();
         }
     } catch {}
 }
@@ -2489,8 +2523,8 @@ async function quickPlay(subjectId, title, startTime = 0) {
 
             playInCinemaModal(encodeURIComponent(JSON.stringify(bestStream)), startTime);
 
-            // Preload fallback servers in background — non-blocking
-            setTimeout(() => { _loadFallbackServersInBackground(subjectId, title, year, isFinalSeries, targetSe, targetEp); }, 2000);
+            // Preload fallback servers immediately — non-blocking
+            _loadFallbackServersInBackground(subjectId, title, year, isFinalSeries, targetSe, targetEp);
 
         } else {
             // No direct streams — use fallback immediately
@@ -2862,28 +2896,27 @@ function setupPlaybackWatchdog(video) {
         resetInPlayerInactivityTimer();
     });
 
-    // Gentle mid-playback stall detection: ONLY triggers if actively playing and stalled for 60s
-    // Requires at least 10 seconds of actual playback before considering a server switch.
-    // This prevents premature switching during initial slow-loading streams (e.g. Nocturne).
+    // Gentle mid-playback stall detection: triggers if actively playing and stalled for 16s
+    // Requires at least 5 seconds of actual playback before considering a server switch.
     video.addEventListener('waiting', () => {
         clearStallTimer();
-        if (currentSelectedServer === 'direct' && video.currentTime > 10 && !video.paused) {
+        if (currentSelectedServer === 'direct' && video.currentTime > 5 && !video.paused) {
             _playbackStallTimer = setTimeout(() => {
                 if (video.currentTime <= _lastObservedTime && !video.paused) {
                     handleMidPlaybackStall(video);
                 }
-            }, 60000);
+            }, 16000);
         }
     });
 
     video.addEventListener('stalled', () => {
         clearStallTimer();
-        if (currentSelectedServer === 'direct' && video.currentTime > 10 && !video.paused) {
+        if (currentSelectedServer === 'direct' && video.currentTime > 5 && !video.paused) {
             _playbackStallTimer = setTimeout(() => {
                 if (video.currentTime <= _lastObservedTime && !video.paused) {
                     handleMidPlaybackStall(video);
                 }
-            }, 60000);
+            }, 16000);
         }
     });
 
@@ -2950,6 +2983,38 @@ function initInPlayerInactivity() {
 // ─── SWITCHING SERVERS IN THE UNIFIED PLAYER ─────────────────────────────────
 function updatePlayerServerSelect() {
     renderSettingsServerList(_testedServersList, currentSelectedServer);
+    renderPlayerServerPills();
+}
+
+function renderPlayerServerPills() {
+    const wrap = document.getElementById('playerServerPills');
+    if (!wrap) return;
+
+    let pills = [];
+    const isDirect = (currentSelectedServer === 'direct');
+    pills.push(`
+        <button type="button" class="server-pill-tab ${isDirect ? 'active' : ''}" onclick="changePlayerServer('direct')" title="Server 1: Direct 1080p Stream">
+            ${isDirect ? '<span class="server-pill-active-dot"></span>' : ''}
+            <span>⚡ S1 Direct</span>
+        </button>
+    `);
+
+    const servers = (activeFallbackServers && activeFallbackServers.length > 0)
+        ? activeFallbackServers
+        : (_testedServersList || []).filter(s => s.id !== 'direct');
+
+    servers.forEach(s => {
+        const isSel = (currentSelectedServer === s.id);
+        const label = s.name.replace('Server ', 'S').replace(' (', ' – ').replace(')', '');
+        pills.push(`
+            <button type="button" class="server-pill-tab ${isSel ? 'active' : ''}" onclick="changePlayerServer('${s.id}')" title="${escapeAttr(s.name)}">
+                ${isSel ? '<span class="server-pill-active-dot"></span>' : ''}
+                <span>☁ ${escapeHtml(label)}</span>
+            </button>
+        `);
+    });
+
+    wrap.innerHTML = pills.join('');
 }
 
 function changePlayerServer(serverId) {
@@ -2959,6 +3024,9 @@ function changePlayerServer(serverId) {
     const stage = document.getElementById('videoStage');
     const serverBadge = document.getElementById('inPlayerServerBadge');
     const customControls = document.getElementById('cinemaPlayerControls');
+
+    const curTime = (plyrInstance ? plyrInstance.currentTime : (video ? video.currentTime : 0)) || _lastObservedTime || 0;
+    const resumeSec = Math.floor(curTime);
 
     currentSelectedServer = serverId;
 
@@ -2984,10 +3052,14 @@ function changePlayerServer(serverId) {
         if (currentPlayingStream) {
             setCinemaVideoSource(getEffectiveStreamUrl(currentPlayingStream), currentPlayingStream, activeMediaMeta?.title);
         }
-        if (video) video.play().catch(() => {});
+        if (video) {
+            if (resumeSec > 0) video.currentTime = resumeSec;
+            video.play().catch(() => {});
+        }
         showToast('Switched to Server 1 (CineScope Direct 1080p)');
         renderSettingsServerList(_testedServersList, 'direct');
         renderInPlayerServerDropdown();
+        renderPlayerServerPills();
         return;
     }
 
@@ -3015,7 +3087,15 @@ function changePlayerServer(serverId) {
     if (stage) stage.classList.add('is-iframe-mode');
     if (iframe) {
         iframe.style.display = 'block';
-        iframe.src = targetServer.url;
+        let serverUrl = targetServer.url;
+        if (resumeSec > 5) {
+            if (serverUrl.includes('vidlink.pro')) {
+                serverUrl += (serverUrl.includes('?') ? '&' : '?') + `startTime=${resumeSec}`;
+            } else if (serverUrl.includes('autoembed') || serverUrl.includes('embed.su')) {
+                serverUrl += `#t=${resumeSec}`;
+            }
+        }
+        iframe.src = serverUrl;
     }
 
     // Keep the custom player controls bar visible so users can switch servers from same UI
@@ -3032,7 +3112,8 @@ function changePlayerServer(serverId) {
 
     renderSettingsServerList(_testedServersList, targetServer.id);
     renderInPlayerServerDropdown();
-    showToast(`Switched to ${targetServer.name}`);
+    renderPlayerServerPills();
+    showToast(`Switched to ${targetServer.name} (resuming at ${formatTime(resumeSec)})`);
     renderPlayerSeriesRibbon();
 }
 
@@ -3362,6 +3443,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         video.addEventListener('canplay', () => { startPlayback(); }, { once: true });
     }
     renderPlayerSeriesRibbon();
+    renderPlayerServerPills();
 
     // Netflix auto-hide cursor during playback
     const stageEl = document.getElementById('videoStage');

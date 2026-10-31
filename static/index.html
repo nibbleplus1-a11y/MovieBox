@@ -500,6 +500,11 @@
                 <div id="videoBufferingSpinner" class="video-buffering-spinner" style="display: none;">
                     <div class="loading-ring-spinner"></div>
                     <span id="videoBufferingText">Buffering 1080p Stream...</span>
+                    <div id="videoBufferingActions" style="display:none; margin-top:10px; flex-direction:column; align-items:center; gap:6px;">
+                        <button type="button" class="btn-fast-server-switch" onclick="switchBufferingToFastServer()" style="background:#e50914; color:#fff; border:none; padding:7px 14px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow:0 4px 14px rgba(229,9,20,0.4);">
+                            ⚡ Switch to Fast Backup Server
+                        </button>
+                    </div>
                 </div>
 
                 <!-- FAST STREAM INITIALIZATION LOADING STATE -->
