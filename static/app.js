@@ -1401,6 +1401,7 @@ function setCinemaVideoSource(src, stream, titleText) {
 }
 
 let _slowBufferingTimer = null;
+let _autoSwitchTimer = null;
 
 function showBuffering(text = 'Buffering 1080p Stream...') {
     const spinner = document.getElementById('videoBufferingSpinner');
@@ -1411,11 +1412,21 @@ function showBuffering(text = 'Buffering 1080p Stream...') {
 
     if (!_slowBufferingTimer && currentSelectedServer === 'direct') {
         _slowBufferingTimer = setTimeout(() => {
-            if (actions && spinner && spinner.style.display !== 'none' && currentSelectedServer === 'direct') {
-                actions.style.display = 'flex';
-                if (txt) txt.textContent = 'Stream buffering slowly on Server 1…';
+            if (spinner && spinner.style.display !== 'none' && currentSelectedServer === 'direct') {
+                if (actions) actions.style.display = 'flex';
+                if (txt) txt.textContent = 'Server 1 slow — auto-switching to high-speed mirror…';
+                
+                // If stream is still stuck buffering after 4 more seconds, auto-switch without making user wait
+                if (!_autoSwitchTimer) {
+                    _autoSwitchTimer = setTimeout(() => {
+                        const vid = getCinemaVideoElement();
+                        if (vid && vid.currentTime < 1 && currentSelectedServer === 'direct' && spinner && spinner.style.display !== 'none') {
+                            switchBufferingToFastServer();
+                        }
+                    }, 4000);
+                }
             }
-        }, 5000);
+        }, 4000);
     }
 }
 
@@ -1428,6 +1439,10 @@ function hideBuffering() {
         clearTimeout(_slowBufferingTimer);
         _slowBufferingTimer = null;
     }
+    if (_autoSwitchTimer) {
+        clearTimeout(_autoSwitchTimer);
+        _autoSwitchTimer = null;
+    }
 }
 
 function switchBufferingToFastServer() {
@@ -1436,7 +1451,8 @@ function switchBufferingToFastServer() {
         ? activeFallbackServers
         : (_testedServersList || []).filter(s => s.id !== 'direct');
     if (servers.length > 0) {
-        const target = servers[0];
+        // Prefer AutoEmbed or MultiEmbed or VidLink (whichever is available)
+        const target = servers.find(s => s.id === 'autoembed') || servers.find(s => s.id === 'multiembed') || servers[0];
         showToast(`Switching to ${target.name} for instant playback…`, 'info');
         changePlayerServer(target.id);
     } else {
@@ -3028,29 +3044,21 @@ function setupPlaybackWatchdog(video) {
         resetInPlayerInactivityTimer();
     });
 
-    // Gentle mid-playback stall detection: triggers if actively playing and stalled for 16s
-    // Requires at least 5 seconds of actual playback before considering a server switch.
-    video.addEventListener('waiting', () => {
+    // Responsive stall detection: triggers if stalled for 6s at start or 8s mid-playback
+    const onStallDetected = () => {
         clearStallTimer();
-        if (currentSelectedServer === 'direct' && video.currentTime > 5 && !video.paused) {
+        if (currentSelectedServer === 'direct' && !video.paused) {
+            const timeoutMs = (video.currentTime < 2) ? 6000 : 8000;
             _playbackStallTimer = setTimeout(() => {
-                if (video.currentTime <= _lastObservedTime && !video.paused) {
+                if (!video.paused && (video.currentTime <= _lastObservedTime || video.currentTime < 1)) {
                     handleMidPlaybackStall(video);
                 }
-            }, 16000);
+            }, timeoutMs);
         }
-    });
+    };
 
-    video.addEventListener('stalled', () => {
-        clearStallTimer();
-        if (currentSelectedServer === 'direct' && video.currentTime > 5 && !video.paused) {
-            _playbackStallTimer = setTimeout(() => {
-                if (video.currentTime <= _lastObservedTime && !video.paused) {
-                    handleMidPlaybackStall(video);
-                }
-            }, 16000);
-        }
-    });
+    video.addEventListener('waiting', onStallDetected);
+    video.addEventListener('stalled', onStallDetected);
 
     video.addEventListener('error', () => {
         // Ignore user/script aborts (code 1)
@@ -3066,9 +3074,11 @@ function handleMidPlaybackStall(video) {
     console.warn('Playback stalled or network error detected. Initiating automatic server failover...');
     const resumeTime = (video && video.currentTime > 5) ? video.currentTime : _lastObservedTime;
     
-    // Find next candidate from tested or fallback servers
+    // Find next candidate from tested or fallback servers, preferring high-speed AutoEmbed or MultiEmbed
     const available = _testedServersList.filter(s => s.id !== currentSelectedServer && s.status !== 'failed');
-    const nextServer = available.length > 0 ? available[0] : (activeFallbackServers.find(s => s.id !== currentSelectedServer) || null);
+    const nextServer = available.find(s => s.id === 'autoembed') ||
+                       available.find(s => s.id === 'multiembed') ||
+                       (available.length > 0 ? available[0] : (activeFallbackServers.find(s => s.id !== currentSelectedServer) || null));
 
     if (nextServer) {
         showToast(`Server stalled — switching to ${nextServer.name} at ${formatTime(resumeTime)}…`, 'info');
