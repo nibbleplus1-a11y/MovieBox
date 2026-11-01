@@ -2773,6 +2773,19 @@ function openSettingsSubpage(subpage) {
     pages.forEach(p => p.classList.remove('active'));
     const target = document.getElementById(`settingsPage${subpage.charAt(0).toUpperCase() + subpage.slice(1)}`);
     if (target) target.classList.add('active');
+
+    // Always re-render lists on demand so they're never stale / empty
+    if (subpage === 'quality') {
+        const streams = (activeStreamList && activeStreamList.length > 0) ? activeStreamList : [];
+        const active  = currentPlayingStream || null;
+        renderSettingsQualityList(streams, active);
+    }
+    if (subpage === 'audio') {
+        renderSettingsAudioList(activeDubsList || []);
+    }
+    if (subpage === 'subs') {
+        renderSettingsSubsList(activeCaptionList || []);
+    }
 }
 
 function openSettingsWithSubpage(subpage, event) {
