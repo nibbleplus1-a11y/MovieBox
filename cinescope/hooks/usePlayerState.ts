@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Animated } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -183,6 +183,7 @@ export function usePlayerState() {
         setUseIframe(false);
         setIframeServerName('');
         setStreamUrl(api.proxyUrl(best.url, best.headers?.Referer));
+        setIsPlaying(true);
       } else if (data.fallback_servers && data.fallback_servers.length > 0) {
         // FIX P2 #7: DASH-only streams auto-fallback to first iframe server
         const srv = data.fallback_servers[0];
@@ -190,6 +191,7 @@ export function usePlayerState() {
         setIframeServerName(srv.name || srv.id);
         setStreamUrl(srv.url);
         setUseIframe(true);
+        setIsPlaying(true);
       } else {
         setError('No streams available for this title.');
       }
@@ -222,11 +224,15 @@ export function usePlayerState() {
     if (webViewRef.current) webViewRef.current.injectJavaScript(jsCode);
   };
 
-  // FIX P1 #1: immediately flip isPlaying state (was never called in the original)
+  // Immediately flip isPlaying state and send command to HTML5 video element
   const togglePlayPause = () => {
     const next = !isPlaying;
     setIsPlaying(next);
-    sendVideoCommand(next ? 'window.videoEl && window.videoEl.play();' : 'window.videoEl && window.videoEl.pause();');
+    sendVideoCommand(
+      next
+        ? 'if(window.videoEl){ window.videoEl.muted = false; window.videoEl.play(); }'
+        : 'if(window.videoEl){ window.videoEl.pause(); }'
+    );
     resetControlsTimer();
   };
 
@@ -339,6 +345,10 @@ export function usePlayerState() {
                 }
               }
             }
+            break;
+          case 'error':
+            console.warn('Video error from player:', msg.error);
+            setIsBuffering(false);
             break;
           default:
             break;

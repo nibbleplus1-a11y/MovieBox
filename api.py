@@ -1116,14 +1116,14 @@ _STREAM_PROXY_CLIENT: Optional[httpx.AsyncClient] = None
 def get_stream_proxy_client() -> httpx.AsyncClient:
     global _STREAM_PROXY_CLIENT
     if _STREAM_PROXY_CLIENT is None or _STREAM_PROXY_CLIENT.is_closed:
-        timeout = httpx.Timeout(connect=5.0, read=None, write=30.0, pool=30.0)
-        limits = httpx.Limits(max_keepalive_connections=120, max_connections=350, keepalive_expiry=60.0)
+        timeout = httpx.Timeout(connect=8.0, read=None, write=30.0, pool=30.0)
+        limits = httpx.Limits(max_keepalive_connections=200, max_connections=500, keepalive_expiry=120.0)
         _STREAM_PROXY_CLIENT = httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True)
     return _STREAM_PROXY_CLIENT
 
 _WORKING_REFERERS: Dict[str, str] = {
-    "bcdnxw.hakunaymatata.com": "https://123moviesfree.club/",
-    "hakunaymatata.com": "https://123moviesfree.club/"
+    "bcdnxw.hakunaymatata.com": "https://movieboxonline.net/",
+    "hakunaymatata.com": "https://movieboxonline.net/"
 }
 
 # Cache of direct-accessible CDN URLs (tested in last 5 min)
@@ -1144,7 +1144,7 @@ async def resolve_stream_url(url: str = Query(...), referer: Optional[str] = Non
     if cached:
         return {"direct_url": cached, "referer": referer or _WORKING_REFERERS.get(url_domain, ""), "ok": True}
 
-    best_ref = referer or _WORKING_REFERERS.get(url_domain) or "https://123moviesfree.club/"
+    best_ref = referer or _WORKING_REFERERS.get(url_domain) or "https://movieboxonline.net/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": best_ref,
@@ -1184,7 +1184,7 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
         candidate_refs.append(referer)
 
     if "hakunaymatata.com" in url or "hakunaymatata.com" in url_domain:
-        candidate_refs.extend(["https://123moviesfree.club/", "https://movie-box.co/", "https://movieboxonline.net/", "https://moviebox.ph/"])
+        candidate_refs.extend(["https://movieboxonline.net/", "https://123moviesfree.club/", "https://movie-box.co/", "https://moviebox.ph/"])
     else:
         candidate_refs.extend(["https://movieboxonline.net/", "https://movie-box.co/", "https://api3.aoneroom.com/"])
 
@@ -1264,8 +1264,8 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     async def content_iterator():
         try:
-            # 256KB chunks ensure high throughput and smooth video playback
-            async for chunk in resp.aiter_bytes(chunk_size=262144):
+            # 512KB chunks optimize TCP throughput and eliminate video buffering stalls
+            async for chunk in resp.aiter_bytes(chunk_size=524288):
                 yield chunk
         except Exception:
             pass

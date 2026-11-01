@@ -33,6 +33,7 @@ export const buildPlayerHTML = (videoSrc: string) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="referrer" content="always" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -69,14 +70,44 @@ export const buildPlayerHTML = (videoSrc: string) => {
       }
     }
 
+    function tryPlay() {
+      const p = v.play();
+      if (p !== undefined && p.catch) {
+        p.catch(function(err) {
+          // Fallback if browser blocks unmuted autoplay: start muted then unmute immediately
+          v.muted = true;
+          v.play().then(function() {
+            setTimeout(function() { v.muted = false; }, 300);
+            post({ type: 'playing' });
+          }).catch(function() {
+            post({ type: 'waiting' });
+          });
+        });
+      }
+    }
+
+    v.addEventListener('loadedmetadata', () => {
+      post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
+      tryPlay();
+    });
     v.addEventListener('timeupdate', () => {
       post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
     });
     v.addEventListener('playing', () => post({ type: 'playing' }));
     v.addEventListener('pause', () => post({ type: 'pause' }));
     v.addEventListener('waiting', () => post({ type: 'waiting' }));
-    v.addEventListener('canplay', () => post({ type: 'canplay' }));
+    v.addEventListener('canplay', () => {
+      post({ type: 'canplay' });
+      tryPlay();
+    });
     v.addEventListener('ended', () => post({ type: 'ended' }));
+    v.addEventListener('error', () => {
+      const err = v.error ? (v.error.message || ('Code: ' + v.error.code)) : 'Video playback error';
+      post({ type: 'error', error: err });
+    });
+
+    // Ensure playback kicks off immediately on load
+    tryPlay();
   </script>
 </body>
 </html>`;
@@ -177,7 +208,11 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
       <WebView
         ref={webViewRef}
         key={streamUrl}
-        source={{ html: buildPlayerHTML(streamUrl) }}
+        source={{
+          html: buildPlayerHTML(streamUrl),
+          baseUrl: 'https://movieboxonline.net/',
+        }}
+        originWhitelist={['*']}
         style={styles.webview}
         allowsFullscreenVideo={false}
         mediaPlaybackRequiresUserAction={false}
