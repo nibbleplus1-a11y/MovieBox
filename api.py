@@ -1818,33 +1818,50 @@ def search_online_subtitles(title: str = Query(..., min_length=1), imdb_id: Opti
         url = f"https://rest.opensubtitles.org/search/query-{safe_q}/sublanguageid-all"
 
     results = []
+    seen = set()
+
+    def _parse_items(items):
+        for item in items:
+            dl = item.get("SubDownloadLink")
+            if not dl or dl in seen:
+                continue
+            seen.add(dl)
+            lan_name = item.get("LanguageName") or "English"
+            lan_code = item.get("SubLanguageID") or "en"
+            if lang and lang.lower() != "all" and lan_code.lower() != lang.lower() and lang.lower() not in lan_name.lower():
+                continue
+            results.append({
+                "id": str(item.get("IDSubtitleFile") or len(results) + 1),
+                "language": lan_name,
+                "code": lan_code,
+                "filename": item.get("SubFileName") or f"{title}.srt",
+                "downloads": str(item.get("SubDownloadsCnt") or "0"),
+                "rating": str(item.get("SubRating") or "0"),
+                "download_url": dl,
+                "proxy_url": f"/api/proxy/online-caption?url={urllib.parse.quote(dl)}"
+            })
+
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8", errors="replace"))
             if isinstance(data, list):
-                seen = set()
-                for item in data:
-                    dl = item.get("SubDownloadLink")
-                    if not dl or dl in seen:
-                        continue
-                    seen.add(dl)
-                    lan_name = item.get("LanguageName") or "English"
-                    lan_code = item.get("SubLanguageID") or "en"
-                    if lang and lang.lower() != "all" and lan_code.lower() != lang.lower() and lang.lower() not in lan_name.lower():
-                        continue
-                    results.append({
-                        "id": str(item.get("IDSubtitleFile") or len(results) + 1),
-                        "language": lan_name,
-                        "code": lan_code,
-                        "filename": item.get("SubFileName") or f"{title}.srt",
-                        "downloads": str(item.get("SubDownloadsCnt") or "0"),
-                        "rating": str(item.get("SubRating") or "0"),
-                        "download_url": dl,
-                        "proxy_url": f"/api/proxy/online-caption?url={urllib.parse.quote(dl)}"
-                    })
+                _parse_items(data)
     except Exception:
         pass
+
+    # If imdb_id search returned no results, retry with title query
+    if not results and imdb_id and title:
+        try:
+            safe_q = urllib.parse.quote(title.strip())
+            fallback_url = f"https://rest.opensubtitles.org/search/query-{safe_q}/sublanguageid-all"
+            req = urllib.request.Request(fallback_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+                if isinstance(data, list):
+                    _parse_items(data)
+        except Exception:
+            pass
 
     return {
         "title": title,

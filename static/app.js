@@ -1309,6 +1309,7 @@ function getCinemaVideoElement() {
             video = document.createElement('video');
             video.id = 'cinemaVideo';
             video.setAttribute('playsinline', '');
+            video.setAttribute('crossorigin', 'anonymous');
             const ambient = document.getElementById('playerAmbientGlow');
             if (ambient && ambient.nextSibling) {
                 stage.insertBefore(video, ambient.nextSibling);
@@ -1374,8 +1375,22 @@ function setCinemaVideoSource(src, stream, titleText) {
     const spinner = document.getElementById('videoBufferingSpinner');
     if (spinner) spinner.style.display = 'flex';
 
+    // Always ensure crossorigin is set before adding tracks
+    if (video && !video.getAttribute('crossorigin')) {
+        video.setAttribute('crossorigin', 'anonymous');
+    }
+
     if (plyrInstance) {
         try {
+            // Build track descriptors for Plyr from active caption list
+            const trackDescriptors = (activeCaptionList || []).map((c, idx) => ({
+                kind: 'captions',
+                label: c.language || 'Unknown',
+                srclang: c.code || 'en',
+                src: `/api/proxy/caption?url=${encodeURIComponent(c.url)}`,
+                default: c.url === (currentSelectedCaption || '') || (idx === 0 && !currentSelectedCaption)
+            }));
+
             plyrInstance.source = {
                 type: 'video',
                 title: titleText || (activeMediaMeta && activeMediaMeta.title) || 'CineScope Stream',
@@ -1385,8 +1400,30 @@ function setCinemaVideoSource(src, stream, titleText) {
                         type: isHls ? 'application/x-mpegURL' : 'video/mp4',
                         size: stream ? (stream.quality_value || 1080) : 1080
                     }
-                ]
+                ],
+                tracks: trackDescriptors
             };
+
+            // Re-inject tracks manually as Plyr sometimes discards them
+            if (trackDescriptors.length > 0 && video) {
+                setTimeout(() => {
+                    const existingTracks = video.querySelectorAll('track');
+                    if (existingTracks.length === 0) {
+                        trackDescriptors.forEach(td => {
+                            const t = document.createElement('track');
+                            t.kind = td.kind;
+                            t.label = td.label;
+                            t.srclang = td.srclang;
+                            t.src = td.src;
+                            if (td.default) { t.default = true; }
+                            t.addEventListener('load', function() { if (this.track) this.track.mode = 'showing'; });
+                            video.appendChild(t);
+                            if (t.track) t.track.mode = 'showing';
+                        });
+                        try { if (plyrInstance) plyrInstance.toggleCaptions(true); } catch {}
+                    }
+                }, 400);
+            }
         } catch (e) {
             console.warn('Plyr source setter warning:', e);
             if (video && video.src !== src) {
@@ -3512,11 +3549,22 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
                 if (seekToTime > 0) {
                     setTimeout(() => { if (plyrInstance) plyrInstance.currentTime = seekToTime; }, 300);
                 }
+                // Ensure UI is synced after successful unmuted autoplay
+                const slider = document.getElementById('playerVolumeSlider');
+                const vid = getCinemaVideoElement();
+                if (vid && !vid.muted && slider) slider.value = vid.volume || 1;
+                updateVolumeIcon();
             }).catch(err => {
                 console.warn('Autoplay prevented. Retrying muted:', err);
                 plyrInstance.muted = true;
+                const vid = getCinemaVideoElement();
+                if (vid) vid.muted = true;
+                // Sync slider to show muted state so user knows
+                const slider = document.getElementById('playerVolumeSlider');
+                if (slider) slider.value = 0;
+                updateVolumeIcon();
                 plyrInstance.play().then(() => {
-                    showToast('Playback started (Muted — click volume to unmute)', 'info');
+                    showToast('🔇 Audio muted — tap 🔊 or click anywhere to unmute', 'info');
                 }).catch(() => {
                     showToast('Click play button to start watching', 'info');
                 });
@@ -3533,8 +3581,30 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     renderPlayerSeriesRibbon();
     renderPlayerServerPills();
 
-    // Netflix auto-hide cursor during playback
+    // Unmute on first user click/tap anywhere on the player stage (fixes browser autoplay mute)
     const stageEl = document.getElementById('videoStage');
+    if (stageEl && !stageEl.dataset.unmuteListenerBound) {
+        stageEl.dataset.unmuteListenerBound = 'true';
+        const _unmuteOnInteraction = () => {
+            const vid = getCinemaVideoElement();
+            if (vid && vid.muted) {
+                vid.muted = false;
+                if (plyrInstance) plyrInstance.muted = false;
+                vid.volume = 1;
+                if (plyrInstance) plyrInstance.volume = 1;
+                const slider = document.getElementById('playerVolumeSlider');
+                if (slider) slider.value = 1;
+                updateVolumeIcon();
+                showToast('🔊 Audio restored', 'success');
+            }
+            stageEl.removeEventListener('click', _unmuteOnInteraction);
+            stageEl.removeEventListener('touchstart', _unmuteOnInteraction);
+        };
+        stageEl.addEventListener('click', _unmuteOnInteraction);
+        stageEl.addEventListener('touchstart', _unmuteOnInteraction, { passive: true });
+    }
+
+    // Netflix auto-hide cursor during playback
     if (stageEl && !stageEl.dataset.cursorBound) {
         stageEl.dataset.cursorBound = 'true';
         let curTimer = null;
@@ -3710,13 +3780,18 @@ function openOnlineSubtitlesModal(event) {
     safeText('onlineSubsMovieTitle', `${title}${year}`);
     safeAttr('onlineSubQueryInput', 'value', title);
 
+    // Must add .active class — CSS hides the modal via :not(.active) with !important
     modal.style.display = 'flex';
+    modal.classList.add('active');
     executeOnlineSubSearch();
 }
 
 function closeOnlineSubtitlesModal() {
     const modal = document.getElementById('onlineSubsModal');
-    if (modal) modal.style.display = 'none';
+    if (modal) {
+        modal.classList.remove('active');
+        modal.style.display = 'none';
+    }
 }
 
 async function executeOnlineSubSearch() {
