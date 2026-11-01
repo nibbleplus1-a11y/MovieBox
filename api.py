@@ -1803,8 +1803,21 @@ def get_captions(subject_id: str, se: int = 0, ep: int = 0, stream_id: Optional[
     }
 
 @app.get("/api/subtitles/online")
-def search_online_subtitles(title: str = Query(..., min_length=1), imdb_id: Optional[str] = None, se: int = 0, ep: int = 0, lang: Optional[str] = None):
+def search_online_subtitles(title: str = Query(..., min_length=1), year: Optional[str] = None, imdb_id: Optional[str] = None, se: int = 0, ep: int = 0, lang: Optional[str] = None):
     headers = {"User-Agent": "TemporaryUserAgent"}
+    
+    # Strip dub annotations like [Hindi], (Dubbed) from title for accurate subtitle matching
+    clean_title = re.sub(r'[\[\(].*?[\]\)]', '', title).strip()
+    
+    # Auto-resolve exact IMDb ID using Title + Year if not provided
+    if not imdb_id and clean_title:
+        try:
+            resolved = resolve_imdb_id(clean_title, year=year, is_series=(se > 0 or ep > 0))
+            if resolved:
+                imdb_id = resolved
+        except Exception:
+            pass
+
     url = None
     if imdb_id:
         num = imdb_id.lower().replace("tt", "").strip()
@@ -1814,7 +1827,8 @@ def search_online_subtitles(title: str = Query(..., min_length=1), imdb_id: Opti
             else:
                 url = f"https://rest.opensubtitles.org/search/imdbid-{num}/sublanguageid-all"
     if not url:
-        safe_q = urllib.parse.quote(title.strip())
+        query_str = f"{clean_title} {year}".strip() if year else clean_title
+        safe_q = urllib.parse.quote(query_str)
         url = f"https://rest.opensubtitles.org/search/query-{safe_q}/sublanguageid-all"
 
     results = []
@@ -1830,13 +1844,25 @@ def search_online_subtitles(title: str = Query(..., min_length=1), imdb_id: Opti
             lan_code = item.get("SubLanguageID") or "en"
             if lang and lang.lower() != "all" and lan_code.lower() != lang.lower() and lang.lower() not in lan_name.lower():
                 continue
+            
+            try:
+                dl_count = int(item.get("SubDownloadsCnt") or 0)
+            except Exception:
+                dl_count = 0
+            try:
+                rating_val = float(item.get("SubRating") or 0)
+            except Exception:
+                rating_val = 0.0
+
             results.append({
                 "id": str(item.get("IDSubtitleFile") or len(results) + 1),
                 "language": lan_name,
                 "code": lan_code,
-                "filename": item.get("SubFileName") or f"{title}.srt",
-                "downloads": str(item.get("SubDownloadsCnt") or "0"),
+                "filename": item.get("SubFileName") or f"{clean_title}.srt",
+                "downloads": str(dl_count),
+                "downloads_num": dl_count,
                 "rating": str(item.get("SubRating") or "0"),
+                "rating_num": rating_val,
                 "download_url": dl,
                 "proxy_url": f"/api/proxy/online-caption?url={urllib.parse.quote(dl)}"
             })
@@ -1850,10 +1876,11 @@ def search_online_subtitles(title: str = Query(..., min_length=1), imdb_id: Opti
     except Exception:
         pass
 
-    # If imdb_id search returned no results, retry with title query
-    if not results and imdb_id and title:
+    # If imdb_id search returned no results, retry with clean title query
+    if not results and imdb_id and clean_title:
         try:
-            safe_q = urllib.parse.quote(title.strip())
+            query_str = f"{clean_title} {year}".strip() if year else clean_title
+            safe_q = urllib.parse.quote(query_str)
             fallback_url = f"https://rest.opensubtitles.org/search/query-{safe_q}/sublanguageid-all"
             req = urllib.request.Request(fallback_url, headers=headers)
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1862,6 +1889,9 @@ def search_online_subtitles(title: str = Query(..., min_length=1), imdb_id: Opti
                     _parse_items(data)
         except Exception:
             pass
+
+    # Sort subtitles by rating and download count so top match is always highest quality
+    results.sort(key=lambda x: (x.get("rating_num", 0), x.get("downloads_num", 0)), reverse=True)
 
     return {
         "title": title,

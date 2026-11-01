@@ -751,13 +751,16 @@
                                             <span>Subtitles</span>
                                         </div>
                                         <div class="settings-subs-tools">
+                                            <button class="btn-sub-tool" onclick="autoDetectAndApplySubtitle(event)" style="background: rgba(229, 9, 20, 0.2); border-color: rgba(229, 9, 20, 0.4); color: #fff;">
+                                                ⚡ Auto-Match & Apply
+                                            </button>
+                                            <button class="btn-sub-tool" onclick="openOnlineSubtitlesModal(event)">
+                                                🌐 Browse Library
+                                            </button>
                                             <label class="btn-sub-tool" title="Upload subtitle file (.srt, .vtt)">
-                                                📂 Upload File (.srt)
+                                                📂 Upload (.srt)
                                                 <input type="file" id="localSubFileInput" accept=".srt,.vtt,.txt" style="display:none;" onchange="handleLocalSubtitleUpload(event)">
                                             </label>
-                                            <button class="btn-sub-tool" onclick="openOnlineSubtitlesModal(event)">
-                                                🌐 Search Online
-                                            </button>
                                         </div>
                                         <div class="settings-options-list" id="settingsSubsOptions"></div>
                                     </div>
