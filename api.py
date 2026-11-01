@@ -1277,6 +1277,13 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     return StreamingResponse(content_iterator(), status_code=resp.status_code, headers=response_headers)
 
+def clean_to_webvtt(content: str) -> str:
+    content = content.replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n")
+    if content.strip().startswith("WEBVTT"):
+        return content.strip() + "\n"
+    converted = re.sub(r"(\d{1,2}:\d{2}:\d{2}),(\d{1,3})", r"\1.\2", content)
+    return "WEBVTT\n\n" + converted.strip() + "\n"
+
 @app.get("/api/proxy/caption")
 async def proxy_caption(url: str = Query(...), referer: Optional[str] = None):
     headers = {
@@ -1292,10 +1299,7 @@ async def proxy_caption(url: str = Query(...), referer: Optional[str] = None):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch subtitle: {str(e)}")
 
-    if "WEBVTT" not in content[:20]:
-        converted = re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", content)
-        content = "WEBVTT\n\n" + converted
-
+    content = clean_to_webvtt(content)
     return Response(content=content, media_type="text/vtt; charset=utf-8", headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/api/proxy/online-caption")
@@ -1319,10 +1323,7 @@ async def proxy_online_caption(url: str = Query(...)):
         except Exception:
             content = raw_bytes.decode("latin-1", errors="replace")
 
-    if not content.strip().startswith("WEBVTT"):
-        converted = re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", content)
-        content = "WEBVTT\n\n" + converted
-
+    content = clean_to_webvtt(content)
     return Response(content=content, media_type="text/vtt; charset=utf-8", headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/search")
@@ -1792,8 +1793,52 @@ async def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Op
     }
 
 @app.get("/api/stream/{subject_id}/captions")
-def get_captions(subject_id: str, se: int = 0, ep: int = 0, stream_id: Optional[str] = None):
-    subs = engine.get_subtitles(subject_id, stream_id=stream_id, season=se, episode=ep)
+async def get_captions(subject_id: str, se: int = 0, ep: int = 0, stream_id: Optional[str] = None):
+    loop = asyncio.get_event_loop()
+    raw_subs = await loop.run_in_executor(_bg_executor, lambda: engine.get_subtitles(subject_id, stream_id=stream_id, season=se, episode=ep))
+    subs = []
+    for s in (raw_subs or []):
+        u = s.get("url") or ""
+        if "/other/" in u or "aa348f2541d13ffe" in u:
+            continue
+        try:
+            sz = int(s.get("size") or 0)
+            if 0 < sz < 500:
+                continue
+        except Exception:
+            pass
+        subs.append(s)
+    
+    # Check if a genuine English subtitle exists
+    def is_genuine_eng(s):
+        lang = (s.get("language") or "").lower()
+        code = (s.get("code") or "").lower()
+        if "pk" in lang or "notice" in lang:
+            return False
+        return "eng" in lang or (code == "en" and "pk" not in lang)
+
+    has_english = any(is_genuine_eng(s) for s in subs)
+    if not has_english:
+        try:
+            details = await loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
+            title = details.get("title") or ""
+            year = str(details.get("release_date") or "")[:4] or None
+            imdb_id = details.get("imdb_id")
+            if title:
+                online_res = await loop.run_in_executor(_bg_executor, lambda: search_online_subtitles(title=title, year=year, imdb_id=imdb_id, se=se, ep=ep, lang="en"))
+                online_subs = (online_res or {}).get("subtitles") or []
+                if online_subs:
+                    best = online_subs[0]
+                    subs.insert(0, {
+                        "id": f"online_{best['id']}",
+                        "language": "English (Auto-Matched)",
+                        "code": "en",
+                        "url": best["proxy_url"],
+                        "filename": best.get("filename", "English.srt")
+                    })
+        except Exception:
+            pass
+
     return {
         "subject_id": subject_id,
         "season": se,

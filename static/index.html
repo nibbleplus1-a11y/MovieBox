@@ -583,8 +583,8 @@
                             Back
                         </button>
                         <span class="in-player-title" id="inPlayerTitle">Movie Title</span>
-                        <span class="in-player-badge" id="inPlayerDubBadge" style="display:none;">Hindi dub</span>
-                        <span class="in-player-badge badge-quality" id="inPlayerQualityBadge">1080p FHD</span>
+                        <button class="in-player-badge in-player-btn-badge" id="inPlayerDubBadge" onclick="openSettingsWithSubpage('audio', event)" style="display:none;" title="Change Audio Track">Hindi dub ▾</button>
+                        <button class="in-player-badge badge-quality in-player-btn-badge" id="inPlayerQualityBadge" onclick="openSettingsWithSubpage('quality', event)" title="Change Video Quality">1080p FHD ▾</button>
                         <div class="in-player-server-wrap" style="position: relative; display: inline-flex;">
                             <button class="in-player-badge badge-server in-player-server-btn" id="inPlayerServerBadge" onclick="toggleInPlayerServerDropdown(event)" title="Change Server">⚡ S1 Direct ▾</button>
                             <div class="in-player-server-dropdown" id="inPlayerServerDropdown" style="display: none;"></div>
@@ -674,6 +674,21 @@
                             <button class="player-ctrl-btn" onclick="toggleMiniPlayer()" title="Mini Player">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="14" x="3" y="5" rx="2"/><rect width="6" height="4" x="13" y="13" rx="1"/></svg>
                             </button>
+
+                            <!-- Dedicated Audio Track Button -->
+                            <button class="player-ctrl-btn" id="playerBottomAudioBtn" onclick="openSettingsWithSubpage('audio', event)" title="Audio Dubs / Language">
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="23"/><line x1="8" x2="16" y1="23" y2="23"/></svg>
+                            </button>
+
+                            <!-- Dedicated Subtitles Button (CC) -->
+                            <button class="player-ctrl-btn" id="playerBottomSubsBtn" onclick="openSettingsWithSubpage('subs', event)" title="Subtitles (CC)">
+                                <span style="font-size:11px; font-weight:800; border:1.5px solid currentColor; border-radius:3px; padding:1px 4px; line-height:1; letter-spacing:-0.5px;">CC</span>
+                            </button>
+
+                            <!-- Dedicated Quality Button (HD) -->
+                            <button class="player-ctrl-btn" id="playerBottomQualityBtn" onclick="openSettingsWithSubpage('quality', event)" title="Change Video Quality">
+                                <span style="font-size:11px; font-weight:800; border:1.5px solid currentColor; border-radius:3px; padding:1px 4px; line-height:1; letter-spacing:-0.5px;">HD</span>
+                            </button>
                             
                             <!-- Unified Settings Menu (Gear Icon) -->
                             <div class="player-settings-wrap">
@@ -751,11 +766,8 @@
                                             <span>Subtitles</span>
                                         </div>
                                         <div class="settings-subs-tools">
-                                            <button class="btn-sub-tool" onclick="autoDetectAndApplySubtitle(event)" style="background: rgba(229, 9, 20, 0.2); border-color: rgba(229, 9, 20, 0.4); color: #fff;">
-                                                ⚡ Auto-Match & Apply
-                                            </button>
-                                            <button class="btn-sub-tool" onclick="openOnlineSubtitlesModal(event)">
-                                                🌐 Browse Library
+                                            <button class="btn-sub-tool" id="btnSearchOnlineSubs" onclick="autoDetectAndApplySubtitle(event)" style="background: rgba(229, 9, 20, 0.25); border-color: rgba(229, 9, 20, 0.5); color: #fff; font-weight:600;" title="Silently check title, season & episode and fetch best subtitle online">
+                                                🌐 Search Online (Auto-Detect)
                                             </button>
                                             <label class="btn-sub-tool" title="Upload subtitle file (.srt, .vtt)">
                                                 📂 Upload (.srt)
@@ -983,63 +995,7 @@
         </div>
     </div>
 
-    <!-- ONLINE SUBTITLES FINDER MODAL -->
-    <div id="onlineSubsModal" class="online-subs-modal" style="display: none;">
-        <div class="online-subs-backdrop" onclick="closeOnlineSubtitlesModal()"></div>
-        <div class="online-subs-card">
-            <div class="online-subs-header">
-                <div>
-                    <h3 class="online-subs-title">🌐 Find Online Subtitles</h3>
-                    <p class="online-subs-sub" id="onlineSubsMovieTitle">Inception (2010)</p>
-                </div>
-                <button class="btn-close" onclick="closeOnlineSubtitlesModal()">✕</button>
-            </div>
 
-            <!-- Search & Language Filter Row -->
-            <div class="online-subs-search-row">
-                <div class="subs-search-input-wrap">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-                    <input type="text" id="onlineSubQueryInput" placeholder="Search title or keyword…" onkeydown="if(event.key==='Enter') executeOnlineSubSearch()">
-                </div>
-                <select id="onlineSubLangSelect" onchange="executeOnlineSubSearch()" class="subs-lang-select">
-                    <option value="all">All Languages</option>
-                    <option value="eng" selected>English</option>
-                    <option value="spa">Spanish (Español)</option>
-                    <option value="fre">French (Français)</option>
-                    <option value="ger">German (Deutsch)</option>
-                    <option value="ita">Italian (Italiano)</option>
-                    <option value="por">Portuguese</option>
-                    <option value="hin">Hindi</option>
-                    <option value="ara">Arabic</option>
-                    <option value="rus">Russian</option>
-                    <option value="tur">Turkish</option>
-                    <option value="ind">Indonesian</option>
-                    <option value="chi">Chinese</option>
-                    <option value="jpn">Japanese</option>
-                    <option value="kor">Korean</option>
-                </select>
-                <button class="btn btn-primary btn-sm" onclick="executeOnlineSubSearch()">
-                    Search
-                </button>
-            </div>
-
-            <!-- Quick Language Filter Pills -->
-            <div class="online-subs-chips-row">
-                <button class="online-chip active" onclick="filterOnlineSubLang('all', this)">All</button>
-                <button class="online-chip" onclick="filterOnlineSubLang('English', this)">English</button>
-                <button class="online-chip" onclick="filterOnlineSubLang('Spanish', this)">Spanish</button>
-                <button class="online-chip" onclick="filterOnlineSubLang('French', this)">French</button>
-                <button class="online-chip" onclick="filterOnlineSubLang('Hindi', this)">Hindi</button>
-                <button class="online-chip" onclick="filterOnlineSubLang('Arabic', this)">Arabic</button>
-                <button class="online-chip" onclick="filterOnlineSubLang('German', this)">German</button>
-            </div>
-
-            <!-- Subtitle Results List -->
-            <div class="online-subs-list" id="onlineSubsList">
-                <div class="subs-empty-state">Click Search to query OpenSubtitles database…</div>
-            </div>
-        </div>
-    </div>
 
     <!-- KEYBOARD SHORTCUTS MODAL -->
     <div id="shortcutsModal" class="shortcuts-modal">

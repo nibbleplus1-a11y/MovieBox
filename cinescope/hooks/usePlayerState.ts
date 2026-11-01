@@ -84,7 +84,9 @@ export function usePlayerState() {
   const fadeAnim         = useRef(new Animated.Value(1)).current;
 
   const epLabel = isSeriesType && currentSeason > 0 ? `S${currentSeason} E${currentEpisode}` : null;
-  const playableStreams  = (streamData?.streams || []).filter(isPlayableStream);
+  const allStreams       = streamData?.streams || [];
+  const mp4Streams       = allStreams.filter(isPlayableStream);
+  const playableStreams  = mp4Streams.length > 0 ? mp4Streams : allStreams;
   const dubsList         = streamData?.dubs || [];
   const fallbackServers  = streamData?.fallback_servers || [];
   const progressRatio    = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;

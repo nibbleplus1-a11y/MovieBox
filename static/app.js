@@ -1221,12 +1221,24 @@ async function switchAudioDub(dubSubjectId, langName) {
             setCinemaVideoSource(newSrc, streamToPlay, activeMediaMeta?.title);
 
             // Update all badges & selectors smoothly
-            safeText('inPlayerDubBadge', langName);
+            safeText('inPlayerDubBadge', `${langName} ▾`);
             safeText('inPlayerCurrentAudioText', `Audio: ${langName}`);
             safeText('settingsValAudio', langName);
             safeText('settingsValQuality', streamToPlay.quality || '1080p');
+            safeText('inPlayerQualityBadge', `${streamToPlay.quality || '1080p'} ▾`);
             renderSettingsAudioList(activeDubsList);
             renderSettingsQualityList(listToUse, streamToPlay);
+
+            // Re-fetch captions for the new audio track to keep subtitles in sync
+            fetch(`/api/stream/${dubSubjectId}/captions?se=${currentSeason}&ep=${currentEpisode}`)
+                .then(r => r.json())
+                .then(cRes => {
+                    if (cRes && cRes.captions && cRes.captions.length > 0) {
+                        activeCaptionList = cRes.captions;
+                        renderSettingsSubsList(activeCaptionList);
+                    }
+                })
+                .catch(() => {});
 
             showToast(`Switched to ${langName}`, 'success');
         } else {
@@ -2763,6 +2775,16 @@ function openSettingsSubpage(subpage) {
     if (target) target.classList.add('active');
 }
 
+function openSettingsWithSubpage(subpage, event) {
+    if (event) event.stopPropagation();
+    const menu = document.getElementById('playerUnifiedSettingsMenu');
+    if (!menu) return;
+    if (!menu.classList.contains('open')) {
+        menu.classList.add('open');
+    }
+    openSettingsSubpage(subpage);
+}
+
 function backToSettingsMain() {
     const pages = document.querySelectorAll('.settings-menu-page');
     pages.forEach(p => p.classList.remove('active'));
@@ -2774,8 +2796,20 @@ function backToSettingsMain() {
 document.addEventListener('click', (e) => {
     const menu = document.getElementById('playerUnifiedSettingsMenu');
     const gearBtn = document.getElementById('playerGearBtn');
+    const qBtn = document.getElementById('playerBottomQualityBtn');
+    const sBtn = document.getElementById('playerBottomSubsBtn');
+    const aBtn = document.getElementById('playerBottomAudioBtn');
+    const qBadge = document.getElementById('inPlayerQualityBadge');
+    const dBadge = document.getElementById('inPlayerDubBadge');
+
     if (menu && menu.classList.contains('open')) {
-        if (!menu.contains(e.target) && (!gearBtn || !gearBtn.contains(e.target))) {
+        const isClickOnToggle = (gearBtn && gearBtn.contains(e.target)) ||
+                                (qBtn && qBtn.contains(e.target)) ||
+                                (sBtn && sBtn.contains(e.target)) ||
+                                (aBtn && aBtn.contains(e.target)) ||
+                                (qBadge && qBadge.contains(e.target)) ||
+                                (dBadge && dBadge.contains(e.target));
+        if (!menu.contains(e.target) && !isClickOnToggle) {
             menu.classList.remove('open');
         }
     }
@@ -2816,21 +2850,56 @@ function selectServerFromGear(serverId) {
 function renderSettingsQualityList(streams, activeStream) {
     const wrap = document.getElementById('settingsQualityOptions');
     if (!wrap) return;
-    const playable = (streams || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
-    const listToRender = playable.length > 0 ? playable : (streams || []);
-    if (!listToRender.length) {
-        wrap.innerHTML = '<div style="padding:12px; color:#94a3b8; font-size:12px;">No alternative qualities detected</div>';
+
+    const streamList = streams || activeStreamList || [];
+    const playable = streamList.filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
+    let listToRender = playable.length > 0 ? playable : streamList;
+
+    if (activeStream && !listToRender.find(s => s.url === activeStream.url)) {
+        listToRender = [activeStream, ...listToRender];
+    }
+
+    // Deduplicate identical resolutions while preserving distinct qualities (1080p, 720p, 480p, etc.)
+    const seenQualities = new Set();
+    const distinctList = [];
+    for (const s of listToRender) {
+        const qKey = `${s.quality || '1080p'}_${s.format || 'MP4'}`;
+        if (!seenQualities.has(qKey)) {
+            seenQualities.add(qKey);
+            distinctList.push(s);
+        }
+    }
+    const finalRenderList = distinctList.length > 0 ? distinctList : listToRender;
+
+    if (!finalRenderList.length) {
+        const q = activeStream ? (activeStream.quality || '1080p') : '1080p';
+        const f = activeStream ? (activeStream.format || 'MP4') : 'MP4';
+        safeText('settingsValQuality', q);
+        safeText('inPlayerQualityBadge', `${q} ▾`);
+        wrap.innerHTML = `
+            <button class="settings-opt-item active">
+                <span>📺 ${escapeHtml(q)} (${escapeHtml(f)})</span>
+                <span style="color:#ff4d4f; font-weight:800;">✓</span>
+            </button>
+            <div style="padding:8px 12px; color:#94a3b8; font-size:11px;">Single direct stream available for this title</div>
+        `;
         return;
     }
-    wrap.innerHTML = listToRender.map(s => {
+
+    wrap.innerHTML = finalRenderList.map(s => {
         const isSel = Boolean(activeStream && (s.url === activeStream.url || s.quality === activeStream.quality));
         const qualityName = s.quality || '1080p';
         const formatName = s.format || 'MP4';
         const sizeInfo = s.size_mb > 0 ? ` · ${s.size_mb} MB` : '';
-        if (isSel) safeText('settingsValQuality', qualityName);
+        const isDash = formatName === 'DASH' || s.url.includes('.mpd');
+        const formatLabel = isDash ? 'Adaptive HD' : formatName;
+        if (isSel) {
+            safeText('settingsValQuality', qualityName);
+            safeText('inPlayerQualityBadge', `${qualityName} ▾`);
+        }
         return `
             <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="selectQualityFromGear('${encodeURIComponent(JSON.stringify(s))}', '${escapeAttr(qualityName)}')">
-                <span>📺 ${escapeHtml(qualityName)} (${escapeHtml(formatName)}${sizeInfo})</span>
+                <span>📺 ${escapeHtml(qualityName)} (${escapeHtml(formatLabel)}${sizeInfo})</span>
                 ${isSel ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
             </button>
         `;
@@ -2840,6 +2909,7 @@ function renderSettingsQualityList(streams, activeStream) {
 function selectQualityFromGear(encodedStream, qualityLabel) {
     changePlayerQuality(encodedStream);
     safeText('settingsValQuality', qualityLabel || '1080p');
+    safeText('inPlayerQualityBadge', `${qualityLabel || '1080p'} ▾`);
     const menu = document.getElementById('playerUnifiedSettingsMenu');
     if (menu) menu.classList.remove('open');
 }
@@ -2847,22 +2917,47 @@ function selectQualityFromGear(encodedStream, qualityLabel) {
 function renderSettingsAudioList(dubs) {
     const wrap = document.getElementById('settingsAudioOptions');
     if (!wrap) return;
-    if (!dubs || dubs.length === 0) {
-        wrap.innerHTML = '<button class="settings-opt-item active">Original Audio ✓</button>';
+
+    const dubsList = dubs || [];
+    const originalSubId = (activeMediaMeta && activeMediaMeta.subject_id) ? String(activeMediaMeta.subject_id) : '';
+    const isPlayingOrig = !currentPlayingSubjectId || String(currentPlayingSubjectId) === originalSubId || !dubsList.some(d => String(d.subject_id) === String(currentPlayingSubjectId));
+
+    if (isPlayingOrig) {
         safeText('settingsValAudio', 'Original');
-        return;
+        safeText('inPlayerDubBadge', 'Original Audio ▾');
     }
-    wrap.innerHTML = dubs.map(d => {
-        const isSel = (d.subject_id === currentPlayingSubjectId);
+
+    let html = `
+        <button class="settings-opt-item ${isPlayingOrig ? 'active' : ''}" onclick="selectAudioFromGear('${originalSubId}', 'Original Audio')">
+            <span>🌐 Original Audio</span>
+            ${isPlayingOrig ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
+        </button>
+    `;
+
+    html += dubsList.filter(d => String(d.subject_id) !== originalSubId && (d.lang_name || d.language) !== 'Original Audio').map(d => {
+        const isSel = (String(d.subject_id) === String(currentPlayingSubjectId));
         const name = d.lang_name || d.language || 'Audio Track';
-        if (isSel) safeText('settingsValAudio', name);
+        if (isSel) {
+            safeText('settingsValAudio', name);
+            safeText('inPlayerDubBadge', `${name} ▾`);
+        }
         return `
-            <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="changePlayerAudioDub('${d.subject_id}')">
+            <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="selectAudioFromGear('${d.subject_id}', '${escapeAttr(name)}')">
                 <span>🌐 ${escapeHtml(name)}</span>
-                ${isSel ? '<span>✓</span>' : ''}
+                ${isSel ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
             </button>
         `;
     }).join('');
+
+    wrap.innerHTML = html;
+}
+
+function selectAudioFromGear(dubSubjectId, dubName) {
+    changePlayerAudioDub(dubSubjectId);
+    safeText('settingsValAudio', dubName || 'Audio');
+    safeText('inPlayerDubBadge', `${dubName || 'Audio'} ▾`);
+    const menu = document.getElementById('playerUnifiedSettingsMenu');
+    if (menu) menu.classList.remove('open');
 }
 
 function renderSettingsSubsList(captions) {
@@ -2871,7 +2966,7 @@ function renderSettingsSubsList(captions) {
     const curSub = (typeof currentSelectedCaption !== 'undefined') ? currentSelectedCaption : '';
     let html = `<button class="settings-opt-item ${(!curSub) ? 'active' : ''}" onclick="changePlayerSubtitle('')">
         <span>Off</span>
-        ${(!curSub) ? '<span>✓</span>' : ''}
+        ${(!curSub) ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
     </button>`;
     if (captions && captions.length > 0) {
         html += captions.map(c => {
@@ -2879,11 +2974,13 @@ function renderSettingsSubsList(captions) {
             const label = c.lang_name || c.language || 'English';
             return `
                 <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="changePlayerSubtitle('${escapeAttr(c.url)}')">
-                    <span>${escapeHtml(label)}</span>
-                    ${isSel ? '<span>✓</span>' : ''}
+                    <span>💬 ${escapeHtml(label)}</span>
+                    ${isSel ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
                 </button>
             `;
         }).join('');
+    } else {
+        html += `<div style="padding:10px 14px; color:#94a3b8; font-size:12px;">Click "Search Online" above to auto-match subtitles for this title.</div>`;
     }
     wrap.innerHTML = html;
 }
@@ -3504,24 +3601,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         renderSettingsSubsList(activeCaptionList);
 
         if (selectedSub) {
-            safeText('inPlayerCurrentSubText', `Subtitles: ${selectedSub.language || 'English'}`);
-            const proxyVttUrl = `/api/proxy/caption?url=${encodeURIComponent(selectedSub.url)}`;
-            const track = document.createElement('track');
-            track.kind = 'captions';
-            track.label = selectedSub.language || 'English';
-            track.srclang = selectedSub.code || 'en';
-            track.src = proxyVttUrl;
-            track.default = true;
-            track.addEventListener('load', function() {
-                if (this.track) this.track.mode = 'hidden';
-            });
-            if (video) {
-                video.appendChild(track);
-                if (track.track) track.track.mode = 'hidden';
-            }
-            if (plyrInstance) {
-                try { plyrInstance.toggleCaptions(true); } catch {}
-            }
+            changePlayerSubtitle(selectedSub.url);
         }
     } else {
         if (subSyncGroup) subSyncGroup.style.display = 'none';
@@ -3801,17 +3881,28 @@ function changePlayerSubtitle(subUrl) {
     track.src = finalTrackUrl;
     track.default = true;
     
-    // CRITICAL FIX FOR DUPLICATE SUBTITLES:
-    // Plyr renders custom styled captions inside its own DOM overlay (.plyr__captions).
-    // If track.mode is 'showing', the browser's native video engine ALSO draws subtitles,
-    // resulting in 2 overlapping subtitles! Setting mode to 'hidden' gives cue access to Plyr
-    // while preventing the browser's native duplicate renderer.
     track.addEventListener('load', function() {
-        if (this.track) this.track.mode = 'hidden';
+        if (this.track) {
+            this.track.mode = 'showing';
+        }
+        if (plyrInstance) {
+            try { plyrInstance.toggleCaptions(true); } catch {}
+            try {
+                if (video && video.textTracks) {
+                    for (let i = 0; i < video.textTracks.length; i++) {
+                        if (video.textTracks[i].label === displayLabel || video.textTracks[i].language === code) {
+                            plyrInstance.currentTrack = i;
+                            break;
+                        }
+                    }
+                }
+            } catch {}
+        }
     });
+
     if (video) {
         video.appendChild(track);
-        if (track.track) track.track.mode = 'hidden';
+        if (track.track) track.track.mode = 'showing';
     }
 
     if (plyrInstance) {
@@ -3848,8 +3939,9 @@ function handleLocalSubtitleUpload(event) {
             return;
         }
         // Convert SRT to WebVTT if needed
+        content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         if (!content.trim().startsWith('WEBVTT')) {
-            content = "WEBVTT\n\n" + content.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+            content = "WEBVTT\n\n" + content.replace(/(\d{1,2}:\d{2}:\d{2}),(\d{1,3})/g, '$1.$2');
         }
         const blob = new Blob([content], { type: 'text/vtt; charset=utf-8' });
         const blobUrl = URL.createObjectURL(blob);
@@ -3863,7 +3955,6 @@ function handleLocalSubtitleUpload(event) {
         };
         activeCaptionList.unshift(customItem);
         changePlayerSubtitle(blobUrl);
-        closeAllInPlayerMenus();
         showToast(`Loaded local subtitle: ${file.name}`, 'success');
     };
     reader.onerror = function() {
@@ -3873,135 +3964,74 @@ function handleLocalSubtitleUpload(event) {
     event.target.value = '';
 }
 
-let allOnlineSubs = [];
-let currentOnlineSubLang = 'all';
-
-// Auto-detect and apply matching subtitle automatically without searching lists
+// Auto-detect and fetch matching subtitles online WITHOUT opening any popup modal
 async function autoDetectAndApplySubtitle(event) {
     if (event) event.stopPropagation();
+
     const title = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : (document.getElementById('playerMediaTitle')?.textContent || '');
     const cleanTitle = title.replace(/[\[\(].*?[\]\)]/g, '').trim();
     const year = activeMediaMeta?.release_date ? activeMediaMeta.release_date.slice(0, 4) : (activeMediaMeta?.year || '');
     const imdbId = (activeMediaMeta && activeMediaMeta.imdb_id) ? activeMediaMeta.imdb_id : '';
     const se = currentSeason || 0;
     const ep = currentEpisode || 0;
+    const isSeries = Boolean(se > 0 || ep > 0 || (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series')));
 
-    showToast(`Auto-detecting best subtitle for ${cleanTitle}…`, 'info');
+    const epInfo = (isSeries && se > 0) ? ` S${se}E${ep || 1}` : '';
+    showToast(`Searching online subtitles for ${cleanTitle}${epInfo}…`, 'info');
+
+    const btn = document.getElementById('btnSearchOnlineSubs');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Searching Online…';
+    }
 
     try {
         const url = `/api/subtitles/online?title=${encodeURIComponent(cleanTitle)}&year=${encodeURIComponent(year)}&imdb_id=${encodeURIComponent(imdbId)}&se=${se}&ep=${ep}&lang=all`;
         const res = await fetch(url).then(r => r.json());
         const subs = res.subtitles || [];
+
         if (!subs || subs.length === 0) {
-            showToast('No online subtitles found for this title', 'warning');
+            showToast(`No online subtitles found for "${cleanTitle}"`, 'warning');
             return;
         }
 
-        // Prefer English first, or highest rated/most downloaded
-        const best = subs.find(s => (s.code && s.code.toLowerCase() === 'en') || (s.language && s.language.toLowerCase().includes('english'))) || subs[0];
-        
-        applyOnlineSubtitle(best.proxy_url, best.language, best.filename);
-        showToast(`Auto-applied: ${best.language} (${best.filename})`, 'success');
+        // Add all fetched online subtitles to activeCaptionList without duplicates
+        const existingUrls = new Set((activeCaptionList || []).map(c => c.url));
+        const newSubs = [];
+        for (const s of subs) {
+            if (!existingUrls.has(s.proxy_url)) {
+                newSubs.push({
+                    id: `online_${s.id}`,
+                    language: `🌐 ${s.language}`,
+                    code: s.code || 'en',
+                    url: s.proxy_url,
+                    filename: s.filename,
+                    isOnline: true
+                });
+                existingUrls.add(s.proxy_url);
+            }
+        }
+
+        activeCaptionList = [...newSubs, ...(activeCaptionList || [])];
+
+        // Find best English subtitle or top rated
+        const best = newSubs.find(s => (s.code && s.code.toLowerCase() === 'en') || (s.language && s.language.toLowerCase().includes('english'))) || newSubs[0];
+
+        if (best) {
+            changePlayerSubtitle(best.url);
+            showToast(`Auto-applied: ${best.language} (${newSubs.length} subtitles loaded)`, 'success');
+        } else {
+            renderSettingsSubsList(activeCaptionList);
+            showToast(`Loaded ${newSubs.length} online subtitles`, 'success');
+        }
     } catch (err) {
-        showToast(`Subtitle search failed: ${err.message}`, 'error');
+        showToast(`Online subtitle search failed: ${err.message}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '🌐 Search Online (Auto-Detect)';
+        }
     }
-}
-
-function openOnlineSubtitlesModal(event) {
-    if (event) event.stopPropagation();
-    closeAllInPlayerMenus();
-    const modal = document.getElementById('onlineSubsModal');
-    if (!modal) return;
-
-    // Move modal inside #videoStage so it is fully visible and interactive in Fullscreen mode!
-    const stage = document.getElementById('videoStage');
-    if (stage && modal.parentElement !== stage) {
-        stage.appendChild(modal);
-    }
-
-    const title = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : (document.getElementById('playerMediaTitle')?.textContent || '');
-    const cleanTitle = title.replace(/[\[\(].*?[\]\)]/g, '').trim();
-    const year = activeMediaMeta?.release_date ? activeMediaMeta.release_date.slice(0, 4) : (activeMediaMeta?.year || '');
-    safeText('onlineSubsMovieTitle', `${cleanTitle}${year ? ` (${year})` : ''}`);
-    safeAttr('onlineSubQueryInput', 'value', cleanTitle);
-
-    modal.style.display = 'flex';
-    modal.classList.add('active');
-    executeOnlineSubSearch();
-}
-
-function closeOnlineSubtitlesModal() {
-    const modal = document.getElementById('onlineSubsModal');
-    if (modal) {
-        modal.classList.remove('active');
-        modal.style.display = 'none';
-    }
-}
-
-async function executeOnlineSubSearch() {
-    const listEl = document.getElementById('onlineSubsList');
-    if (!listEl) return;
-    const rawQuery = document.getElementById('onlineSubQueryInput')?.value.trim() || (activeMediaMeta?.title || '');
-    const query = rawQuery.replace(/[\[\(].*?[\]\)]/g, '').trim();
-    const lang = document.getElementById('onlineSubLangSelect')?.value || 'all';
-    const year = activeMediaMeta?.release_date ? activeMediaMeta.release_date.slice(0, 4) : (activeMediaMeta?.year || '');
-
-    if (!query) {
-        listEl.innerHTML = '<div class="subs-empty-state">Please enter a movie title to search subtitles.</div>';
-        return;
-    }
-
-    listEl.innerHTML = '<div class="subs-empty-state"><div class="spinner" style="width:24px;height:24px;margin:0 auto 10px;"></div>Searching OpenSubtitles library…</div>';
-
-    try {
-        const imdbId = (activeMediaMeta && activeMediaMeta.imdb_id) ? activeMediaMeta.imdb_id : '';
-        const se = currentSeason || 0;
-        const ep = currentEpisode || 0;
-        const url = `/api/subtitles/online?title=${encodeURIComponent(query)}&year=${encodeURIComponent(year)}&imdb_id=${encodeURIComponent(imdbId)}&se=${se}&ep=${ep}&lang=${encodeURIComponent(lang)}`;
-        const res = await fetch(url).then(r => r.json());
-        allOnlineSubs = res.subtitles || [];
-        renderOnlineSubsList();
-    } catch (err) {
-        listEl.innerHTML = `<div class="subs-empty-state" style="color:#ef4444;">Failed to fetch subtitles: ${err.message}</div>`;
-    }
-}
-
-function filterOnlineSubLang(lang, btn) {
-    currentOnlineSubLang = lang;
-    document.querySelectorAll('.online-chip').forEach(b => b.classList.remove('active'));
-    if (btn) btn.classList.add('active');
-    renderOnlineSubsList();
-}
-
-function renderOnlineSubsList() {
-    const listEl = document.getElementById('onlineSubsList');
-    if (!listEl) return;
-
-    let filtered = allOnlineSubs;
-    if (currentOnlineSubLang && currentOnlineSubLang !== 'all') {
-        filtered = allOnlineSubs.filter(s => s.language.toLowerCase() === currentOnlineSubLang.toLowerCase() || s.code.toLowerCase() === currentOnlineSubLang.toLowerCase());
-    }
-
-    if (!filtered || filtered.length === 0) {
-        listEl.innerHTML = '<div class="subs-empty-state">No online subtitles found for this selection. Try searching another keyword or language.</div>';
-        return;
-    }
-
-    listEl.innerHTML = filtered.map(s => `
-        <div class="online-sub-item">
-            <div class="online-sub-info">
-                <div class="online-sub-lang-row">
-                    <span class="online-sub-lang">${escapeHtml(s.language)}</span>
-                    <span class="online-sub-badge">${escapeHtml(s.code.toUpperCase())}</span>
-                </div>
-                <div class="online-sub-filename" title="${escapeAttr(s.filename)}">${escapeHtml(s.filename)}</div>
-                <div class="online-sub-stats">Downloads: ${s.downloads || '0'} · Rating: ★ ${s.rating || 'N/A'}</div>
-            </div>
-            <button class="btn-apply-sub" onclick="applyOnlineSubtitle('${escapeAttr(s.proxy_url)}', '${escapeAttr(s.language)}', '${escapeAttr(s.filename)}')">
-                Apply Track
-            </button>
-        </div>
-    `).join('');
 }
 
 function applyOnlineSubtitle(proxyUrl, lang, filename) {
@@ -4015,9 +4045,6 @@ function applyOnlineSubtitle(proxyUrl, lang, filename) {
     };
     activeCaptionList.unshift(onlineItem);
     changePlayerSubtitle(proxyUrl);
-    safeText('settingsValSubs', cleanLang);
-    safeText('inPlayerCurrentSubText', `Subtitles: ${cleanLang}`);
-    closeOnlineSubtitlesModal();
     showToast(`Loaded subtitle: ${cleanLang}`, 'success');
 }
 
