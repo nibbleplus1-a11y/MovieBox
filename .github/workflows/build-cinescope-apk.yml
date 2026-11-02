@@ -36,31 +36,17 @@ jobs:
       - name: Build Debug APK
         working-directory: moviebox_android
         run: |
-          gradle assembleDebug --stacktrace --no-daemon 2>&1 | tee ../gradle_build.log
+          gradle assembleDebug --stacktrace --no-daemon
 
-      - name: Find and Stage APK
+      - name: Locate Built APK
         working-directory: moviebox_android
         run: |
-          mkdir -p output
-          APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
-          if [ -f "$APK_FILE" ]; then
-            cp "$APK_FILE" output/cinescope-debug.apk
-            echo "Built APK size: $(ls -lh output/cinescope-debug.apk)"
-          else
-            echo "ERROR: APK not found in app/build/outputs/apk/debug"
-            exit 1
-          fi
+          ls -laR app/build/outputs/ || true
+          find . -name "*.apk"
 
-      - name: Upload APK Artifact
+      - name: Upload CineScope APK
         uses: actions/upload-artifact@v4
         with:
           name: cinescope-oracle-debug-apk
-          path: moviebox_android/output/cinescope-debug.apk
+          path: moviebox_android/**/*.apk
           retention-days: 30
-
-      - name: Upload Build Log if Failed
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-build-log
-          path: gradle_build.log
