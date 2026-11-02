@@ -25,6 +25,7 @@ moviebox_android/build/
 moviebox_android/app/build/
 moviebox_android/local.properties
 *.keystore
+!cinescope/android/app/debug.keystore
 *.jks
 
 # React Native / Node

@@ -45,6 +45,15 @@ jobs:
         working-directory: cinescope/android
         run: chmod +x gradlew
 
+      - name: Ensure debug.keystore exists
+        run: |
+          KEYSTORE="cinescope/android/app/debug.keystore"
+          if [ ! -f "$KEYSTORE" ]; then
+            echo "Generating fallback debug.keystore..."
+            keytool -genkey -v -keystore "$KEYSTORE" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          ls -lh "$KEYSTORE"
+
       - name: Build Standalone Release APK
         working-directory: cinescope/android
         run: |
