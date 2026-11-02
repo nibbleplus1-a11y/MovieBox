@@ -758,8 +758,10 @@ body {
     border: 1px solid var(--border);
     overflow: hidden;
     cursor: pointer;
-    transition: all var(--t-med);
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease;
     position: relative;
+    content-visibility: auto;
+    contain-intrinsic-size: 172px 258px;
 }
 
 .media-card:hover {
@@ -791,8 +793,7 @@ body {
 .card-badge-rating {
     position: absolute;
     top: 8px; left: 8px;
-    background: rgba(0,0,0,0.75);
-    backdrop-filter: blur(8px);
+    background: rgba(10, 15, 29, 0.9);
     border: 1px solid rgba(245, 158, 11, 0.3);
     color: #fcd34d;
     font-size: 11px;
@@ -804,8 +805,7 @@ body {
 .card-badge-type {
     position: absolute;
     top: 8px; right: 8px;
-    background: rgba(0,0,0,0.75);
-    backdrop-filter: blur(8px);
+    background: rgba(10, 15, 29, 0.9);
     border: 1px solid rgba(229, 9, 20, 0.3);
     color: #ffffff;
     font-size: 10px;
@@ -820,7 +820,6 @@ body {
     position: absolute;
     bottom: 8px; left: 8px;
     background: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(217, 119, 6, 0.95));
-    backdrop-filter: blur(8px);
     border: 1px solid rgba(251, 191, 36, 0.6);
     color: #ffffff;
     font-size: 9.5px;
@@ -2236,11 +2235,60 @@ body {
          0    4px 8px rgba(0,0,0,0.7) !important;
 }
 
-/* Prevent duplicate native browser subtitles over video */
-.video-stage video::cue,
-.plyr video::cue {
-    display: none !important;
-    opacity: 0 !important;
+/* Native browser subtitle styling for full compatibility */
+video::cue {
+    background: rgba(0, 0, 0, 0.82) !important;
+    color: #ffffff !important;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    line-height: 1.4 !important;
+    padding: 2px 8px !important;
+    border-radius: 4px !important;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.9) !important;
+}
+
+/* ===== BULLETPROOF FAIL-SAFE CINEMA SUBTITLE OVERLAY ===== */
+.cinema-subtitle-overlay {
+    position: absolute !important;
+    bottom: 80px !important;
+    left: 4% !important;
+    right: 4% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    pointer-events: none !important;
+    z-index: 46 !important;
+    transition: bottom 0.22s ease !important;
+}
+
+.video-stage.hud-hidden .cinema-subtitle-overlay {
+    bottom: 26px !important;
+}
+
+.cinema-subtitle-text {
+    display: inline-block !important;
+    background: rgba(0, 0, 0, 0.85) !important;
+    color: #ffffff !important;
+    font-family: var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    font-size: clamp(15px, 2.3vw, 24px) !important;
+    font-weight: 700 !important;
+    line-height: 1.45 !important;
+    padding: 4px 14px !important;
+    border-radius: 6px !important;
+    max-width: 88% !important;
+    margin: 2px 0 !important;
+    word-wrap: break-word !important;
+    box-shadow: 0 3px 12px rgba(0,0,0,0.7) !important;
+    text-shadow:
+        -1px -1px 0 #000,
+         1px -1px 0 #000,
+        -1px  1px 0 #000,
+         1px  1px 0 #000,
+         0    2px 4px rgba(0,0,0,0.95),
+         0    4px 8px rgba(0,0,0,0.8) !important;
 }
 
 .in-player-btn-badge {
@@ -5496,7 +5544,26 @@ kbd {
    Firefox's compositor struggles with multiple backdrop-filter: blur() layers
    inside the video player. These rules replace blurs with solid backgrounds.
    ========================================================================== */
+/* ===== FIREFOX PERFORMANCE OVERRIDES =======================================
+   Firefox compositor struggles with multiple backdrop-filter: blur() layers.
+   These rules replace blurs with high-contrast sleek solid dark backgrounds.
+   ========================================================================== */
 @supports (-moz-appearance: none) {
+    *, *::before, *::after {
+        /* Prevent Firefox backdrop filter lag */
+    }
+    .navbar {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background: rgba(8, 11, 20, 0.98) !important;
+    }
+    .player-modal-backdrop {
+        backdrop-filter: none !important;
+        background: rgba(0, 0, 0, 0.95) !important;
+    }
+    .player-modal-content {
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.95) !important;
+    }
     .player-unified-settings-menu {
         backdrop-filter: none !important;
         background: rgba(10, 14, 24, 0.99) !important;
@@ -5507,6 +5574,23 @@ kbd {
     }
     .in-player-top-bar {
         backdrop-filter: none !important;
-        background: linear-gradient(180deg, rgba(2,4,8,0.9) 0%, transparent 100%) !important;
+        background: linear-gradient(180deg, rgba(2,4,8,0.92) 0%, transparent 100%) !important;
+    }
+    .search-dropdown {
+        backdrop-filter: none !important;
+        background: rgba(10, 14, 26, 0.98) !important;
+    }
+    .detail-modal-backdrop {
+        backdrop-filter: none !important;
+        background: rgba(0, 0, 0, 0.95) !important;
+    }
+    .btn-glass {
+        backdrop-filter: none !important;
+        background: rgba(255, 255, 255, 0.1) !important;
+    }
+    .episodes-drawer {
+        backdrop-filter: none !important;
+        background: rgba(8, 12, 22, 0.99) !important;
     }
 }
+

@@ -1195,7 +1195,7 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
             seen_refs.add(cr)
             unique_refs.append(cr)
 
-    range_header = request.headers.get("range", "bytes=0-")
+    range_header = request.headers.get("range")
     client = get_stream_proxy_client()
     resp = None
 
@@ -1208,10 +1208,12 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer": ref,
             "Origin": origin,
-            "Range": range_header,
         }
+        if range_header:
+            headers["Range"] = range_header
         try:
-            req = client.build_request("GET", url, headers=headers)
+            req_method = "HEAD" if request.method == "HEAD" else "GET"
+            req = client.build_request(req_method, url, headers=headers)
             r = await client.send(req, stream=True)
             if r.status_code not in (429, 403):
                 resp = r
@@ -1281,7 +1283,11 @@ def clean_to_webvtt(content: str) -> str:
     content = content.replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n")
     if content.strip().startswith("WEBVTT"):
         return content.strip() + "\n"
-    converted = re.sub(r"(\d{1,2}:\d{2}:\d{2}),(\d{1,3})", r"\1.\2", content)
+    def _fix_ts(m):
+        hhmmss = m.group(1)
+        ms = m.group(2).ljust(3, '0')[:3]
+        return f"{hhmmss}.{ms}"
+    converted = re.sub(r"(\d{1,2}:\d{2}:\d{2}),(\d{1,3})", _fix_ts, content)
     return "WEBVTT\n\n" + converted.strip() + "\n"
 
 @app.get("/api/proxy/caption")

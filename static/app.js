@@ -1460,10 +1460,14 @@ function setCinemaVideoSource(src, stream, titleText) {
                             t.label = td.label;
                             t.srclang = td.srclang;
                             t.src = td.src;
-                            if (td.default) { t.default = true; }
-                            t.addEventListener('load', function() { if (this.track) this.track.mode = 'hidden'; });
+                            if (td.default) {
+                                t.default = true;
+                                t.addEventListener('load', function() { if (this.track) attachSubtitleCueListener(this.track); });
+                            } else {
+                                t.addEventListener('load', function() { if (this.track) this.track.mode = 'hidden'; });
+                            }
                             video.appendChild(t);
-                            if (t.track) t.track.mode = 'hidden';
+                            if (t.track && td.default) attachSubtitleCueListener(t.track);
                         });
                         try { if (plyrInstance) plyrInstance.toggleCaptions(true); } catch {}
                     }
@@ -1707,7 +1711,9 @@ function initPlyr() {
 
     video.addEventListener('timeupdate', () => {
         if (video.currentTime > 0.5) { clearStreamWatchdog(); clearStartupWatchdog(); }
+        updateSubtitlesFromVideoTime();
     });
+    video.addEventListener('seeked', updateSubtitlesFromVideoTime);
 
     if (plyrInstance) {
         plyrInstance.on('error', () => window.triggerAutoStreamFallback('plyr_error'));
@@ -3858,14 +3864,95 @@ function changePlayerQuality(encodedStream) {
     showToast(`Quality switched: ${stream.quality || '1080p'}`);
 }
 
+// ─── BULLETPROOF SUBTITLE CUE OVERLAY RENDERER ──────────────────────────────
+let _activeSubtitleTrack = null;
+
+function attachSubtitleCueListener(textTrack) {
+    if (!textTrack) return;
+    _activeSubtitleTrack = textTrack;
+    try {
+        textTrack.mode = 'hidden'; // 'hidden' loads cues and triggers oncuechange reliably
+    } catch {}
+
+    const overlay = document.getElementById('cinemaSubtitleOverlay');
+    if (!overlay) return;
+
+    const renderActiveCues = () => {
+        if (!textTrack || textTrack.mode === 'disabled' || !textTrack.activeCues || textTrack.activeCues.length === 0) {
+            overlay.innerHTML = '';
+            overlay.style.display = 'none';
+            return;
+        }
+        let cueHtml = '';
+        for (let i = 0; i < textTrack.activeCues.length; i++) {
+            const cue = textTrack.activeCues[i];
+            if (cue && cue.text) {
+                // Strip WebVTT tags like <v ...>, <i>, <b>, <c.color>
+                const cleanText = cue.text.replace(/<[^>]+>/g, '').trim();
+                if (cleanText) {
+                    cueHtml += `<div class="cinema-subtitle-text">${escapeHtml(cleanText).replace(/\n/g, '<br>')}</div>`;
+                }
+            }
+        }
+        if (cueHtml) {
+            overlay.innerHTML = cueHtml;
+            overlay.style.display = 'flex';
+        } else {
+            overlay.innerHTML = '';
+            overlay.style.display = 'none';
+        }
+    };
+
+    textTrack.oncuechange = renderActiveCues;
+    renderActiveCues();
+}
+
+function updateSubtitlesFromVideoTime() {
+    const overlay = document.getElementById('cinemaSubtitleOverlay');
+    if (!overlay || !_activeSubtitleTrack || _activeSubtitleTrack.mode === 'disabled') return;
+    const cues = _activeSubtitleTrack.activeCues;
+    if (!cues || cues.length === 0) {
+        if (overlay.style.display !== 'none') {
+            overlay.innerHTML = '';
+            overlay.style.display = 'none';
+        }
+        return;
+    }
+    let cueHtml = '';
+    for (let i = 0; i < cues.length; i++) {
+        const cue = cues[i];
+        if (cue && cue.text) {
+            const cleanText = cue.text.replace(/<[^>]+>/g, '').trim();
+            if (cleanText) {
+                cueHtml += `<div class="cinema-subtitle-text">${escapeHtml(cleanText).replace(/\n/g, '<br>')}</div>`;
+            }
+        }
+    }
+    if (cueHtml && overlay.innerHTML !== cueHtml) {
+        overlay.innerHTML = cueHtml;
+        overlay.style.display = 'flex';
+    }
+}
+
 function changePlayerSubtitle(subUrl) {
     currentSelectedCaption = subUrl || '';
     renderSettingsSubsList(activeCaptionList);
     const video = getCinemaVideoElement();
+    const overlay = document.getElementById('cinemaSubtitleOverlay');
+
     if (video && video.querySelectorAll) {
-        video.querySelectorAll('track').forEach(t => t.remove());
+        video.querySelectorAll('track').forEach(t => {
+            try { if (t.track) t.track.mode = 'disabled'; } catch {}
+            t.remove();
+        });
     }
+
     if (!subUrl) {
+        _activeSubtitleTrack = null;
+        if (overlay) {
+            overlay.innerHTML = '';
+            overlay.style.display = 'none';
+        }
         if (plyrInstance) {
             try { plyrInstance.toggleCaptions(false); } catch {}
         }
@@ -3896,32 +3983,25 @@ function changePlayerSubtitle(subUrl) {
     
     track.addEventListener('load', function() {
         if (this.track) {
-            this.track.mode = 'showing';
+            attachSubtitleCueListener(this.track);
         }
         if (plyrInstance) {
             try { plyrInstance.toggleCaptions(true); } catch {}
-            try {
-                if (video && video.textTracks) {
-                    for (let i = 0; i < video.textTracks.length; i++) {
-                        if (video.textTracks[i].label === displayLabel || video.textTracks[i].language === code) {
-                            plyrInstance.currentTrack = i;
-                            break;
-                        }
-                    }
-                }
-            } catch {}
         }
     });
 
     if (video) {
         video.appendChild(track);
-        if (track.track) track.track.mode = 'showing';
+        // Force track mode to hidden so browser fetches WebVTT and fires oncuechange
+        if (track.track) {
+            attachSubtitleCueListener(track.track);
+        }
     }
 
     if (plyrInstance) {
         try { plyrInstance.toggleCaptions(true); } catch {}
     }
-    showToast(`Subtitles loaded: ${displayLabel}`);
+    showToast(`Subtitles active: ${displayLabel}`, 'success');
 }
 
 function refreshInPlayerSubMenu(activeUrl) {
