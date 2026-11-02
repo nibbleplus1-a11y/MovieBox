@@ -311,7 +311,7 @@ export function usePlayerState() {
     (event: { nativeEvent: { data: string } }) => {
       try {
         const msg = JSON.parse(event.nativeEvent.data) as {
-          type: string; currentTime?: number; duration?: number;
+          type: string; currentTime?: number; duration?: number; error?: string;
         };
         switch (msg.type) {
           case 'timeupdate':
