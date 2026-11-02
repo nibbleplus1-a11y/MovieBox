@@ -36,16 +36,26 @@ jobs:
       - name: Build Debug APK
         working-directory: moviebox_android
         run: |
-          gradle assembleDebug --stacktrace --no-daemon 2>&1 | tee ../gradle_build.log
+          gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee ../gradle_build.log
 
-      - name: Upload APK to Oracle Cloud Server
-        if: success()
+      - name: Locate and Deploy APK to Oracle Server
         run: |
+          echo "Locating built APK..."
+          find . -name "*.apk"
           APK_FILE=$(find moviebox_android -name "*.apk" | head -n 1)
-          if [ -f "$APK_FILE" ]; then
-            echo "Uploading APK to Oracle Cloud ($APK_FILE)..."
-            curl -sSf -X POST --data-binary "@$APK_FILE" "http://137.23.40.164/api/admin/upload-apk?secret=moviebox_deploy_2026"
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find . -name "*.apk" | head -n 1)
+          fi
+          echo "Selected APK: $APK_FILE"
+          if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
+            ls -lh "$APK_FILE"
+            echo "Uploading APK to Oracle Cloud Server..."
+            curl -v -X POST --data-binary "@$APK_FILE" "http://137.23.40.164/api/admin/upload-apk?secret=moviebox_deploy_2026"
             echo "✅ CineScope APK successfully deployed to http://137.23.40.164/download/app"
+          else
+            echo "ERROR: APK not found! Check gradle_build.log below:"
+            tail -n 80 gradle_build.log
+            exit 1
           fi
 
       - name: Report Build Error Log
@@ -60,5 +70,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cinescope-oracle-debug-apk
-          path: moviebox_android/**/*.apk
+          path: |
+            moviebox_android/app/build/outputs/apk/debug/*.apk
+            **/*.apk
+          if-no-files-found: warn
           retention-days: 30
