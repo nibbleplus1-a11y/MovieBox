@@ -6,6 +6,7 @@ on:
     paths:
       - 'moviebox_android/**'
       - '.github/workflows/build-cinescope-apk.yml'
+      - 'api.py'
   workflow_dispatch:
 
 jobs:
@@ -24,54 +25,74 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Gradle 8.4
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.4'
-
       - name: Accept Android SDK Licenses
         run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || yes | sdkmanager --licenses 2>/dev/null || true
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
+          yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses 2>/dev/null || true
+
+      - name: Make gradlew executable
+        working-directory: moviebox_android
+        run: chmod +x gradlew
 
       - name: Build Debug APK
         working-directory: moviebox_android
         run: |
-          gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee ../gradle_build.log
-
-      - name: Locate and Deploy APK to Oracle Server
-        run: |
-          echo "Locating built APK..."
-          find . -name "*.apk"
-          APK_FILE=$(find moviebox_android -name "*.apk" | head -n 1)
-          if [ -z "$APK_FILE" ]; then
-            APK_FILE=$(find . -name "*.apk" | head -n 1)
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee ../gradle_build.log
+          echo "Build exit code: ${PIPESTATUS[0]}"
+          if grep -q "BUILD SUCCESSFUL" ../gradle_build.log; then
+            echo "✅ BUILD SUCCESSFUL"
+          else
+            echo "❌ BUILD FAILED"
+            exit 1
           fi
-          echo "Selected APK: $APK_FILE"
+
+      - name: Locate APK
+        id: find_apk
+        run: |
+          APK_FILE=$(find moviebox_android/app/build/outputs/apk/debug -name "*.apk" 2>/dev/null | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find . -name "*.apk" 2>/dev/null | head -n 1)
+          fi
+          echo "APK found: $APK_FILE"
+          echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
           if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
             ls -lh "$APK_FILE"
-            echo "Uploading APK to Oracle Cloud Server..."
-            curl -v -X POST --data-binary "@$APK_FILE" "http://137.23.40.164/api/admin/upload-apk?secret=moviebox_deploy_2026"
-            echo "✅ CineScope APK successfully deployed to http://137.23.40.164/download/app"
           else
-            echo "ERROR: APK not found! Check gradle_build.log below:"
-            tail -n 80 gradle_build.log
+            echo "ERROR: APK not found!"
             exit 1
+          fi
+
+      - name: Deploy APK to Oracle Cloud Server
+        run: |
+          APK_FILE="${{ steps.find_apk.outputs.apk_path }}"
+          echo "Uploading: $APK_FILE"
+          HTTP_STATUS=$(curl -s -o /tmp/upload_response.txt -w "%{http_code}" \
+            -X POST \
+            --data-binary "@$APK_FILE" \
+            "http://137.23.40.164/api/admin/upload-apk?secret=moviebox_deploy_2026" \
+            --max-time 120)
+          echo "HTTP Status: $HTTP_STATUS"
+          cat /tmp/upload_response.txt
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ CineScope APK deployed to: http://137.23.40.164/download/app"
+          else
+            echo "⚠️ Upload returned HTTP $HTTP_STATUS — APK still available as GitHub artifact below."
           fi
 
       - name: Report Build Error Log
         if: failure()
         run: |
-          echo "=== GRADLE FAILURE LOG ==="
-          tail -n 100 gradle_build.log || true
-          curl -s -X POST --data-binary "@gradle_build.log" "http://137.23.40.164/api/admin/report-log?secret=moviebox_deploy_2026" || true
+          echo "=== GRADLE FAILURE LOG (last 150 lines) ==="
+          tail -n 150 gradle_build.log || true
+          curl -s -X POST --data-binary "@gradle_build.log" \
+            "http://137.23.40.164/api/admin/report-log?secret=moviebox_deploy_2026" || true
 
-      - name: Upload CineScope APK Artifact
-        if: success()
+      - name: Upload CineScope APK as GitHub Artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cinescope-oracle-debug-apk
           path: |
             moviebox_android/app/build/outputs/apk/debug/*.apk
-            **/*.apk
           if-no-files-found: warn
           retention-days: 30
