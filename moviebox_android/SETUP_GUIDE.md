@@ -1,9 +1,15 @@
 # 🎬 CineScope — Complete Setup Guide
 
+## Live Cloud Server
+- **Server:** Oracle Cloud Always-Free VM
+- **URL:** `http://137.23.40.164`
+- **Direct APK Download:** `http://137.23.40.164/download/app`
+
 ## What You Have Built
 A proper Android Studio project (Kotlin) with:
+- Connected directly to `http://137.23.40.164` (independent of local PC)
 - Beautiful splash screen + bottom navigation (looks 100% native)
-- WebView that loads your server URL
+- WebView that loads your server URL with hardware acceleration and landscape cinema player
 - Firebase Remote Config (remote URL switching — the cloaking trick)
 - AdMob banner + interstitial ads
 
