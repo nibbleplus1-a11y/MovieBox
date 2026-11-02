@@ -1165,16 +1165,60 @@ async function executeResolver() {
 }
 
 // ─── AUDIO DUB SWITCHER ───────────────────────────────────────────────────────
+// ─── ROBUST PLAYBACK RESUME UTILITY (FOR AUDIO / QUALITY / SERVER SWITCH) ────
+function safelyResumePlaybackAt(targetTime) {
+    if (!targetTime || targetTime <= 0) return;
+    const video = getCinemaVideoElement();
+    if (!video) return;
+
+    let seekDone = false;
+    let attempts = 0;
+
+    const trySeek = () => {
+        if (seekDone) return;
+        const currentV = getCinemaVideoElement();
+        if (!currentV) return;
+
+        // When readyState >= 1 (HAVE_METADATA), the duration is known and seeking is allowed
+        if (currentV.readyState >= 1) {
+            try {
+                currentV.currentTime = targetTime;
+                if (plyrInstance) {
+                    try { plyrInstance.currentTime = targetTime; } catch {}
+                }
+                seekDone = true;
+                currentV.play().catch(() => {});
+            } catch (e) {}
+        }
+    };
+
+    video.addEventListener('loadedmetadata', trySeek);
+    video.addEventListener('canplay', trySeek);
+    video.addEventListener('playing', trySeek);
+
+    const interval = setInterval(() => {
+        attempts++;
+        if (seekDone || attempts > 35) {
+            clearInterval(interval);
+            video.removeEventListener('loadedmetadata', trySeek);
+            video.removeEventListener('canplay', trySeek);
+            video.removeEventListener('playing', trySeek);
+            return;
+        }
+        trySeek();
+    }, 200);
+}
+
 async function switchAudioDub(dubSubjectId, langName) {
     if (dubSubjectId === currentPlayingSubjectId) return;
     showToast(`Switching audio: ${langName}…`);
 
+    const video = getCinemaVideoElement();
     let resumeTime = 0;
-    if (plyrInstance && typeof plyrInstance.currentTime === 'number' && isFinite(plyrInstance.currentTime)) {
+    if (video && isFinite(video.currentTime) && video.currentTime > 0) {
+        resumeTime = video.currentTime;
+    } else if (plyrInstance && typeof plyrInstance.currentTime === 'number' && isFinite(plyrInstance.currentTime) && plyrInstance.currentTime > 0) {
         resumeTime = plyrInstance.currentTime;
-    } else {
-        const video = getCinemaVideoElement();
-        if (video && isFinite(video.currentTime)) resumeTime = video.currentTime || 0;
     }
 
     // Update dub pills active state
@@ -1198,27 +1242,13 @@ async function switchAudioDub(dubSubjectId, langName) {
             const streamToPlay = listToUse[0];
             currentPlayingStream = streamToPlay;
 
-            // Direct in-place video source update with precise timestamp resume
-            const video = getCinemaVideoElement();
-            if (video && resumeTime > 0) {
-                let resumed = false;
-                const doSeek = () => {
-                    if (resumed) return;
-                    resumed = true;
-                    try { video.currentTime = resumeTime; } catch {}
-                    if (plyrInstance) {
-                        try { plyrInstance.currentTime = resumeTime; } catch {}
-                    }
-                    try { video.play().catch(() => {}); } catch {}
-                };
-                video.addEventListener('loadedmetadata', doSeek, { once: true });
-                video.addEventListener('canplay', doSeek, { once: true });
-                // Fallback timer if events already fired
-                setTimeout(doSeek, 350);
-            }
-
             const newSrc = getEffectiveStreamUrl(streamToPlay);
             setCinemaVideoSource(newSrc, streamToPlay, activeMediaMeta?.title);
+
+            // Guaranteed timestamp resume using polling + readiness listeners
+            if (resumeTime > 0) {
+                safelyResumePlaybackAt(resumeTime);
+            }
 
             // Update all badges & selectors smoothly
             safeText('inPlayerDubBadge', `${langName} ▾`);
@@ -1229,12 +1259,14 @@ async function switchAudioDub(dubSubjectId, langName) {
             renderSettingsAudioList(activeDubsList);
             renderSettingsQualityList(listToUse, streamToPlay);
 
-            // Re-fetch captions for the new audio track to keep subtitles in sync
+            // Re-fetch captions for the new audio track and MERGE them without wiping original subtitles
             fetch(`/api/stream/${dubSubjectId}/captions?se=${currentSeason}&ep=${currentEpisode}`)
                 .then(r => r.json())
                 .then(cRes => {
                     if (cRes && cRes.captions && cRes.captions.length > 0) {
-                        activeCaptionList = cRes.captions;
+                        const existingUrls = new Set((activeCaptionList || []).map(c => c.url));
+                        const newCaptions = cRes.captions.filter(c => !existingUrls.has(c.url));
+                        activeCaptionList = [...newCaptions, ...(activeCaptionList || [])];
                         renderSettingsSubsList(activeCaptionList);
                     }
                 })
@@ -3834,20 +3866,8 @@ function changePlayerQuality(encodedStream) {
                : (video && isFinite(video.currentTime)) ? video.currentTime : 0;
     currentPlayingStream = stream;
 
-    if (video && t > 0) {
-        let resumed = false;
-        const doSeek = () => {
-            if (resumed) return;
-            resumed = true;
-            try { video.currentTime = t; } catch {}
-            if (plyrInstance) {
-                try { plyrInstance.currentTime = t; } catch {}
-            }
-            try { video.play().catch(() => {}); } catch {}
-        };
-        video.addEventListener('loadedmetadata', doSeek, { once: true });
-        video.addEventListener('canplay', doSeek, { once: true });
-        setTimeout(doSeek, 350);
+    if (t > 0) {
+        safelyResumePlaybackAt(t);
     }
 
     const src = getEffectiveStreamUrl(stream);
@@ -3883,19 +3903,23 @@ function attachSubtitleCueListener(textTrack) {
             overlay.style.display = 'none';
             return;
         }
-        let cueHtml = '';
+        const seenLines = new Set();
+        const uniqueLines = [];
         for (let i = 0; i < textTrack.activeCues.length; i++) {
             const cue = textTrack.activeCues[i];
             if (cue && cue.text) {
-                // Strip WebVTT tags like <v ...>, <i>, <b>, <c.color>
-                const cleanText = cue.text.replace(/<[^>]+>/g, '').trim();
-                if (cleanText) {
-                    cueHtml += `<div class="cinema-subtitle-text">${escapeHtml(cleanText).replace(/\n/g, '<br>')}</div>`;
-                }
+                const clean = cue.text.replace(/<[^>]+>/g, '').trim();
+                clean.split('\n').forEach(line => {
+                    const l = line.trim();
+                    if (l && !seenLines.has(l.toLowerCase())) {
+                        seenLines.add(l.toLowerCase());
+                        uniqueLines.push(l);
+                    }
+                });
             }
         }
-        if (cueHtml) {
-            overlay.innerHTML = cueHtml;
+        if (uniqueLines.length > 0) {
+            overlay.innerHTML = `<div class="cinema-subtitle-text">${uniqueLines.map(l => escapeHtml(l)).join('<br>')}</div>`;
             overlay.style.display = 'flex';
         } else {
             overlay.innerHTML = '';
@@ -3918,19 +3942,32 @@ function updateSubtitlesFromVideoTime() {
         }
         return;
     }
-    let cueHtml = '';
+    const seenLines = new Set();
+    const uniqueLines = [];
     for (let i = 0; i < cues.length; i++) {
         const cue = cues[i];
         if (cue && cue.text) {
-            const cleanText = cue.text.replace(/<[^>]+>/g, '').trim();
-            if (cleanText) {
-                cueHtml += `<div class="cinema-subtitle-text">${escapeHtml(cleanText).replace(/\n/g, '<br>')}</div>`;
-            }
+            const clean = cue.text.replace(/<[^>]+>/g, '').trim();
+            clean.split('\n').forEach(line => {
+                const l = line.trim();
+                if (l && !seenLines.has(l.toLowerCase())) {
+                    seenLines.add(l.toLowerCase());
+                    uniqueLines.push(l);
+                }
+            });
         }
     }
-    if (cueHtml && overlay.innerHTML !== cueHtml) {
-        overlay.innerHTML = cueHtml;
-        overlay.style.display = 'flex';
+    if (uniqueLines.length > 0) {
+        const cueHtml = `<div class="cinema-subtitle-text">${uniqueLines.map(l => escapeHtml(l)).join('<br>')}</div>`;
+        if (overlay.innerHTML !== cueHtml) {
+            overlay.innerHTML = cueHtml;
+            overlay.style.display = 'flex';
+        }
+    } else {
+        if (overlay.style.display !== 'none') {
+            overlay.innerHTML = '';
+            overlay.style.display = 'none';
+        }
     }
 }
 
@@ -4061,8 +4098,12 @@ function handleLocalSubtitleUpload(event) {
 async function autoDetectAndApplySubtitle(event) {
     if (event) event.stopPropagation();
 
-    const title = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : (document.getElementById('playerMediaTitle')?.textContent || '');
-    const cleanTitle = title.replace(/[\[\(].*?[\]\)]/g, '').trim();
+    let title = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : (document.getElementById('playerMediaTitle')?.textContent || '');
+    // Strip "• S1 E1", "[Hindi]", "(2022)", etc. so OpenSubtitles receives pure show title
+    let cleanTitle = title.split('•')[0].split(' - ')[0].replace(/\[.*?\]|\(.*?\)/g, '').replace(/\bS\d+.*$/i, '').trim();
+    if (!cleanTitle && activeMediaMeta?.title) {
+        cleanTitle = activeMediaMeta.title.replace(/\[.*?\]|\(.*?\)/g, '').trim();
+    }
     const year = activeMediaMeta?.release_date ? activeMediaMeta.release_date.slice(0, 4) : (activeMediaMeta?.year || '');
     const imdbId = (activeMediaMeta && activeMediaMeta.imdb_id) ? activeMediaMeta.imdb_id : '';
     const se = currentSeason || 0;
