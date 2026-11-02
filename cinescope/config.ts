@@ -9,7 +9,7 @@ export const CONFIG = {
   // Set it to your Railway URL e.g. "https://moviebox-xxx.up.railway.app"
   // ═══════════════════════════════════════════════════════════════
   // Active Streaming Platform URL (supports EXPO_PUBLIC_API_URL env var for prod/dev)
-  APP_URL: process.env.EXPO_PUBLIC_API_URL || 'http://192.168.100.151:8000',
+  APP_URL: process.env.EXPO_PUBLIC_API_URL || 'http://137.23.40.164',
 
   // Optional: URL to a JSON endpoint or Firebase / GitHub Gist returning {"app_url": "..."}
   // When empty, it uses APP_URL directly

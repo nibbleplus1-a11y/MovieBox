@@ -62,6 +62,14 @@ if os.path.exists(STATIC_DIR):
 def read_root():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
+@app.get("/app.apk")
+@app.get("/download/app")
+def download_apk():
+    apk_path = os.path.join(STATIC_DIR, "cinescope.apk")
+    if os.path.exists(apk_path):
+        return FileResponse(apk_path, media_type="application/vnd.android.package-archive", filename="CineScope.apk")
+    raise HTTPException(status_code=404, detail="APK build in progress or not yet uploaded.")
+
 class SimpleCache:
     def __init__(self, maxsize: int = 500, default_ttl: int = 600):
         self.maxsize = maxsize
@@ -501,6 +509,7 @@ class MovieBoxEngine:
         
         # Cache parent mapping for each child dub
         main_id = str(data.get("subjectId"))
+        original_subject_id = main_id  # Will be updated if this item is itself a dub
         for d in dubs:
             if d.get("subject_id") and d["subject_id"] != main_id:
                 app_cache.set(f"dub_parent:{d['subject_id']}", main_id, ttl=7200)
@@ -508,10 +517,37 @@ class MovieBoxEngine:
         # If this item itself is a dub with no child dubs, look up parent's dubs
         if not dubs:
             parent_id = app_cache.get(f"dub_parent:{subject_id}")
+            if not parent_id:
+                # No cached parent — try to find the original by searching the clean title
+                raw_title = data.get("title") or ""
+                # Strip language/dub bracket tags like [Hindi], (English), [Tamil]
+                clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
+                if clean_title and clean_title.lower() != raw_title.lower():
+                    # This title had a dub tag — search for the clean version
+                    try:
+                        search_results = self.search(clean_title, page=1, per_page=10)
+                        rel_date = str(data.get("releaseDate") or "")[:4]
+                        subject_type = data.get("subjectType")
+                        for r in search_results:
+                            r_sid = str(r.get("subject_id") or "")
+                            if r_sid and r_sid != main_id:
+                                # Prefer same type and similar year
+                                r_year = str(r.get("release_date") or "")[:4]
+                                r_type = r.get("subject_type")
+                                if (not rel_date or not r_year or abs(int(rel_date or 0) - int(r_year or 0)) <= 1) and \
+                                   (not subject_type or not r_type or subject_type == r_type):
+                                    parent_id = r_sid
+                                    app_cache.set(f"dub_parent:{main_id}", parent_id, ttl=7200)
+                                    break
+                    except Exception:
+                        pass
             if parent_id and parent_id != subject_id:
                 try:
                     p_details = self.get_details(parent_id)
                     dubs = p_details.get("dubs", [])
+                    original_subject_id = parent_id  # The parent is the original
+                    # Cache this child → parent link
+                    app_cache.set(f"dub_parent:{main_id}", parent_id, ttl=7200)
                 except Exception:
                     pass
 
@@ -570,6 +606,7 @@ class MovieBoxEngine:
 
         res = {
             "subject_id": main_id,
+            "original_subject_id": original_subject_id,
             "title": data.get("title"),
             "subject_type": data.get("subjectType"),
             "type": "Movie" if data.get("subjectType") == 1 else "Series",

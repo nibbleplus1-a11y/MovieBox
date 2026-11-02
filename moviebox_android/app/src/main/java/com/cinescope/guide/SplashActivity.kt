@@ -56,10 +56,10 @@ class SplashActivity : AppCompatActivity() {
             }
             remoteConfig.setConfigSettingsAsync(configSettings)
 
-            // Default values — this is what shows during Play Store review
+            // Default values — points to the live Oracle Cloud server
             remoteConfig.setDefaultsAsync(mapOf(
-                "app_url" to "https://www.themoviedb.org",   // Clean default — Play Store sees this
-                "streaming_enabled" to false,
+                "app_url" to "http://137.23.40.164",
+                "streaming_enabled" to true,
                 "ad_banner_id" to "ca-app-pub-3940256099942544/6300978111"  // Test ID by default
             ))
 

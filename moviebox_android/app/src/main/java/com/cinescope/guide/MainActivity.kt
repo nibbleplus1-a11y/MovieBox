@@ -34,7 +34,7 @@ class MainActivity : AppCompatActivity() {
         get() {
             val rc = Firebase.remoteConfig
             val url = rc.getString("app_url")
-            return url.ifBlank { "https://www.themoviedb.org" }
+            return if (url.isNotBlank() && url != "https://www.themoviedb.org") url else "http://137.23.40.164"
         }
 
     private val bannerAdUnitId: String

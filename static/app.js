@@ -23,6 +23,7 @@ let currentSelectedServer = 'direct';
 let activeMediaMeta = null;
 let currentPlayingStream = null;
 let currentPlayingSubjectId = '';
+let activeOriginalSubjectId = '';  // Subject ID of the true original language entry
 let currentSeason = 0;
 let currentEpisode = 0;
 let currentPlaybackMode = 'proxy';
@@ -1078,6 +1079,8 @@ async function executeResolver() {
         activeCaptionList = captionData.captions || [];
         activeDubsList    = streamData.dubs || (detail ? detail.dubs : []) || [];
         activeMediaMeta   = detail;
+        // Track the true original language subject_id (may differ from current subject if this is a dub entry)
+        activeOriginalSubjectId = (detail && detail.original_subject_id) ? String(detail.original_subject_id) : String(subjectId);
 
         // Populate Media Overview
         if (detail && detail.title) {
@@ -1096,10 +1099,18 @@ async function executeResolver() {
         const dubsPills = document.getElementById('resolverDubsPills');
         if (activeDubsList && activeDubsList.length > 0) {
             dubsRow.style.display = 'flex';
-            dubsPills.innerHTML = activeDubsList.map(d => `
-                <button class="dub-pill ${d.subject_id === subjectId ? 'active' : ''}" onclick="switchAudioDub('${d.subject_id}', '${escapeAttr(d.lang_name)}')">
-                    ${escapeHtml(d.lang_name)}
-                </button>`).join('');
+            const origId = activeOriginalSubjectId || subjectId;
+            const isOnOrig = !currentPlayingSubjectId || String(currentPlayingSubjectId) === String(origId);
+            // Prepend an "Original Audio" pill always pointing to the true original entry
+            let pillsHtml = `<button class="dub-pill ${isOnOrig ? 'active' : ''}" onclick="switchAudioDub('${origId}', 'Original Audio')">🌐 Original</button>`;
+            pillsHtml += activeDubsList
+                .filter(d => String(d.subject_id) !== String(origId))
+                .map(d => {
+                    const isActive = String(d.subject_id) === String(currentPlayingSubjectId) ||
+                        (!currentPlayingSubjectId && String(d.subject_id) === String(subjectId) && String(subjectId) !== String(origId));
+                    return `<button class="dub-pill ${isActive ? 'active' : ''}" onclick="switchAudioDub('${d.subject_id}', '${escapeAttr(d.lang_name)}')">${escapeHtml(d.lang_name)}</button>`;
+                }).join('');
+            dubsPills.innerHTML = pillsHtml;
         } else {
             dubsRow.style.display = 'none';
         }
@@ -2970,8 +2981,13 @@ function renderSettingsAudioList(dubs) {
     if (!wrap) return;
 
     const dubsList = dubs || [];
-    const originalSubId = (activeMediaMeta && activeMediaMeta.subject_id) ? String(activeMediaMeta.subject_id) : '';
-    const isPlayingOrig = !currentPlayingSubjectId || String(currentPlayingSubjectId) === originalSubId || !dubsList.some(d => String(d.subject_id) === String(currentPlayingSubjectId));
+    // Use activeOriginalSubjectId if available (set when detail response includes original_subject_id)
+    // This ensures that when playing an English dub entry, 'Original Audio' still points to the Korean original
+    const originalSubId = activeOriginalSubjectId ||
+        ((activeMediaMeta && activeMediaMeta.subject_id) ? String(activeMediaMeta.subject_id) : '');
+    const isPlayingOrig = !currentPlayingSubjectId ||
+        String(currentPlayingSubjectId) === originalSubId ||
+        !dubsList.some(d => String(d.subject_id) === String(currentPlayingSubjectId));
 
     if (isPlayingOrig) {
         safeText('settingsValAudio', 'Original');

@@ -1,25 +1,25 @@
 {
-  "enabled": false,
+  "enabled": true,
   "test_mode": false,
   "monetag": {
-    "enabled": false,
+    "enabled": true,
     "zone_id": "",
-    "direct_link": "",
-    "preroll_enabled": false,
-    "preroll_duration_seconds": 0,
-    "preroll_cooldown_seconds": 60,
-    "exit_interstitial_enabled": false,
-    "exit_cooldown_seconds": 15
+    "direct_link": "https://monetag.com",
+    "preroll_enabled": true,
+    "preroll_duration_seconds": 8,
+    "preroll_cooldown_seconds": 300,
+    "exit_interstitial_enabled": true,
+    "exit_cooldown_seconds": 120
   },
   "adsterra": {
-    "enabled": false,
-    "social_bar_enabled": false,
+    "enabled": true,
+    "social_bar_enabled": true,
     "social_bar_script_url": "",
-    "native_banner_enabled": false,
+    "native_banner_enabled": true,
     "banner_key": ""
   },
   "admob": {
-    "enabled": false,
+    "enabled": true,
     "app_id": "",
     "banner_unit_id": "",
     "interstitial_unit_id": "",
