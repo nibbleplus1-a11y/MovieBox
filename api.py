@@ -70,6 +70,28 @@ def download_apk():
         return FileResponse(apk_path, media_type="application/vnd.android.package-archive", filename="CineScope.apk")
     raise HTTPException(status_code=404, detail="APK build in progress or not yet uploaded.")
 
+@app.post("/api/admin/upload-apk")
+async def upload_apk(request: Request, secret: Optional[str] = Query(None)):
+    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
+    if not secret or not secrets.compare_digest(secret, expected):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    body = await request.body()
+    apk_path = os.path.join(STATIC_DIR, "cinescope.apk")
+    with open(apk_path, "wb") as f:
+        f.write(body)
+    return {"status": "success", "size": len(body), "path": "/download/app"}
+
+@app.post("/api/admin/report-log")
+async def report_log(request: Request, secret: Optional[str] = Query(None)):
+    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
+    if not secret or not secrets.compare_digest(secret, expected):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    body = await request.body()
+    log_path = os.path.join(STATIC_DIR, "build_error.log")
+    with open(log_path, "wb") as f:
+        f.write(body)
+    return {"status": "received", "size": len(body)}
+
 class SimpleCache:
     def __init__(self, maxsize: int = 500, default_ttl: int = 600):
         self.maxsize = maxsize
