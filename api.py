@@ -1428,13 +1428,37 @@ def search_suggest(q: str = Query(..., min_length=1)):
             })
     return {"suggestions": suggestions}
 
+def _format_runtime(dur_val: Any) -> Optional[str]:
+    if not dur_val:
+        return None
+    try:
+        val = int(dur_val)
+        mins = round(val / 60) if val > 500 else val
+        h = mins // 60
+        m = mins % 60
+        return f"{h}h {m}m" if h > 0 else f"{m}m"
+    except Exception:
+        s = str(dur_val).strip()
+        return s if ("h" in s or "m" in s) else None
+
 @app.get("/detail/{subject_id}")
+@app.get("/api/detail/{subject_id}")
 def get_detail(subject_id: str):
     if not subject_id or subject_id == "None":
         raise HTTPException(status_code=400, detail="Invalid subject ID")
     res = engine.get_details(subject_id)
     if not res or not res.get("title") or is_adult_content(res):
         raise HTTPException(status_code=404, detail="Title not found")
+    
+    # Ensure duration is formatted cleanly for both web and mobile
+    dur_raw = res.get("duration") or res.get("duration_seconds")
+    formatted_dur = _format_runtime(dur_raw)
+    if formatted_dur:
+        res["duration_formatted"] = formatted_dur
+        # If duration was numeric or missing standard format, provide readable string
+        if not isinstance(res.get("duration"), str) or not ("h" in res.get("duration", "") or "m" in res.get("duration", "")):
+            res["duration"] = formatted_dur
+
     # Mark pre-release titles as "Coming Soon" based on release date only
     release_date = res.get("release_date") or ""
     coming_soon = bool(res.get("coming_soon"))

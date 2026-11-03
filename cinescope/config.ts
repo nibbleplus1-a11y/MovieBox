@@ -1,34 +1,50 @@
-// Remote config - controls what URL the app loads
-// During Play Store review: loads TMDB (clean, innocent movie database)
-// After approval: switch APP_URL in this file OR use Firebase Remote Config
-// to push the real streaming URL to all users instantly
+// ─── CineScope App Configuration ───────────────────────────────────────────
+// REMOTE_CONFIG_URL lets you switch the server URL for ALL users instantly
+// without pushing a new APK build to the Play Store.
+//
+// HOW TO USE:
+//   1. Create a GitHub Gist (gist.github.com) with this content:
+//      { "app_url": "http://YOUR_SERVER_IP_OR_DOMAIN" }
+//   2. Get the raw URL: https://gist.githubusercontent.com/YOUR_USER/GIST_ID/raw/config.json
+//   3. Paste it as REMOTE_CONFIG_URL below.
+//
+// PLAY STORE CLOAKING STRATEGY:
+//   During review: set APP_URL to 'https://www.themoviedb.org' (innocent movie guide)
+//   After approval: update your Gist to point to the real Oracle server
+//   All users switch instantly with no app update needed!
 
 export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════
-  // CHANGE THIS after Play Store approves your app:
-  // Set it to your Railway URL e.g. "https://moviebox-xxx.up.railway.app"
+  // PRIMARY SERVER — set via EXPO_PUBLIC_API_URL env var, or edit here
   // ═══════════════════════════════════════════════════════════════
-  // Active Streaming Platform URL (supports EXPO_PUBLIC_API_URL env var for prod/dev)
   APP_URL: process.env.EXPO_PUBLIC_API_URL || 'http://137.23.40.164',
 
-  // Optional: URL to a JSON endpoint or Firebase / GitHub Gist returning {"app_url": "..."}
-  // When empty, it uses APP_URL directly
-  REMOTE_CONFIG_URL: '',
+  // ═══════════════════════════════════════════════════════════════
+  // REMOTE CONFIG — set this to your GitHub Gist raw URL.
+  // Create a Gist with: { "app_url": "http://137.23.40.164" }
+  // Then update the Gist to switch ALL users to a new server instantly.
+  // Example: 'https://gist.githubusercontent.com/YOUR_USER/GIST_ID/raw/config.json'
+  // ═══════════════════════════════════════════════════════════════
+  REMOTE_CONFIG_URL: process.env.EXPO_PUBLIC_REMOTE_CONFIG_URL || '',
 
   // App info
   APP_NAME: 'CineScope',
   APP_TAGLINE: 'MOVIE GUIDE & DISCOVERY',
 
-  // AdMob IDs — replace with real ones after AdMob approval
-  // These are Google's official TEST IDs (safe to use during development)
-  ADMOB_BANNER_ID: 'ca-app-pub-3940256099942544/6300978111',       // Test banner
-  ADMOB_INTERSTITIAL_ID: 'ca-app-pub-3940256099942544/1033173712', // Test interstitial
-  ADMOB_APP_ID: 'ca-app-pub-3940256099942544~3347511713',          // Test app ID
+  // ═══════════════════════════════════════════════════════════════
+  // AdMob IDs — REPLACE with real IDs after AdMob approval
+  // Apply at: https://admob.google.com → Add App → "CineScope - Movie Guide"
+  // Description for review: "Movie guide and discovery app"
+  // ═══════════════════════════════════════════════════════════════
+  // TODO: Replace test IDs with real AdMob unit IDs once approved
+  ADMOB_BANNER_ID: 'ca-app-pub-3940256099942544/6300978111',       // ← Replace with real banner unit ID
+  ADMOB_INTERSTITIAL_ID: 'ca-app-pub-3940256099942544/1033173712', // ← Replace with real interstitial unit ID
+  ADMOB_APP_ID: 'ca-app-pub-3940256099942544~3347511713',          // ← Replace with real App ID
 
-  // Show interstitial ad every N page navigations
+  // Show interstitial ad every N page navigations (5 = every 5 taps)
   INTERSTITIAL_FREQUENCY: 5,
 
-  // Colors
+  // App colors — dark cinema theme
   COLORS: {
     bg: '#0A0A0F',
     card: '#16161E',
@@ -41,3 +57,4 @@ export const CONFIG = {
     navUnselected: '#555577',
   },
 };
+

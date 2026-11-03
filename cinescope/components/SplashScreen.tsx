@@ -1,136 +1,138 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Animated,
   Dimensions
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { LinearGradient } from 'expo-linear-gradient';
 import { CONFIG } from '../config';
+import { RemoteConfigService } from '../services/remoteConfig';
 
-const { width, height } = Dimensions.get('window');
+const { width } = Dimensions.get('window');
 
 interface Props {
   onFinish: () => void;
 }
 
 export default function SplashScreen({ onFinish }: Props) {
-  const logoScale = useRef(new Animated.Value(0.3)).current;
-  const logoOpacity = useRef(new Animated.Value(0)).current;
-  const textOpacity = useRef(new Animated.Value(0)).current;
-  const textTranslate = useRef(new Animated.Value(30)).current;
-  const glowOpacity = useRef(new Animated.Value(0)).current;
+  const logoScale    = useRef(new Animated.Value(0.7)).current;
+  const logoOpacity  = useRef(new Animated.Value(0)).current;
+  const textOpacity  = useRef(new Animated.Value(0)).current;
+  const textSlide    = useRef(new Animated.Value(18)).current;
+  const barWidth     = useRef(new Animated.Value(0)).current;
+  const glowScale    = useRef(new Animated.Value(0.6)).current;
+  const glowOpacity  = useRef(new Animated.Value(0)).current;
+  const [statusText, setStatusText] = useState('Initializing…');
 
   useEffect(() => {
-    // Logo pop-in
+    // ── 1. Start server config fetch in the background immediately ──
+    const configPromise = RemoteConfigService.init().then(() => {
+      setStatusText('Ready');
+    }).catch(() => {
+      setStatusText('Ready');
+    });
+
+    // ── 2. Run all animations in parallel (total ~1.6s) ──
     Animated.parallel([
       Animated.spring(logoScale, {
-        toValue: 1,
-        friction: 5,
-        tension: 80,
-        useNativeDriver: true,
+        toValue: 1, friction: 6, tension: 90, useNativeDriver: true,
       }),
       Animated.timing(logoOpacity, {
-        toValue: 1,
-        duration: 500,
-        useNativeDriver: true,
+        toValue: 1, duration: 350, useNativeDriver: true,
+      }),
+      Animated.spring(glowScale, {
+        toValue: 1.2, friction: 4, tension: 50, useNativeDriver: true,
       }),
       Animated.timing(glowOpacity, {
-        toValue: 1,
-        duration: 800,
-        useNativeDriver: true,
+        toValue: 0.7, duration: 600, useNativeDriver: true,
       }),
     ]).start(() => {
-      // Text slide up after logo
+      // Text fades in after logo lands
       Animated.parallel([
         Animated.timing(textOpacity, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
+          toValue: 1, duration: 300, useNativeDriver: true,
         }),
-        Animated.timing(textTranslate, {
-          toValue: 0,
-          duration: 600,
-          useNativeDriver: true,
+        Animated.timing(textSlide, {
+          toValue: 0, duration: 350, useNativeDriver: true,
         }),
       ]).start();
     });
 
-    // Navigate after 2.8 seconds
-    const timer = setTimeout(onFinish, 2800);
+    // Progress bar fills over 1.4s
+    Animated.timing(barWidth, {
+      toValue: width * 0.6,
+      duration: 1400,
+      useNativeDriver: false,
+    }).start();
+
+    // Finish after 1.7s regardless of config fetch
+    const timer = setTimeout(async () => {
+      await configPromise.catch(() => {});
+      onFinish();
+    }, 1700);
+
     return () => clearTimeout(timer);
   }, []);
 
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
+      <StatusBar style="light" hidden />
 
-      {/* Glow effect */}
-      <Animated.View style={[styles.glow, { opacity: glowOpacity }]} />
+      {/* Background gradient */}
+      <LinearGradient
+        colors={['#0A0A0F', '#12081A', '#0A0A0F']}
+        style={StyleSheet.absoluteFill}
+      />
+
+      {/* Ambient glow behind logo */}
+      <Animated.View
+        style={[
+          styles.glow,
+          { opacity: glowOpacity, transform: [{ scale: glowScale }] }
+        ]}
+      />
 
       {/* Logo */}
       <Animated.View
         style={[
           styles.logoContainer,
-          {
-            opacity: logoOpacity,
-            transform: [{ scale: logoScale }],
-          },
+          { opacity: logoOpacity, transform: [{ scale: logoScale }] },
         ]}
       >
-        {/* Clapperboard icon using text emoji + custom styling */}
-        <View style={styles.logoCircle}>
-          <Text style={styles.logoEmoji}>🎬</Text>
-        </View>
+        <LinearGradient
+          colors={['#FF2E55', '#8B1A2A']}
+          style={styles.logoCircle}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <Text style={styles.logoIcon}>▶</Text>
+        </LinearGradient>
       </Animated.View>
 
       {/* App name + tagline */}
       <Animated.View
         style={{
           opacity: textOpacity,
-          transform: [{ translateY: textTranslate }],
+          transform: [{ translateY: textSlide }],
           alignItems: 'center',
+          marginTop: 24,
         }}
       >
-        <Text style={styles.appName}>{CONFIG.APP_NAME}</Text>
+        <Text style={styles.appName}>
+          Cine<Text style={styles.appNameAccent}>Scope</Text>
+        </Text>
         <Text style={styles.tagline}>{CONFIG.APP_TAGLINE}</Text>
       </Animated.View>
 
-      {/* Loading dots */}
-      <View style={styles.loadingContainer}>
-        <LoadingDots />
+      {/* Progress bar */}
+      <View style={styles.barTrack}>
+        <Animated.View style={[styles.barFill, { width: barWidth }]} />
       </View>
-    </View>
-  );
-}
 
-function LoadingDots() {
-  const dot1 = useRef(new Animated.Value(0.3)).current;
-  const dot2 = useRef(new Animated.Value(0.3)).current;
-  const dot3 = useRef(new Animated.Value(0.3)).current;
-
-  useEffect(() => {
-    const animate = (dot: Animated.Value, delay: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: true }),
-          Animated.timing(dot, { toValue: 0.3, duration: 300, useNativeDriver: true }),
-          Animated.delay(600),
-        ])
-      ).start();
-
-    animate(dot1, 0);
-    animate(dot2, 200);
-    animate(dot3, 400);
-  }, []);
-
-  return (
-    <View style={{ flexDirection: 'row', gap: 6 }}>
-      {[dot1, dot2, dot3].map((dot, i) => (
-        <Animated.View
-          key={i}
-          style={[styles.dot, { opacity: dot }]}
-        />
-      ))}
+      {/* Status text */}
+      <Animated.Text style={[styles.statusText, { opacity: textOpacity }]}>
+        {statusText}
+      </Animated.Text>
     </View>
   );
 }
@@ -138,57 +140,76 @@ function LoadingDots() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: CONFIG.COLORS.bg,
+    backgroundColor: '#0A0A0F',
     alignItems: 'center',
     justifyContent: 'center',
   },
   glow: {
     position: 'absolute',
-    width: 250,
-    height: 250,
-    borderRadius: 125,
-    backgroundColor: 'rgba(229, 9, 20, 0.12)',
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: 'rgba(255, 46, 85, 0.18)',
   },
   logoContainer: {
-    marginBottom: 28,
+    marginBottom: 0,
   },
   logoCircle: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    backgroundColor: CONFIG.COLORS.accent,
+    width: 100,
+    height: 100,
+    borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: CONFIG.COLORS.accent,
+    shadowColor: '#FF2E55',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.7,
-    shadowRadius: 20,
-    elevation: 20,
+    shadowOpacity: 0.8,
+    shadowRadius: 24,
+    elevation: 24,
   },
-  logoEmoji: {
-    fontSize: 52,
+  logoIcon: {
+    fontSize: 44,
+    color: '#FFFFFF',
+    marginLeft: 4,
   },
   appName: {
-    fontSize: 38,
-    fontWeight: '800',
+    fontSize: 40,
+    fontWeight: '900',
     color: '#FFFFFF',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
     marginBottom: 6,
   },
+  appNameAccent: {
+    color: '#FF2E55',
+  },
   tagline: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: CONFIG.COLORS.textSecondary,
-    letterSpacing: 3,
+    fontSize: 11,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.35)',
+    letterSpacing: 3.5,
   },
-  loadingContainer: {
+  barTrack: {
     position: 'absolute',
-    bottom: 80,
+    bottom: 70,
+    width: width * 0.6,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    overflow: 'hidden',
   },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: CONFIG.COLORS.accent,
+  barFill: {
+    height: '100%',
+    borderRadius: 2,
+    backgroundColor: '#FF2E55',
+    shadowColor: '#FF2E55',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+  },
+  statusText: {
+    position: 'absolute',
+    bottom: 50,
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.25)',
+    letterSpacing: 0.5,
   },
 });

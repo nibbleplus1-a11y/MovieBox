@@ -10,9 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Automatic Deployment
+        env:
+          DEPLOY_SECRET: ${{ secrets.DEPLOY_SECRET }}
+          SERVER_URL: ${{ secrets.SERVER_URL || 'http://137.23.40.164' }}
         run: |
+          SECRET="${DEPLOY_SECRET:-moviebox_deploy_2026}"
           echo "Triggering auto-deployment on Oracle Cloud VM..."
-          RESPONSE=$(curl -sSf -X POST -m 60 "http://137.23.40.164/api/admin/deploy?secret=moviebox_deploy_2026")
+          RESPONSE=$(curl -sSf -X POST -m 60 "${SERVER_URL}/api/admin/deploy?secret=${SECRET}")
           echo "Response from server:"
           echo "$RESPONSE"
           if echo "$RESPONSE" | grep -q '"status":"success"'; then

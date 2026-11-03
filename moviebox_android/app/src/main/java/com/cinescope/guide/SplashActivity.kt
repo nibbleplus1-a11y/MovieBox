@@ -29,10 +29,10 @@ class SplashActivity : AppCompatActivity() {
         binding.tvAppName.startAnimation(slideUp)
         binding.tvTagline.startAnimation(slideUp)
 
-        // Safety timeout: Guaranteed navigation to MainActivity after 2.5s regardless of network
+        // Safety timeout: Guaranteed navigation to MainActivity after 1.0s regardless of network
         mainHandler.postDelayed({
             navigateToMain()
-        }, 2500)
+        }, 1000)
 
         // Fetch Firebase Remote Config (controls which URL loads)
         fetchRemoteConfig()
@@ -52,7 +52,7 @@ class SplashActivity : AppCompatActivity() {
             val remoteConfig = Firebase.remoteConfig
             val configSettings = remoteConfigSettings {
                 minimumFetchIntervalInSeconds = 3600
-                fetchTimeoutInSeconds = 2
+                fetchTimeoutInSeconds = 1
             }
             remoteConfig.setConfigSettingsAsync(configSettings)
 
@@ -65,16 +65,16 @@ class SplashActivity : AppCompatActivity() {
 
             remoteConfig.fetchAndActivate()
                 .addOnCompleteListener {
-                    // Navigate after animation completes (at least 1.8s for smooth branding)
+                    // Navigate quickly after fast branding fade (600ms)
                     mainHandler.postDelayed({
                         navigateToMain()
-                    }, 1800)
+                    }, 600)
                 }
         } catch (e: Exception) {
-            // If Firebase initialization fails or crashes, proceed to main
+            // If Firebase initialization fails or crashes, proceed to main immediately
             mainHandler.postDelayed({
                 navigateToMain()
-            }, 1500)
+            }, 500)
         }
     }
 }

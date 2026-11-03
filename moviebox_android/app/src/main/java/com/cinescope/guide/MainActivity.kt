@@ -28,10 +28,14 @@ class MainActivity : AppCompatActivity() {
     private var webChromeClientInstance: WebChromeClient? = null
 
     // ── The URL that actually loads ──────────────────────────────────────────
-    // After Play Store approval + Remote Config activated, change app_url in
-    // Firebase console to your real server URL (e.g. https://yourapp.up.railway.app)
+    // Checks custom server URL from SharedPreferences, then Firebase Remote Config,
+    // then falls back to default Oracle Cloud server.
     private val appUrl: String
         get() {
+            val prefs = getSharedPreferences("cinescope_prefs", MODE_PRIVATE)
+            val customUrl = prefs.getString("custom_server_url", "") ?: ""
+            if (customUrl.isNotBlank()) return customUrl
+
             val rc = Firebase.remoteConfig
             val url = rc.getString("app_url")
             return if (url.isNotBlank() && url != "https://www.themoviedb.org") url else "http://137.23.40.164"

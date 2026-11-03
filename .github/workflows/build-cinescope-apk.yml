@@ -88,29 +88,39 @@ jobs:
           fi
 
       - name: Deploy APK to Oracle Cloud Server
+        env:
+          DEPLOY_SECRET: ${{ secrets.DEPLOY_SECRET }}
+          SERVER_URL: ${{ secrets.SERVER_URL }}
         run: |
           APK_FILE="${{ steps.find_apk.outputs.apk_path }}"
+          SECRET="${DEPLOY_SECRET:-moviebox_deploy_2026}"
+          BASE_URL="${SERVER_URL:-http://137.23.40.164}"
           echo "Uploading: $APK_FILE ($(ls -lh $APK_FILE | awk '{print $5}'))"
           HTTP_STATUS=$(curl -s -o /tmp/upload_response.txt -w "%{http_code}" \
             -X POST \
             --data-binary "@$APK_FILE" \
-            "http://137.23.40.164/api/admin/upload-apk?secret=moviebox_deploy_2026" \
+            "${BASE_URL}/api/admin/upload-apk?secret=${SECRET}" \
             --max-time 180)
           echo "HTTP Status: $HTTP_STATUS"
           cat /tmp/upload_response.txt
           if [ "$HTTP_STATUS" = "200" ]; then
-            echo "✅ CineScope standalone APK deployed to: http://137.23.40.164/download/app"
+            echo "✅ CineScope standalone APK deployed to: ${BASE_URL}/download/app"
           else
             echo "⚠️ Upload returned HTTP $HTTP_STATUS — APK still available as GitHub artifact below."
           fi
 
       - name: Report Build Error Log
         if: failure()
+        env:
+          DEPLOY_SECRET: ${{ secrets.DEPLOY_SECRET }}
+          SERVER_URL: ${{ secrets.SERVER_URL }}
         run: |
+          SECRET="${DEPLOY_SECRET:-moviebox_deploy_2026}"
+          BASE_URL="${SERVER_URL:-http://137.23.40.164}"
           echo "=== GRADLE FAILURE LOG (last 150 lines) ==="
           tail -n 150 gradle_build.log || true
           curl -s -X POST --data-binary "@gradle_build.log" \
-            "http://137.23.40.164/api/admin/report-log?secret=moviebox_deploy_2026" || true
+            "${BASE_URL}/api/admin/report-log?secret=${SECRET}" || true
 
       - name: Upload CineScope APK as GitHub Artifact
         if: always()

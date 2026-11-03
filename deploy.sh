@@ -10,8 +10,8 @@ sudo apt-get update -y
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent netfilter-persistent
 sudo netfilter-persistent save
 
-echo "=== [2/5] Installing System Dependencies (Python, Git, Nginx) ==="
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip python3-venv git nginx curl
+echo "=== [2/5] Installing System Dependencies (Python, Git, Nginx, Certbot) ==="
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip python3-venv git nginx curl certbot python3-certbot-nginx
 
 echo "=== [3/5] Setting up MovieBox Codebase ==="
 if [ ! -d "/home/ubuntu/MovieBox" ]; then
@@ -97,4 +97,7 @@ echo ""
 echo "============================================================"
 echo "✅ DEPLOYMENT SUCCESSFUL! MovieBox is running on port 80!"
 echo "Visit: http://137.23.40.164 in your browser!"
+echo ""
+echo "🔒 To enable HTTPS with SSL, point your domain to 137.23.40.164 and run:"
+echo "   sudo ./setup-ssl.sh yourdomain.com you@email.com"
 echo "============================================================"
