@@ -46,14 +46,22 @@ export const buildPlayerHTML = (videoSrc: string) => {
       pointer-events: none;
     }
     video::cue {
-      background: rgba(0, 0, 0, 0.75);
+      background: transparent !important;
+      background-color: transparent !important;
       color: #ffffff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-size: 15px;
+      font-size: 16px;
+      font-weight: 700;
       line-height: 1.4;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.9);
-      border-radius: 4px;
-      padding: 2px 6px;
+      text-shadow:
+        -1.5px -1.5px 0 #000,
+        1.5px -1.5px 0 #000,
+        -1.5px 1.5px 0 #000,
+        1.5px 1.5px 0 #000,
+        0 0 3px #000,
+        0 2px 5px rgba(0,0,0,0.95);
+      border-radius: 0;
+      padding: 0 4px;
     }
   </style>
 </head>
@@ -94,13 +102,39 @@ export const buildPlayerHTML = (videoSrc: string) => {
         track.src = url;
         track.default = true;
         v.appendChild(track);
+        function adjustCues() {
+          try {
+            var t = track.track || (v.textTracks && v.textTracks[0]);
+            if (t && t.cues) {
+              for (var i = 0; i < t.cues.length; i++) {
+                var c = t.cues[i];
+                c.snapToLines = false;
+                c.line = 80;
+              }
+            }
+          } catch(e) {}
+        }
         track.addEventListener('load', function() {
           if (v.textTracks && v.textTracks.length > 0) {
             v.textTracks[0].mode = 'showing';
+            adjustCues();
           }
         });
+        if (track.track) {
+          track.track.oncuechange = function() {
+            try {
+              if (this.activeCues) {
+                for (var i = 0; i < this.activeCues.length; i++) {
+                  this.activeCues[i].snapToLines = false;
+                  this.activeCues[i].line = 80;
+                }
+              }
+            } catch(e) {}
+          };
+        }
         if (v.textTracks && v.textTracks.length > 0) {
           v.textTracks[0].mode = 'showing';
+          adjustCues();
         }
       } catch (e) {
         console.error('Subtitle error:', e);

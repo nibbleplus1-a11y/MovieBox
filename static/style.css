@@ -4608,7 +4608,7 @@ video::cue {
 
     position: absolute !important;
 
-    bottom: 80px !important;
+    bottom: clamp(100px, 14vh, 135px) !important;
 
     left: 4% !important;
 
@@ -4636,7 +4636,7 @@ video::cue {
 
 .video-stage.hud-hidden .cinema-subtitle-overlay {
 
-    bottom: 26px !important;
+    bottom: clamp(58px, 8.5vh, 88px) !important;
 
 }
 
@@ -4646,21 +4646,23 @@ video::cue {
 
     display: inline-block !important;
 
-    background: rgba(0, 0, 0, 0.85) !important;
+    background: transparent !important;
+
+    background-color: transparent !important;
 
     color: #ffffff !important;
 
     font-family: var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
 
-    font-size: clamp(15px, 2.3vw, 24px) !important;
+    font-size: clamp(16px, 2.4vw, 26px) !important;
 
     font-weight: 700 !important;
 
-    line-height: 1.45 !important;
+    line-height: 1.4 !important;
 
-    padding: 4px 14px !important;
+    padding: 0 8px !important;
 
-    border-radius: 6px !important;
+    border-radius: 0 !important;
 
     max-width: 88% !important;
 
@@ -4668,21 +4670,25 @@ video::cue {
 
     word-wrap: break-word !important;
 
-    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.7) !important;
+    box-shadow: none !important;
 
     text-shadow:
 
-        -1px -1px 0 #000,
+        -1.5px -1.5px 0 #000,
 
-        1px -1px 0 #000,
+        1.5px -1.5px 0 #000,
 
-        -1px 1px 0 #000,
+        -1.5px 1.5px 0 #000,
 
-        1px 1px 0 #000,
+        1.5px 1.5px 0 #000,
 
-        0 2px 4px rgba(0, 0, 0, 0.95),
+        0 0 3px #000,
 
-        0 4px 8px rgba(0, 0, 0, 0.8) !important;
+        0 2px 5px rgba(0, 0, 0, 0.95),
+
+        0 4px 10px rgba(0, 0, 0, 0.85) !important;
+
+    -webkit-text-stroke: 0.5px rgba(0, 0, 0, 0.85);
 
 }
 
