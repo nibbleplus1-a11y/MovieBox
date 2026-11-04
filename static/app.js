@@ -560,19 +560,20 @@ function renderSkeletons(container, count = 12) {
 // ─── HOME STREAMING FEED (13 Curated Horizontal Rows, Zero Song Clutter) ───────
 async function loadHomeFeed() {
     const shelfMap = [
-        { id: 'trendingRow', key: 'trending', type: 'Movie', countId: 'trendingCount' },
-        { id: 'newReleasesRow', key: 'new_releases', type: 'Movie' },
-        { id: 'topRatedRow', key: 'top_rated', type: 'Movie' },
-        { id: 'hollywoodRow', key: 'hollywood', type: 'Movie' },
-        { id: 'seriesRow', key: 'series', type: 'TV Series' },
-        { id: 'actionRow', key: 'action', type: 'Movie' },
-        { id: 'scifiRow', key: 'scifi', type: 'Movie' },
-        { id: 'comedyRow', key: 'comedy', type: 'Movie' },
-        { id: 'horrorRow', key: 'horror', type: 'Movie' },
-        { id: 'bollywoodRow', key: 'bollywood', type: 'Movie' },
-        { id: 'southIndianRow', key: 'south_indian', type: 'Movie' },
-        { id: 'animeRow', key: 'anime', type: 'TV Series' },
-        { id: 'asianDramaRow', key: 'asian_drama', type: 'TV Series' }
+        { id: 'trendingRow', key: 'trending', defaultType: 'Movie', countId: 'trendingCount' },
+        { id: 'newReleasesRow', key: 'new_releases', defaultType: 'Movie' },
+        { id: 'topRatedRow', key: 'top_rated', defaultType: 'Movie' },
+        { id: 'hollywoodRow', key: 'hollywood', defaultType: 'Movie' },
+        { id: 'seriesRow', key: 'series', defaultType: 'TV Series' },
+        { id: 'actionRow', key: 'action', defaultType: 'Movie' },
+        { id: 'scifiRow', key: 'scifi', defaultType: 'Movie' },
+        { id: 'comedyRow', key: 'comedy', defaultType: 'Movie' },
+        { id: 'horrorRow', key: 'horror', defaultType: 'Movie' },
+        { id: 'bollywoodRow', key: 'bollywood', defaultType: 'Movie' },
+        { id: 'southIndianRow', key: 'south_indian', defaultType: 'Movie' },
+        { id: 'animeSeriesRow', key: 'anime_series', fallbackKey: 'anime', defaultType: 'TV Series' },
+        { id: 'animeMoviesRow', key: 'anime_movies', fallbackKey: 'anime', defaultType: 'Movie' },
+        { id: 'asianDramaRow', key: 'asian_drama', defaultType: 'TV Series' }
     ];
 
     shelfMap.forEach(s => {
@@ -590,9 +591,15 @@ async function loadHomeFeed() {
         shelfMap.forEach(s => {
             const el = document.getElementById(s.id);
             if (!el) return;
-            const items = feed[s.key] || [];
+            let items = feed[s.key] || [];
+            if (!items.length && s.fallbackKey && feed[s.fallbackKey]) {
+                items = feed[s.fallbackKey];
+            }
             if (items.length) {
-                el.innerHTML = items.map(item => createMediaCardHtml({ ...item, type: s.type })).join('');
+                el.innerHTML = items.map(item => {
+                    const resolvedType = item.type || (item.subject_type === 2 ? 'TV Series' : (item.subject_type === 1 ? 'Movie' : s.defaultType));
+                    return createMediaCardHtml({ ...item, type: resolvedType });
+                }).join('');
                 if (s.countId) {
                     const badge = document.getElementById(s.countId);
                     if (badge) badge.textContent = `${items.length} Titles`;
@@ -842,7 +849,18 @@ function createMediaCardHtml(item) {
     const poster = item.cover || fallback;
     const rating = item.rating || item.imdb_rating || '';
     const year = item.year || (item.release_date ? item.release_date.slice(0, 4) : '');
-    const type = item.type || (item.subject_type === 2 ? 'TV Series' : 'Movie');
+    
+    // Robust detection of TV Series vs Movie
+    const titleLower = (item.title || item.raw_title || '').toLowerCase();
+    const hasSeriesPattern = /season\s*\d+|s\d{1,2}\b|tv\s*series|mini-series|complete\s*series|episode\s*\d+/i.test(titleLower);
+    const isKnownSeries = /(breaking bad|better call saul|game of thrones|house of the dragon|stranger things|the mentalist|the boys|the last of us|succession|peaky blinders|the sopranos|the wire|chernobyl|fargo|true detective|sherlock|dexter|friends|the office|vikings|prison break|narcos|money heist|squid game|dark|westworld|black mirror|rick and morty|attack on titan|death note|jujutsu kaisen|demon slayer|naruto|one piece|bleach|chainsaw man|solo leveling|vinland saga|arcane|the mandalorian|loki|wandavision|daredevil|the walking dead)/i.test(titleLower);
+    
+    let type = item.type;
+    if (isKnownSeries || hasSeriesPattern) {
+        type = 'TV Series';
+    } else if (!type || type === 'null' || type === 'undefined') {
+        type = item.subject_type === 2 ? 'TV Series' : 'Movie';
+    }
     const safeId = String(item.subject_id || '');
 
     // Extract audio dub badge from title or raw_title (e.g., [Hindi], [English], [Dual])

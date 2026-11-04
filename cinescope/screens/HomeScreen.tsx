@@ -6,12 +6,13 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
 import { api, MovieCard as MovieCardData, Feed } from '../services/api';
+import { WatchProgressService, WatchProgressItem } from '../services/watchProgress';
 
 const { width } = Dimensions.get('window');
 const HERO_H = 430;
@@ -30,6 +31,29 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [heroIndex, setHeroIndex] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState<Category>('All');
+  const [continueWatching, setContinueWatching] = useState<WatchProgressItem[]>([]);
+
+  // Reload continue watching every time screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      WatchProgressService.getAll()
+        .then((items) => {
+          if (!active) return;
+          const recent = (items || [])
+            .filter((p) => p && p.currentTime > 5)
+            .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
+            .slice(0, 10);
+          setContinueWatching(recent);
+        })
+        .catch(() => {
+          if (active) setContinueWatching([]);
+        });
+      return () => {
+        active = false;
+      };
+    }, [])
+  );
 
   const loadFeed = useCallback(async (isSilent = false) => {
     try {
@@ -100,17 +124,19 @@ export default function HomeScreen() {
     { id: 'south_indian', title: 'South Indian Cinema', icon: 'flash-outline', category: 'Movies', data: feed?.south_indian || [] },
     { id: 'series', title: 'Top TV Series', icon: 'tv-outline', category: 'TV Series', data: feed?.series || [] },
     { id: 'anime', title: 'Anime & Animation', icon: 'color-wand-outline', category: 'Anime', data: feed?.anime || [] },
+    { id: 'anime_series', title: 'Anime Series', icon: 'tv-outline', category: 'Anime', data: (feed as any)?.anime_series || [] },
+    { id: 'anime_movies', title: 'Anime Movies', icon: 'film-outline', category: 'Anime', data: (feed as any)?.anime_movies || [] },
     { id: 'asian_drama', title: 'Asian & K-Drama', icon: 'heart-outline', category: 'TV Series', data: feed?.asian_drama || [] },
   ], [feed]);
 
   const filteredSections = useMemo(() => {
     return allSections.filter(s => {
       if (!s.data || s.data.length === 0) return false;
-      if (selectedCategory === 'All') return true;
+      if (selectedCategory === 'All') return !['anime_series','anime_movies'].includes(s.id); // show combined anime in All
       if (selectedCategory === 'Trending') return s.id === 'trending';
       if (selectedCategory === 'Movies') return ['cinema', 'hollywood', 'bollywood', 'south_indian'].includes(s.id);
       if (selectedCategory === 'TV Series') return ['series', 'asian_drama'].includes(s.id);
-      if (selectedCategory === 'Anime') return s.id === 'anime';
+      if (selectedCategory === 'Anime') return ['anime_series', 'anime_movies'].includes(s.id); // sub-categorized in Anime tab
       return true;
     });
   }, [allSections, selectedCategory]);
@@ -287,6 +313,74 @@ export default function HomeScreen() {
                 ))}
               </View>
             </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Continue Watching Section */}
+        {continueWatching.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                <Ionicons name="play-circle-outline" size={17} color="#E50914" />
+                <Text style={styles.sectionTitle}>Continue Watching</Text>
+              </View>
+              <Text style={styles.sectionCount}>{continueWatching.length} Titles</Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.shelf}
+            >
+              {continueWatching.map((item) => {
+                const dur = item.duration || 1;
+                const pct = Math.min(100, Math.max(5, item.progress || Math.round((item.currentTime / dur) * 100)));
+                const isSeries = item.type === 'TV Series' || item.type === 'Series' || (item.season && item.season > 0);
+                const epLabel = isSeries && item.season && item.episode ? `S${item.season} E${item.episode}` : null;
+                return (
+                  <TouchableOpacity
+                    key={`cw_${item.subject_id}`}
+                    style={styles.shelfCard}
+                    onPress={() => {
+                      navigation.navigate('Player', {
+                        id: item.subject_id,
+                        title: item.title,
+                        cover: item.cover,
+                        season: item.season || 0,
+                        episode: item.episode || 0,
+                        initialSeek: item.currentTime || 0,
+                        type: isSeries ? 'TV Series' : 'Movie',
+                      });
+                    }}
+                    activeOpacity={0.78}
+                  >
+                    <View style={styles.posterWrapper}>
+                      <Image
+                        source={{ uri: item.cover || 'https://via.placeholder.com/300x450?text=No+Poster' }}
+                        style={styles.shelfPoster}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.cwPlayOverlay}>
+                        <View style={styles.cwPlayIconCircle}>
+                          <Ionicons name="play" size={16} color="#fff" style={{ marginLeft: 2 }} />
+                        </View>
+                      </View>
+                      {epLabel ? (
+                        <View style={styles.cwEpBadge}>
+                          <Text style={styles.cwEpBadgeText}>{epLabel}</Text>
+                        </View>
+                      ) : null}
+                      {/* Watch Progress bar */}
+                      <View style={styles.cwProgressTrack}>
+                        <View style={[styles.cwProgressFill, { width: `${pct}%` }]} />
+                      </View>
+                    </View>
+                    <Text style={styles.shelfTitle} numberOfLines={2}>
+                      {item.title}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </View>
         )}
 
@@ -698,5 +792,50 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 6,
     lineHeight: 15,
+  },
+  cwPlayOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cwPlayIconCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(229,9,20,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  cwEpBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: 'rgba(8,10,15,0.85)',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(229,9,20,0.5)',
+  },
+  cwEpBadgeText: {
+    color: '#F87171',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  cwProgressTrack: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 3.5,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  cwProgressFill: {
+    height: '100%',
+    backgroundColor: '#E50914',
+    borderRadius: 2,
   },
 });

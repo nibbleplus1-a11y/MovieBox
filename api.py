@@ -376,30 +376,40 @@ def classify_content_type(subject_type: Optional[int], title: Optional[str] = No
     """
     Intelligently classify content as 'Movie' or 'TV Series'.
     Prevents movies without subjectType or with subjectType=None from being incorrectly tagged as TV Series,
-    and prevents series from being incorrectly tagged as Movie.
+    and prevents series (like Breaking Bad, The Mentalist) from being incorrectly tagged as Movie.
     """
     clean_t = (title or "").strip()
+    clean_low = clean_t.lower()
     
-    # Explicit series patterns in title (e.g. 'Season 1', 'S02', 'The Series', 'Episode')
-    has_series_in_title = bool(re.search(r'\b(season\s*\d+|s\d{1,2}\b|tv\s*series|mini-series|complete\s*series)\b', clean_t, re.IGNORECASE))
+    # Explicit series patterns in title (e.g. 'Season 1', 'S02', 'The Series', 'Episode', 'Part 1')
+    has_series_in_title = bool(re.search(r'\b(season\s*\d+|s\d{1,2}\b|tv\s*series|mini-series|complete\s*series|episode\s*\d+)\b', clean_t, re.IGNORECASE))
     
+    # Known flagship TV series that might have ambiguous subject_type from upstream
+    _KNOWN_SERIES = (
+        "breaking bad", "better call saul", "game of thrones", "house of the dragon",
+        "stranger things", "the mentalist", "the boys", "the last of us", "succession",
+        "peaky blinders", "the sopranos", "the wire", "chernobyl", "fargo", "true detective",
+        "sherlock", "dexter", "friends", "the office", "vikings", "prison break", "narcos",
+        "money heist", "squid game", "dark", "westworld", "black mirror", "rick and morty",
+        "attack on titan", "death note", "jujutsu kaisen", "demon slayer", "naruto", "one piece",
+        "bleach", "my hero academia", "chainsaw man", "solo leveling", "vinland saga", "arcane",
+        "the mandalorian", "loki", "wandavision", "daredevil", "the walking dead", "severance"
+    )
+    is_known_series = any(ks in clean_low for ks in _KNOWN_SERIES)
+    if is_known_series or has_series_in_title:
+        return "TV Series"
+
     if subject_type == 2:
         return "TV Series"
     if subject_type == 1:
-        if has_series_in_title:
-            return "TV Series"
         return "Movie"
         
     # If upstream explicitly specified type
     if upstream_type in ["Series", "TV Series"]:
         return "TV Series"
     if upstream_type == "Movie":
-        return "Movie" if not has_series_in_title else "TV Series"
+        return "Movie"
 
-    # Fallback heuristic based on title
-    if has_series_in_title:
-        return "TV Series"
-        
     # Default is Movie (vast majority of unclassified cinema items are movies)
     return "Movie"
 
@@ -929,8 +939,19 @@ class MovieBoxEngine:
             "south_indian": [],
             "series": [],
             "anime": [],
+            "anime_movies": [],
+            "anime_series": [],
             "asian_drama": []
         }
+
+        # Helper: strip language/dub tags to get canonical base title for dedup
+        _LANG_STRIP_RE = re.compile(r'\s*[\[\(]\s*(hindi|english|tamil|telugu|korean|japanese|dubbed?|sub|dual audio|multi audio|original)[\]\)]\s*', re.IGNORECASE)
+        def _base_title(t):
+            return _LANG_STRIP_RE.sub('', re.sub(r'\[.*?\]|\(.*?\)', '', t or '')).strip().lower()
+
+        # Cross-section dedup: track base titles seen globally to avoid showing same content twice
+        _global_seen_ids: set = set()
+        _global_seen_base: dict = {}  # base_title -> subject_id of first occurrence
 
         # Attempt 1: Fetch operating list from primary domain
         operating_lists = []
@@ -973,31 +994,51 @@ class MovieBoxEngine:
                     if s.get("subjectType") == 6 or is_adult_content(s):
                         continue
                     stype = s.get("subjectType")
-                    if target_key in ["series", "anime", "asian_drama"] and stype == 1:
+                    if target_key in ["series", "asian_drama"] and stype == 1:
                         continue
                     if target_key in ["cinema", "hollywood"] and stype == 2:
                         continue
                     cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
+                    raw_title = s.get("title") or ""
                     item = {
-                        "title": s.get("title"),
+                        "title": raw_title,
                         "subject_id": str(s.get("subjectId")),
-                        "subject_type": s.get("subjectType"),
+                        "subject_type": stype,
                         "detail_path": s.get("detailPath"),
                         "cover": cover_url,
                         "rating": s.get("imdbRatingValue") or "N/A",
                         "genre": s.get("genre"),
                         "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
-                        "type": classify_content_type(s.get("subjectType"), s.get("title"))
+                        "type": classify_content_type(stype, raw_title)
                     }
-                    clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', item.get("title") or "").strip().lower()
-                    year_tag = item.get("year")
-                    is_dup = any(
-                        (x["subject_id"] == item["subject_id"]) or
-                        (re.sub(r'\[.*?\]|\(.*?\)', '', x.get("title") or "").strip().lower() == clean_base and x.get("year") == year_tag)
+                    sid = item["subject_id"]
+                    base = _base_title(raw_title)
+                    year_tag = item["year"]
+
+                    # Per-shelf dedup: skip if same subject_id OR same base title+year already in shelf
+                    is_shelf_dup = any(
+                        (x["subject_id"] == sid) or
+                        (_base_title(x.get("title") or "") == base and x.get("year") == year_tag)
                         for x in feed[target_key]
                     )
-                    if not is_dup:
+                    # Language-variant dedup: skip Hindi/English dubs if original already in shelf
+                    is_lang_dup = base in _global_seen_base and _global_seen_base[base] != sid and target_key in ["trending", "cinema", "hollywood"]
+
+                    if not is_shelf_dup and not is_lang_dup:
                         feed[target_key].append(item)
+                        if sid not in _global_seen_ids:
+                            _global_seen_ids.add(sid)
+                            _global_seen_base[base] = sid
+                        # Also populate anime sub-shelves
+                        if target_key == "anime":
+                            genre_low = (item.get("genre") or "").lower()
+                            anime_is_movie = stype == 1 or any(g in genre_low for g in ["animation", "animated"])
+                            if stype == 2 or "series" in genre_low or "show" in genre_low:
+                                if not any(x["subject_id"] == sid for x in feed["anime_series"]):
+                                    feed["anime_series"].append(item)
+                            elif anime_is_movie:
+                                if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
+                                    feed["anime_movies"].append(item)
 
         # Fallback backfill for movie shelves (trending, cinema, hollywood)
         if any(len(feed[k]) < 8 for k in ["trending", "cinema", "hollywood"]):
@@ -1016,8 +1057,9 @@ class MovieBoxEngine:
                         if s.get("subjectType") == 6 or is_adult_content(s):
                             continue
                         cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
+                        raw_title = s.get("title") or ""
                         item = {
-                            "title": s.get("title"),
+                            "title": raw_title,
                             "subject_id": str(s.get("subjectId")),
                             "subject_type": s.get("subjectType"),
                             "detail_path": s.get("detailPath"),
@@ -1025,10 +1067,14 @@ class MovieBoxEngine:
                             "rating": s.get("imdbRatingValue") or "N/A",
                             "genre": s.get("genre"),
                             "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
-                            "type": classify_content_type(s.get("subjectType"), s.get("title"))
+                            "type": classify_content_type(s.get("subjectType"), raw_title)
                         }
+                        sid = item["subject_id"]
+                        base = _base_title(raw_title)
                         for k in ["trending", "cinema", "hollywood"]:
-                            if len(feed[k]) < 12 and not any(x["subject_id"] == item["subject_id"] for x in feed[k]):
+                            # Only add if not already in that shelf AND not a language dup of existing item
+                            already_in = any(x["subject_id"] == sid or _base_title(x.get("title") or "") == base for x in feed[k])
+                            if len(feed[k]) < 12 and not already_in:
                                 feed[k].append(item)
             except Exception:
                 pass
@@ -1047,6 +1093,9 @@ class MovieBoxEngine:
         if len(feed["asian_drama"]) < 6:
             for kw in ["Queen of Tears", "Squid Game", "Crash Landing on You", "All of Us Are Dead"]:
                 sparse_tasks.append(("asian_drama", kw))
+        if len(feed["anime"]) < 8:
+            for kw in ["Attack on Titan", "Demon Slayer", "Jujutsu Kaisen", "One Piece", "Naruto", "Dragon Ball"]:
+                sparse_tasks.append(("anime", kw))
 
         if sparse_tasks:
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1062,9 +1111,22 @@ class MovieBoxEngine:
                     try:
                         cat, items = fut.result()
                         for it in items:
-                            if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed[cat]):
-                                if len(feed[cat]) < 12:
-                                    feed[cat].append(it)
+                            sid = it.get("subject_id")
+                            if not sid:
+                                continue
+                            base = _base_title(it.get("title") or "")
+                            already_in = any(_base_title(x.get("title") or "") == base or x["subject_id"] == sid for x in feed[cat])
+                            if not already_in and len(feed[cat]) < 15:
+                                feed[cat].append(it)
+                                # Backfill anime sub-shelves too
+                                if cat == "anime":
+                                    stype = it.get("subject_type")
+                                    if stype == 2:
+                                        if not any(x["subject_id"] == sid for x in feed["anime_series"]):
+                                            feed["anime_series"].append(it)
+                                    else:
+                                        if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
+                                            feed["anime_movies"].append(it)
                     except Exception:
                         pass
 
@@ -1086,10 +1148,26 @@ class MovieBoxEngine:
         top_rated_sorted = sorted([x for x in all_collected if _parse_rating(x.get("rating")) >= 6.5], key=lambda x: _parse_rating(x.get("rating")), reverse=True)
         feed["top_rated"] = top_rated_sorted[:24]
         feed["new_releases"] = [x for x in all_collected if str(x.get("year", "")) in ("2026", "2025")][:24]
-        feed["action"] = [x for x in all_collected if any(g in (x.get("genre") or "").lower() for g in ["action", "thriller", "adventure"])][:24]
-        feed["scifi"] = [x for x in all_collected if any(g in (x.get("genre") or "").lower() for g in ["sci-fi", "fantasy", "supernatural", "mystery"])][:24]
-        feed["comedy"] = [x for x in all_collected if any(g in (x.get("genre") or "").lower() for g in ["comedy", "romance", "family"])][:24]
-        feed["horror"] = [x for x in all_collected if any(g in (x.get("genre") or "").lower() for g in ["horror", "mystery", "crime"])][:24]
+        # Genre shelves: deduplicate across genre sections so each title appears in only one genre shelf
+        seen_genre = set()
+        action_items, scifi_items, comedy_items, horror_items = [], [], [], []
+        for x in all_collected:
+            g = (x.get("genre") or "").lower()
+            sid = x["subject_id"]
+            if sid in seen_genre:
+                continue
+            if any(gk in g for gk in ["action", "thriller", "adventure"]):
+                action_items.append(x); seen_genre.add(sid)
+            elif any(gk in g for gk in ["sci-fi", "fantasy", "supernatural"]):
+                scifi_items.append(x); seen_genre.add(sid)
+            elif any(gk in g for gk in ["comedy", "romance", "family"]):
+                comedy_items.append(x); seen_genre.add(sid)
+            elif any(gk in g for gk in ["horror", "mystery", "crime"]):
+                horror_items.append(x); seen_genre.add(sid)
+        feed["action"] = action_items[:24]
+        feed["scifi"] = scifi_items[:24]
+        feed["comedy"] = comedy_items[:24]
+        feed["horror"] = horror_items[:24]
 
         total_items = sum(len(v) for v in feed.values())
         if total_items >= 20:

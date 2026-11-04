@@ -84,95 +84,33 @@ export const PlayerDashboard: React.FC<PlayerDashboardProps> = ({
         </View>
       </View>
 
-      {/* ─── MOVIE SETTINGS (COMPACT 1-2 LINES) ─── */}
+      {/* ─── MOVIE SETTINGS (COMPACT GRID) ─── */}
       <View style={styles.compactSettingsContainer}>
-        {/* LINE 1: Quick Action Pills Bar */}
-        <View style={styles.quickBar}>
-          <TouchableOpacity
-            style={styles.quickBtn}
-            onPress={() => onOpenBottomSheet('audio')}
-            activeOpacity={0.8}
-          >
-            <View style={styles.quickBtnIconBox}>
-              <Ionicons name="volume-high" size={16} color="#e50914" />
-            </View>
-            <View style={styles.quickBtnTextBox}>
-              <Text style={styles.quickBtnHeader}>Audio</Text>
-              <Text style={styles.quickBtnValue} numberOfLines={1}>{selectedDubName.replace('dub', '').trim() || 'Original'}</Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.quickBtn}
-            onPress={() => onOpenBottomSheet('quality')}
-            activeOpacity={0.8}
-          >
-            <View style={styles.quickBtnIconBox}>
-              <Ionicons name="flash" size={16} color="#e50914" />
-            </View>
-            <View style={styles.quickBtnTextBox}>
-              <Text style={styles.quickBtnHeader}>Quality</Text>
-              <Text style={styles.quickBtnValue} numberOfLines={1}>{activeStream?.quality || 'Auto'}</Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.quickBtn}
-            onPress={() => onOpenBottomSheet('servers')}
-            activeOpacity={0.8}
-          >
-            <View style={styles.quickBtnIconBox}>
-              <Ionicons name="cloud" size={16} color="#e50914" />
-            </View>
-            <View style={styles.quickBtnTextBox}>
-              <Text style={styles.quickBtnHeader}>Server</Text>
-              <Text style={styles.quickBtnValue} numberOfLines={1}>{useIframe ? 'Mirror' : 'Direct'}</Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.quickBtn}
-            onPress={() => onOpenBottomSheet('speed')}
-            activeOpacity={0.8}
-          >
-            <View style={styles.quickBtnIconBox}>
-              <Ionicons name="speedometer" size={16} color="#e50914" />
-            </View>
-            <View style={styles.quickBtnTextBox}>
-              <Text style={styles.quickBtnHeader}>Speed</Text>
-              <Text style={styles.quickBtnValue}>{playbackSpeed}x</Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.quickBtn}
-            onPress={() => onOpenBottomSheet('subtitles')}
-            activeOpacity={0.8}
-          >
-            <View style={styles.quickBtnIconBox}>
-              <Ionicons name="chatbox-ellipses" size={16} color="#e50914" />
-            </View>
-            <View style={styles.quickBtnTextBox}>
-              <Text style={styles.quickBtnHeader}>Subs</Text>
-              <Text style={styles.quickBtnValue} numberOfLines={1}>Online</Text>
-            </View>
-          </TouchableOpacity>
-
-          {seasonsCount > 0 && (
+        {/* 2-row × 3-col quick action grid — prevents vertical text overflow */}
+        <View style={styles.quickGrid}>
+          {([
+            { key: 'audio' as const,     icon: 'volume-high',        label: 'Audio',    value: (selectedDubName.replace('dub','').trim() || 'Original').split(' ')[0] },
+            { key: 'quality' as const,   icon: 'flash',              label: 'Quality',  value: activeStream?.quality || 'Auto' },
+            { key: 'servers' as const,   icon: 'cloud',              label: 'Server',   value: useIframe ? 'Mirror' : 'Direct' },
+            { key: 'speed' as const,     icon: 'speedometer',        label: 'Speed',    value: `${playbackSpeed}x` },
+            { key: 'subtitles' as const, icon: 'chatbox-ellipses',   label: 'Subs',     value: 'Search' },
+            ...(seasonsCount > 0 ? [{ key: 'episodes' as const, icon: 'list', label: 'Episodes', value: `${seasonsCount} S` }] : []),
+          ] as Array<{key:any;icon:any;label:string;value:string}>).map(item => (
             <TouchableOpacity
-              style={styles.quickBtn}
-              onPress={() => onOpenBottomSheet('episodes')}
+              key={item.key}
+              style={styles.quickGridBtn}
+              onPress={() => onOpenBottomSheet(item.key)}
               activeOpacity={0.8}
             >
               <View style={styles.quickBtnIconBox}>
-                <Ionicons name="list" size={16} color="#e50914" />
+                <Ionicons name={item.icon} size={16} color="#e50914" />
               </View>
-              <View style={styles.quickBtnTextBox}>
-                <Text style={styles.quickBtnHeader}>Episodes</Text>
-                <Text style={styles.quickBtnValue}>{seasonsCount} S</Text>
+              <View style={styles.quickBtnTextCol}>
+                <Text style={styles.quickBtnHeader} numberOfLines={1}>{item.label}</Text>
+                <Text style={styles.quickBtnValue} numberOfLines={1}>{item.value}</Text>
               </View>
             </TouchableOpacity>
-          )}
+          ))}
         </View>
 
         {/* LINE 2: Horizontal Quick Resolution & Server Selector */}
@@ -334,30 +272,39 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
   },
-  quickBar: {
+  // Quick Grid: 2-row × 3-col prevents vertical text overflow
+  quickGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingVertical: 2,
   },
-  quickBtn: {
-    flex: 1,
+  quickGridBtn: {
+    width: '30%',
+    flexGrow: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 4,
     gap: 6,
+    backgroundColor: '#181b26',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+    minWidth: 90,
   },
   quickBtnIconBox: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: 'rgba(229,9,20,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(229,9,20,0.25)',
+    flexShrink: 0,
   },
-  quickBtnTextBox: { flex: 1 },
+  quickBtnTextCol: { flex: 1, minWidth: 0 },
   quickBtnHeader: { color: '#94a3b8', fontSize: 9, fontWeight: '600', textTransform: 'uppercase' },
   quickBtnValue: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
