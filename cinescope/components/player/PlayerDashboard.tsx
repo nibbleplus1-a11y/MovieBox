@@ -144,6 +144,20 @@ export const PlayerDashboard: React.FC<PlayerDashboardProps> = ({
             </View>
           </TouchableOpacity>
 
+          <TouchableOpacity
+            style={styles.quickBtn}
+            onPress={() => onOpenBottomSheet('subtitles')}
+            activeOpacity={0.8}
+          >
+            <View style={styles.quickBtnIconBox}>
+              <Ionicons name="chatbox-ellipses" size={16} color="#e50914" />
+            </View>
+            <View style={styles.quickBtnTextBox}>
+              <Text style={styles.quickBtnHeader}>Subs</Text>
+              <Text style={styles.quickBtnValue} numberOfLines={1}>Online</Text>
+            </View>
+          </TouchableOpacity>
+
           {seasonsCount > 0 && (
             <TouchableOpacity
               style={styles.quickBtn}

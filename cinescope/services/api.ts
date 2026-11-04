@@ -99,9 +99,26 @@ export const api = {
   episodes: (id: string) =>
     get<{ subject_id: string; seasons: any[] }>(`/episodes/${id}`),
 
+  captions: (id: string, season = 0, ep = 0) =>
+    get<{ captions: Array<{ id: string; language: string; url: string; code?: string }> }>(
+      `/api/stream/${id}/captions?se=${season}&ep=${ep}`
+    ),
+
+  onlineSubtitles: (title: string, year?: string, season = 0, ep = 0) =>
+    get<{ count: number; subtitles: Array<{ id: string; language: string; proxy_url: string; filename?: string }> }>(
+      `/api/subtitles/online?title=${encodeURIComponent(title)}${year ? `&year=${year}` : ''}&se=${season}&ep=${ep}`
+    ),
+
   proxyUrl: (streamUrl: string, referer?: string) => {
     const ref = referer || 'https://movieboxonline.net/';
     return `${BASE}/api/proxy/stream?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent(ref)}`;
+  },
+
+  proxyCaptionUrl: (captionUrl: string) => {
+    if (captionUrl.startsWith('http://') || captionUrl.startsWith('https://')) {
+      return `${BASE}/api/proxy/caption?url=${encodeURIComponent(captionUrl)}`;
+    }
+    return `${BASE}${captionUrl}`;
   },
 };
 

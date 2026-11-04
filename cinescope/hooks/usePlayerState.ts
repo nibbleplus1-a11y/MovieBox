@@ -3,8 +3,9 @@ import { Animated } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, StreamData, StreamSource } from '../services/api';
+import { WatchProgressService } from '../services/watchProgress';
 
-export type BottomSheetType = 'none' | 'audio' | 'quality' | 'speed' | 'episodes' | 'servers';
+export type BottomSheetType = 'none' | 'audio' | 'quality' | 'speed' | 'episodes' | 'servers' | 'subtitles';
 
 export interface SeasonData {
   season: number;
@@ -18,6 +19,14 @@ export interface EpisodeData {
   title?: string;
 }
 
+export interface SubtitleItem {
+  id: string;
+  language: string;
+  url: string;
+  code?: string;
+  isOnline?: boolean;
+}
+
 interface RouteParams {
   id: string;
   title?: string;
@@ -25,6 +34,7 @@ interface RouteParams {
   initialDub?: string;
   season?: number;
   episode?: number;
+  initialSeek?: number;
   type?: string;
 }
 
@@ -42,6 +52,7 @@ export function usePlayerState() {
     initialDub,
     season: initialSeason = 0,
     episode: initialEpisode = 0,
+    initialSeek: routeParamsInitialSeek = 0,
     type: initialType = 'Movie',
   } = (route.params as RouteParams) || {};
 
@@ -74,14 +85,18 @@ export function usePlayerState() {
   const [bottomSheet, setBottomSheet]         = useState<BottomSheetType>('none');
   const [seasonsData, setSeasonsData]         = useState<SeasonData[]>([]);
   const [sheetSeason, setSheetSeason]         = useState<number>(initialSeason || 1);
+  const [subtitlesList, setSubtitlesList]     = useState<SubtitleItem[]>([]);
+  const [activeSubtitle, setActiveSubtitle]   = useState<SubtitleItem | null>(null);
+  const [isSearchingOnlineSubs, setIsSearchingOnlineSubs] = useState<boolean>(false);
   /** FIX P1 #4: measured width from onLayout — replaces (screenWidth - magic_number) */
   const [trackWidth, setTrackWidth]           = useState<number>(300);
 
-  const webViewRef       = useRef<any>(null);
-  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** FIX P4 #25: symbol-based cancel token prevents stale responses from racing loads */
-  const loadTokenRef     = useRef<symbol>(Symbol());
-  const fadeAnim         = useRef(new Animated.Value(1)).current;
+  const webViewRef                = useRef<any>(null);
+  const controlsTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadTokenRef              = useRef<symbol>(Symbol());
+  const fadeAnim                  = useRef(new Animated.Value(1)).current;
+  const lastSaveTimeRef           = useRef<number>(0);
+  const hasAppliedInitialSeekRef = useRef<boolean>(false);
 
   const epLabel = isSeriesType && currentSeason > 0 ? `S${currentSeason} E${currentEpisode}` : null;
   const allStreams       = streamData?.streams || [];
@@ -91,7 +106,9 @@ export function usePlayerState() {
   const fallbackServers  = streamData?.fallback_servers || [];
   const progressRatio    = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
   const sheetSeasonEpisodes: EpisodeData[] =
-    seasonsData.find(s => s.season === sheetSeason)?.episodes || [];
+    seasonsData.find(s => Number(s.season) === Number(sheetSeason))?.episodes ||
+    seasonsData[0]?.episodes ||
+    [];
 
   const formatTime = (seconds: number): string => {
     if (isNaN(seconds) || seconds < 0) return '00:00';
@@ -208,6 +225,21 @@ export function usePlayerState() {
           }
         } catch {}
       }
+
+      // Load official subtitles in background
+      api.captions(subjectId, se, ep).then((capData) => {
+        if (loadTokenRef.current !== token) return;
+        if (capData?.captions && capData.captions.length > 0) {
+          const formatted: SubtitleItem[] = capData.captions.map((c) => ({
+            id: c.id || c.url,
+            language: c.language || 'English',
+            url: api.proxyCaptionUrl(c.url),
+            code: c.code,
+            isOnline: false,
+          }));
+          setSubtitlesList(formatted);
+        }
+      }).catch(() => {});
     } catch (err: unknown) {
       if (loadTokenRef.current !== token) return;
       setError(err instanceof Error ? err.message : 'Failed to load stream');
@@ -222,9 +254,9 @@ export function usePlayerState() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentId, currentSeason, currentEpisode]);
 
-  const sendVideoCommand = (jsCode: string) => {
+  const sendVideoCommand = useCallback((jsCode: string) => {
     if (webViewRef.current) webViewRef.current.injectJavaScript(jsCode);
-  };
+  }, []);
 
   // Immediately flip isPlaying state and send command to HTML5 video element
   const togglePlayPause = () => {
@@ -304,7 +336,54 @@ export function usePlayerState() {
     setSheetSeason(se);
     setBottomSheet('none');
     resetControlsTimer();
+    WatchProgressService.save({
+      subject_id: currentId,
+      title: (title || streamData?.title) as string,
+      cover: cover as string,
+      type: 'TV Series',
+      season: se,
+      episode: ep,
+      currentTime: 0,
+      duration: 0,
+      progress: 0,
+    });
   };
+
+  const searchOnlineSubs = useCallback(async () => {
+    setIsSearchingOnlineSubs(true);
+    try {
+      const cleanTitle = (title || streamData?.title || '').replace(/\[.*?\]|\(.*?\)/g, '').trim();
+      const res = await api.onlineSubtitles(cleanTitle, undefined, currentSeason, currentEpisode);
+      if (res?.subtitles && res.subtitles.length > 0) {
+        const formatted: SubtitleItem[] = res.subtitles.map((s) => ({
+          id: s.id,
+          language: `${s.language || 'English'} (Online)`,
+          url: s.proxy_url.startsWith('http') ? s.proxy_url : api.proxyCaptionUrl(s.proxy_url),
+          isOnline: true,
+        }));
+        setSubtitlesList((prev) => {
+          const seen = new Set(prev.map((p) => p.id));
+          const additions = formatted.filter((f) => !seen.has(f.id));
+          return [...prev, ...additions];
+        });
+      }
+    } catch (e) {
+      console.warn('Online subs error:', e);
+    } finally {
+      setIsSearchingOnlineSubs(false);
+    }
+  }, [title, streamData, currentSeason, currentEpisode]);
+
+  const selectSubtitle = useCallback((sub: SubtitleItem | null) => {
+    setActiveSubtitle(sub);
+    if (sub) {
+      sendVideoCommand(`if(window.setSubtitleTrack) window.setSubtitleTrack('${sub.url}', '${sub.language}');`);
+    } else {
+      sendVideoCommand(`if(window.setSubtitleTrack) window.setSubtitleTrack(null);`);
+    }
+    setBottomSheet('none');
+    resetControlsTimer();
+  }, [sendVideoCommand, resetControlsTimer]);
 
   // FIX P1 #3: handle 'ended' + auto-advance; FIX P2 #12: sync isPlaying from WebView events
   const handleWebViewMessage = useCallback(
@@ -314,40 +393,87 @@ export function usePlayerState() {
           type: string; currentTime?: number; duration?: number; error?: string;
         };
         switch (msg.type) {
-          case 'timeupdate':
-            setCurrentTime(msg.currentTime || 0);
+          case 'timeupdate': {
+            const cur = msg.currentTime || 0;
+            const dur = msg.duration || duration || 0;
+            setCurrentTime(cur);
             if (msg.duration && msg.duration > 0) setDuration(msg.duration);
+            if (cur > 5 && Date.now() - lastSaveTimeRef.current > 4000) {
+              lastSaveTimeRef.current = Date.now();
+              WatchProgressService.save({
+                subject_id: currentId,
+                title: (title || streamData?.title) as string,
+                cover: cover as string,
+                type: isSeriesType ? 'TV Series' : 'Movie',
+                season: isSeriesType ? currentSeason : 0,
+                episode: isSeriesType ? currentEpisode : 0,
+                currentTime: Math.floor(cur),
+                duration: Math.floor(dur),
+                progress: dur > 0 ? Math.min(100, Math.round((cur / dur) * 100)) : 0,
+              });
+            }
             break;
+          }
           case 'playing':
-            setIsPlaying(true); // sync from video element
+            setIsPlaying(true);
             setIsBuffering(false);
             setHasEnded(false);
             break;
-          case 'pause':
+          case 'pause': {
             setIsPlaying(false);
+            if (currentTime > 5) {
+              WatchProgressService.save({
+                subject_id: currentId,
+                title: (title || streamData?.title) as string,
+                cover: cover as string,
+                type: isSeriesType ? 'TV Series' : 'Movie',
+                season: isSeriesType ? currentSeason : 0,
+                episode: isSeriesType ? currentEpisode : 0,
+                currentTime: Math.floor(currentTime),
+                duration: Math.floor(duration),
+                progress: duration > 0 ? Math.min(100, Math.round((currentTime / duration) * 100)) : 0,
+              });
+            }
             break;
+          }
           case 'waiting':
             setIsBuffering(true);
             break;
           case 'canplay':
             setIsBuffering(false);
+            if (!hasAppliedInitialSeekRef.current && routeParamsInitialSeek && routeParamsInitialSeek > 10) {
+              hasAppliedInitialSeekRef.current = true;
+              sendVideoCommand(`if(window.videoEl){ window.videoEl.currentTime = ${routeParamsInitialSeek}; }`);
+            }
             break;
-          case 'ended':
+          case 'ended': {
             setIsPlaying(false);
             setHasEnded(true);
+            WatchProgressService.save({
+              subject_id: currentId,
+              title: (title || streamData?.title) as string,
+              cover: cover as string,
+              type: isSeriesType ? 'TV Series' : 'Movie',
+              season: isSeriesType ? currentSeason : 0,
+              episode: isSeriesType ? currentEpisode : 0,
+              currentTime: Math.floor(duration || currentTime),
+              duration: Math.floor(duration),
+              progress: 100,
+            });
             if (isSeriesType && seasonsData.length > 0) {
-              const curSeason = seasonsData.find(s => s.season === currentSeason);
-              const hasNextEp = curSeason?.episodes.some(e => e.episode === currentEpisode + 1);
+              const curSeason = seasonsData.find(s => Number(s.season) === Number(currentSeason));
+              const hasNextEp = curSeason?.episodes.some(e => Number(e.episode) === Number(currentEpisode) + 1);
               if (hasNextEp) {
                 setTimeout(() => switchEpisode(currentSeason, currentEpisode + 1), 1200);
               } else {
-                const nextSeason = seasonsData.find(s => s.season === currentSeason + 1);
+                const nextSeason = seasonsData.find(s => Number(s.season) === Number(currentSeason) + 1);
                 if (nextSeason?.episodes.length) {
                   setTimeout(() => switchEpisode(currentSeason + 1, 1), 1200);
                 }
               }
             }
             break;
+          }
           case 'error':
             console.warn('Video error from player:', msg.error);
             setIsBuffering(false);
@@ -358,7 +484,7 @@ export function usePlayerState() {
       } catch {}
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isSeriesType, seasonsData, currentSeason, currentEpisode],
+    [isSeriesType, seasonsData, currentSeason, currentEpisode, currentId, title, cover, duration, currentTime, routeParamsInitialSeek, sendVideoCommand],
   );
 
   const handleBack = () => {
@@ -378,6 +504,7 @@ export function usePlayerState() {
     controlsVisible, isLocked, setIsLocked,
     isFullscreen, bottomSheet, setBottomSheet,
     seasonsData, sheetSeason, setSheetSeason,
+    subtitlesList, activeSubtitle, isSearchingOnlineSubs,
     trackWidth, setTrackWidth,
     webViewRef, fadeAnim,
     epLabel, playableStreams, dubsList, fallbackServers,
@@ -385,7 +512,9 @@ export function usePlayerState() {
     loadStreams, formatTime,
     togglePlayPause, seekRelative, seekAbsolute, changeSpeed,
     switchQuality, switchDub, switchServer, switchEpisode,
+    searchOnlineSubs, selectSubtitle,
     toggleControls, toggleFullscreen, resetControlsTimer,
     handleWebViewMessage, handleBack,
   };
 }
+

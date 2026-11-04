@@ -19,7 +19,7 @@ interface PlayerWebViewProps {
   onRetry: () => void;
   onBack: () => void;
   onToggleFullscreen: () => void;
-  onOpenBottomSheet: (type: 'audio' | 'quality' | 'speed' | 'episodes' | 'servers') => void;
+  onOpenBottomSheet: (type: 'audio' | 'quality' | 'speed' | 'episodes' | 'servers' | 'subtitles') => void;
   onMessage: (event: { nativeEvent: { data: string } }) => void;
 }
 
@@ -45,6 +45,16 @@ export const buildPlayerHTML = (videoSrc: string) => {
       object-fit: contain; background: #000;
       pointer-events: none;
     }
+    video::cue {
+      background: rgba(0, 0, 0, 0.75);
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 15px;
+      line-height: 1.4;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+      border-radius: 4px;
+      padding: 2px 6px;
+    }
   </style>
 </head>
 <body>
@@ -64,6 +74,38 @@ export const buildPlayerHTML = (videoSrc: string) => {
   <script>
     const v = document.getElementById('videoPlayer');
     window.videoEl = v;
+
+    window.setSubtitleTrack = function(url, label) {
+      try {
+        const old = v.querySelectorAll('track');
+        old.forEach(function(t) { t.remove(); });
+        if (!url) {
+          if (v.textTracks && v.textTracks.length > 0) {
+            for (var i = 0; i < v.textTracks.length; i++) {
+              v.textTracks[i].mode = 'disabled';
+            }
+          }
+          return;
+        }
+        var track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.label = label || 'Subtitle';
+        track.srclang = 'en';
+        track.src = url;
+        track.default = true;
+        v.appendChild(track);
+        track.addEventListener('load', function() {
+          if (v.textTracks && v.textTracks.length > 0) {
+            v.textTracks[0].mode = 'showing';
+          }
+        });
+        if (v.textTracks && v.textTracks.length > 0) {
+          v.textTracks[0].mode = 'showing';
+        }
+      } catch (e) {
+        console.error('Subtitle error:', e);
+      }
+    };
 
     function post(obj) {
       if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {

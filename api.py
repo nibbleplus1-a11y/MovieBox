@@ -372,6 +372,37 @@ def is_adult_query(query: str) -> bool:
         return False
     return bool(_ADULT_REGEX.search(q))
 
+def classify_content_type(subject_type: Optional[int], title: Optional[str] = None, upstream_type: Optional[str] = None) -> str:
+    """
+    Intelligently classify content as 'Movie' or 'TV Series'.
+    Prevents movies without subjectType or with subjectType=None from being incorrectly tagged as TV Series,
+    and prevents series from being incorrectly tagged as Movie.
+    """
+    clean_t = (title or "").strip()
+    
+    # Explicit series patterns in title (e.g. 'Season 1', 'S02', 'The Series', 'Episode')
+    has_series_in_title = bool(re.search(r'\b(season\s*\d+|s\d{1,2}\b|tv\s*series|mini-series|complete\s*series)\b', clean_t, re.IGNORECASE))
+    
+    if subject_type == 2:
+        return "TV Series"
+    if subject_type == 1:
+        if has_series_in_title:
+            return "TV Series"
+        return "Movie"
+        
+    # If upstream explicitly specified type
+    if upstream_type in ["Series", "TV Series"]:
+        return "TV Series"
+    if upstream_type == "Movie":
+        return "Movie" if not has_series_in_title else "TV Series"
+
+    # Fallback heuristic based on title
+    if has_series_in_title:
+        return "TV Series"
+        
+    # Default is Movie (vast majority of unclassified cinema items are movies)
+    return "Movie"
+
 class MovieBoxEngine:
     _instance = None
 
@@ -492,7 +523,7 @@ class MovieBoxEngine:
             entry = {
                 "subject_id": str(sub.get("subjectId")),
                 "title": raw_title,
-                "type": "Movie" if sub.get("subjectType") == 1 else "Series",
+                "type": classify_content_type(sub.get("subjectType"), raw_title),
                 "subject_type": sub.get("subjectType"),
                 "release_date": rel_date,
                 "coming_soon": is_cs,
@@ -631,7 +662,7 @@ class MovieBoxEngine:
             "original_subject_id": original_subject_id,
             "title": data.get("title"),
             "subject_type": data.get("subjectType"),
-            "type": "Movie" if data.get("subjectType") == 1 else "Series",
+            "type": classify_content_type(data.get("subjectType"), data.get("title"), data.get("type")),
             "description": data.get("description"),
             "release_date": release_date,
             "coming_soon": coming_soon,
@@ -956,7 +987,7 @@ class MovieBoxEngine:
                         "rating": s.get("imdbRatingValue") or "N/A",
                         "genre": s.get("genre"),
                         "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
-                        "type": "Movie" if s.get("subjectType") == 1 else "TV Series"
+                        "type": classify_content_type(s.get("subjectType"), s.get("title"))
                     }
                     clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', item.get("title") or "").strip().lower()
                     year_tag = item.get("year")
@@ -994,7 +1025,7 @@ class MovieBoxEngine:
                             "rating": s.get("imdbRatingValue") or "N/A",
                             "genre": s.get("genre"),
                             "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
-                            "type": "Movie" if s.get("subjectType") == 1 else "TV Series"
+                            "type": classify_content_type(s.get("subjectType"), s.get("title"))
                         }
                         for k in ["trending", "cinema", "hollywood"]:
                             if len(feed[k]) < 12 and not any(x["subject_id"] == item["subject_id"] for x in feed[k]):

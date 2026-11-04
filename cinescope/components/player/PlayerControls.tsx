@@ -137,6 +137,17 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
               </TouchableOpacity>
 
               <TouchableOpacity
+                style={styles.toolChip}
+                onPress={() => {
+                  onOpenBottomSheet('subtitles');
+                  onResetTimer();
+                }}
+              >
+                <Ionicons name="chatbox-ellipses-outline" size={13} color="#fff" />
+                <Text style={styles.toolChipText}> Subs</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 style={styles.iconCircleBtn}
                 onPress={() => {
                   setIsLocked(true);

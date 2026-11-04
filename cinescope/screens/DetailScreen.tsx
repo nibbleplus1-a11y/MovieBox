@@ -1,20 +1,21 @@
-﻿import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity,
   StyleSheet, Dimensions, Share, Animated,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { api, DetailData } from '../services/api';
 import { WatchlistService } from '../services/watchlist';
+import { WatchProgressService, WatchProgressItem } from '../services/watchProgress';
 
 const { width } = Dimensions.get('window');
 const BACKDROP_H = 330;
 
-// â”€â”€ Duration formatter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Duration formatter ────────────────────────────────────────────────────────
 function formatDuration(raw: any): string | null {
   if (!raw) return null;
   if (typeof raw === 'string') {
@@ -25,7 +26,6 @@ function formatDuration(raw: any): string | null {
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
   if (typeof raw === 'number' && raw > 0) {
-    // Heuristic: values > 500 are likely seconds, smaller are minutes
     const mins = raw > 500 ? Math.round(raw / 60) : raw;
     const h = Math.floor(mins / 60), m = mins % 60;
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
@@ -33,7 +33,7 @@ function formatDuration(raw: any): string | null {
   return null;
 }
 
-// â”€â”€ Skeleton shimmer box â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Skeleton shimmer box ──────────────────────────────────────────────────────
 function ShimmerBox({ w, h, radius = 8, style }: { w: any; h: number; radius?: number; style?: any }) {
   const opacity = useRef(new Animated.Value(0.35)).current;
   useEffect(() => {
@@ -76,7 +76,7 @@ function SkeletonDetail() {
   );
 }
 
-// â”€â”€ Section wrapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Section wrapper ──────────────────────────────────────────────────────────
 function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <View style={S.section}>
@@ -89,7 +89,7 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
   );
 }
 
-// â”€â”€ Main Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Main Screen ──────────────────────────────────────────────────────────────
 export default function DetailScreen() {
   const insets     = useSafeAreaInsets();
   const navigation = useNavigation<any>();
@@ -100,6 +100,7 @@ export default function DetailScreen() {
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
   const [inWatchlist, setInWatchlist]         = useState(false);
+  const [savedProgress, setSavedProgress]     = useState<WatchProgressItem | null>(null);
   const [seasonsData, setSeasonsData]         = useState<any[]>([]);
   const [selectedSeason, setSelectedSeason]   = useState(1);
   const [synopsisExpanded, setSynopsisExpanded] = useState(false);
@@ -108,17 +109,25 @@ export default function DetailScreen() {
   const loadData = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [d, wl] = await Promise.all([
+      const [d, wl, progress] = await Promise.all([
         api.detail(id),
         WatchlistService.has(id).catch(() => false),
+        WatchProgressService.get(id).catch(() => null),
       ]);
       setDetail(d);
       setInWatchlist(Boolean(wl));
-      if (d?.type === 'Series' || d?.type === 'TV Series') {
+      setSavedProgress(progress);
+
+      const hasSeriesType = d?.type === 'Series' || d?.type === 'TV Series';
+      if (hasSeriesType || (progress && progress.season > 0)) {
         const ep = await api.episodes(id).catch(() => ({ seasons: [] }));
         if (ep?.seasons?.length) {
           setSeasonsData(ep.seasons);
-          setSelectedSeason(ep.seasons[0].season || 1);
+          if (progress && progress.season > 0) {
+            setSelectedSeason(progress.season);
+          } else {
+            setSelectedSeason(ep.seasons[0].season || 1);
+          }
         }
       }
       Animated.timing(fadeIn, { toValue: 1, duration: 300, useNativeDriver: true }).start();
@@ -131,6 +140,20 @@ export default function DetailScreen() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Refresh watch progress whenever returning back to this screen
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      WatchProgressService.get(id).then((p) => {
+        if (isMounted && p) {
+          setSavedProgress(p);
+          if (p.season > 0) setSelectedSeason(p.season);
+        }
+      });
+      return () => { isMounted = false; };
+    }, [id])
+  );
+
   const toggleWatchlist = async () => {
     if (inWatchlist) {
       await WatchlistService.remove(id); setInWatchlist(false);
@@ -140,13 +163,13 @@ export default function DetailScreen() {
     }
   };
 
-  const playNow = (dubId?: string, dubName?: string, season = 0, ep = 0) =>
+  const playNow = (dubId?: string, dubName?: string, season = 0, ep = 0, seekTime = 0) =>
     navigation.navigate('Player', {
       id: dubId || id, title: detail?.title || initTitle, cover: detail?.cover || initCover,
-      initialDub: dubName, season, episode: ep, type: detail?.type || 'Movie',
+      initialDub: dubName, season, episode: ep, initialSeek: seekTime, type: isSeries ? 'TV Series' : (detail?.type || 'Movie'),
     });
 
-  // â”€â”€ Derived â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Derived ──────────────────────────────────────────────────────────────────
   const d            = detail;
   const cover        = d?.cover || initCover;
   const title        = d?.title || initTitle;
@@ -154,7 +177,7 @@ export default function DetailScreen() {
   const rating       = (() => { const n = parseFloat(String(rawRating || '')); return isNaN(n) ? null : n.toFixed(1); })();
   const durationStr  = formatDuration((d as any)?.duration || (d as any)?.duration_seconds);
   const isSeries     = d?.type === 'Series' || d?.type === 'TV Series' || seasonsData.length > 0;
-  const activeSeason = seasonsData.find(s => s.season === selectedSeason) || seasonsData[0];
+  const activeSeason = seasonsData.find(s => Number(s.season) === Number(selectedSeason)) || seasonsData[0];
   const episodes     = (() => {
     if (!activeSeason) return [];
     if (activeSeason.episodes?.length > 0) return activeSeason.episodes;
@@ -163,7 +186,7 @@ export default function DetailScreen() {
     }));
   })();
 
-  // â”€â”€ Render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Render ───────────────────────────────────────────────────────────────────
   if (loading) return <SkeletonDetail />;
 
   if (error) return (
@@ -213,33 +236,50 @@ export default function DetailScreen() {
               {/* Badges */}
               <View style={S.badgeRow}>
                 <View style={S.hdBadge}><Text style={S.hdBadgeText}>HD 1080p</Text></View>
-                {rating && <View style={S.ratingBadge}><Text style={S.ratingText}>â˜… {rating}</Text></View>}
+                {rating && <View style={S.ratingBadge}><Text style={S.ratingText}>★ {rating}</Text></View>}
               </View>
               {/* Meta */}
               <View style={S.metaRow}>
                 {d?.release_date ? <Text style={S.metaItem}>{String(d.release_date).slice(0, 4)}</Text> : null}
-                {durationStr ? <><Text style={S.metaDot}>Â·</Text><Text style={S.metaItem}>{durationStr}</Text></> : null}
-                {isSeries ? <><Text style={S.metaDot}>Â·</Text><Text style={S.metaItem}>Series</Text></> : null}
+                {durationStr ? <><Text style={S.metaDot}> · </Text><Text style={S.metaItem}>{durationStr}</Text></> : null}
+                {isSeries ? <><Text style={S.metaDot}> · </Text><Text style={S.metaItem}>Series</Text></> : null}
               </View>
               {d?.genre ? <Text style={S.genreText} numberOfLines={2}>{d.genre}</Text> : null}
               {((d as any)?.country || (d as any)?.language) ? (
-                <Text style={S.langText}>{[(d as any)?.country, (d as any)?.language].filter(Boolean).join(' Â· ')}</Text>
+                <Text style={S.langText}>{[(d as any)?.country, (d as any)?.language].filter(Boolean).join(' · ')}</Text>
               ) : null}
             </View>
           </View>
 
           {/* Play button */}
           {!(d as any)?.coming_soon ? (
-            <TouchableOpacity style={S.playBtn} onPress={() => playNow(undefined, undefined, isSeries ? selectedSeason : 0, isSeries ? 1 : 0)} activeOpacity={0.88}>
+            <TouchableOpacity
+              style={S.playBtn}
+              onPress={() => {
+                const targetSeason = isSeries ? (savedProgress?.season || selectedSeason || 1) : 0;
+                const targetEpisode = isSeries ? (savedProgress?.episode || 1) : 0;
+                const targetSeek = savedProgress?.currentTime || 0;
+                playNow(undefined, undefined, targetSeason, targetEpisode, targetSeek);
+              }}
+              activeOpacity={0.88}
+            >
               <LinearGradient colors={['#FF2E55', '#CC1133']} style={S.playGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                 <Ionicons name="play" size={18} color="#FFF" />
-                <Text style={S.playText}>{isSeries ? `Play S${selectedSeason} Â· E1` : 'Stream 1080p Full HD'}</Text>
+                <Text style={S.playText}>
+                  {isSeries
+                    ? (savedProgress && (savedProgress.season > 0 || savedProgress.episode > 0)
+                        ? `Resume S${savedProgress.season || selectedSeason} · E${savedProgress.episode || 1}`
+                        : `Play S${selectedSeason} · E1`)
+                    : (savedProgress && savedProgress.currentTime > 15
+                        ? `Resume (${formatDuration(savedProgress.currentTime)})`
+                        : 'Stream 1080p Full HD')}
+                </Text>
               </LinearGradient>
             </TouchableOpacity>
           ) : (
             <View style={S.csBar}>
               <Ionicons name="time-outline" size={15} color="#8B5CF6" />
-              <Text style={S.csBarText}>Coming Soon{(d as any)?.coming_soon_date ? ` Â· ${(d as any).coming_soon_date}` : ''}</Text>
+              <Text style={S.csBarText}>Coming Soon{(d as any)?.coming_soon_date ? ` · ${(d as any).coming_soon_date}` : ''}</Text>
             </View>
           )}
 
@@ -267,7 +307,7 @@ export default function DetailScreen() {
               <Text style={S.synopsis} numberOfLines={synopsisExpanded ? undefined : 3}>{d.description}</Text>
               {d.description.length > 160 && (
                 <TouchableOpacity onPress={() => setSynopsisExpanded(!synopsisExpanded)}>
-                  <Text style={S.readMore}>{synopsisExpanded ? 'Show Less â–´' : 'Read More â–¾'}</Text>
+                  <Text style={S.readMore}>{synopsisExpanded ? 'Show Less ▲' : 'Read More ▼'}</Text>
                 </TouchableOpacity>
               )}
             </Section>
@@ -311,7 +351,7 @@ export default function DetailScreen() {
                     </LinearGradient>
                     <View style={{ flex: 1 }}>
                       <Text style={S.epTitle} numberOfLines={1}>{ep.title || `Episode ${ep.episode}`}</Text>
-                      <Text style={S.epMeta}>Season {selectedSeason} Â· 1080p HD</Text>
+                      <Text style={S.epMeta}>Season {selectedSeason} · 1080p HD</Text>
                     </View>
                     <View style={S.epPlayBtn}><Ionicons name="play" size={12} color="#FF2E55" /></View>
                   </TouchableOpacity>

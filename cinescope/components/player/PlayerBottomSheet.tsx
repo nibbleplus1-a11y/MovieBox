@@ -7,15 +7,18 @@ import {
   Modal,
   ScrollView,
   StyleSheet,
+  Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { EdgeInsets } from 'react-native-safe-area-context';
 import { StreamSource, FallbackServer } from '../../services/api';
-import { BottomSheetType, SeasonData, EpisodeData } from '../../hooks/usePlayerState';
+import { BottomSheetType, SeasonData, EpisodeData, SubtitleItem } from '../../hooks/usePlayerState';
 
 interface PlayerBottomSheetProps {
   bottomSheet: BottomSheetType;
   insets: EdgeInsets;
+  isFullscreen?: boolean;
   dubsList: Array<{ subject_id: string; lang_name: string }>;
   currentId: string;
   playableStreams: StreamSource[];
@@ -29,6 +32,9 @@ interface PlayerBottomSheetProps {
   currentSeason: number;
   currentEpisode: number;
   sheetSeasonEpisodes: EpisodeData[];
+  subtitlesList?: SubtitleItem[];
+  activeSubtitle?: SubtitleItem | null;
+  isSearchingOnlineSubs?: boolean;
   onClose: () => void;
   onSwitchDub: (dubId: string, dubName: string) => void;
   onSwitchQuality: (stream: StreamSource) => void;
@@ -36,11 +42,14 @@ interface PlayerBottomSheetProps {
   onSwitchServer: (serverId: string) => void;
   onSwitchEpisode: (season: number, episode: number) => void;
   onSetSheetSeason: (season: number) => void;
+  onSelectSubtitle?: (sub: SubtitleItem | null) => void;
+  onSearchOnlineSubs?: () => void;
 }
 
 export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
   bottomSheet,
   insets,
+  isFullscreen = false,
   dubsList,
   currentId,
   playableStreams,
@@ -54,6 +63,9 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
   currentSeason,
   currentEpisode,
   sheetSeasonEpisodes,
+  subtitlesList = [],
+  activeSubtitle = null,
+  isSearchingOnlineSubs = false,
   onClose,
   onSwitchDub,
   onSwitchQuality,
@@ -61,7 +73,21 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
   onSwitchServer,
   onSwitchEpisode,
   onSetSheetSeason,
+  onSelectSubtitle,
+  onSearchOnlineSubs,
 }) => {
+  const windowHeight = Dimensions.get('window').height;
+  // Dynamic height ensures flex child never collapses in landscape fullscreen or portrait
+  const sheetHeight = isFullscreen
+    ? Math.min(windowHeight * 0.90, 390)
+    : Math.min(windowHeight * 0.72, 540);
+
+  // Fallback to first available season's episodes if selection failed
+  const effectiveEpisodes =
+    sheetSeasonEpisodes.length > 0
+      ? sheetSeasonEpisodes
+      : (seasonsData[0]?.episodes || []);
+
   return (
     <Modal
       visible={bottomSheet !== 'none'}
@@ -72,7 +98,12 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.modalBackdrop}>
           <TouchableWithoutFeedback>
-            <View style={[styles.bottomSheet, { paddingBottom: insets.bottom + 20 }]}>
+            <View
+              style={[
+                styles.bottomSheet,
+                { height: sheetHeight, paddingBottom: insets.bottom + 16 },
+              ]}
+            >
               {/* Drag handle */}
               <View style={styles.sheetHandle} />
 
@@ -94,12 +125,16 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                   {bottomSheet === 'episodes' && (
                     <Ionicons name="list" size={18} color="#e50914" />
                   )}
+                  {bottomSheet === 'subtitles' && (
+                    <Ionicons name="chatbox-ellipses" size={18} color="#e50914" />
+                  )}
                   <Text style={styles.bottomSheetTitle}>
                     {bottomSheet === 'audio' && 'Audio Languages & Dubs'}
                     {bottomSheet === 'quality' && 'Video Quality'}
                     {bottomSheet === 'speed' && 'Playback Speed'}
                     {bottomSheet === 'servers' && 'Streaming Servers'}
                     {bottomSheet === 'episodes' && 'TV Show Episodes'}
+                    {bottomSheet === 'subtitles' && 'Subtitles & Captions'}
                   </Text>
                 </View>
                 <TouchableOpacity onPress={onClose} style={styles.modalCloseBtn}>
@@ -109,18 +144,18 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
 
               {/* AUDIO DUBS LIST */}
               {bottomSheet === 'audio' && (
-                <ScrollView style={styles.sheetList}>
+                <ScrollView style={styles.sheetList} contentContainerStyle={{ paddingBottom: 20 }}>
                   {dubsList.length > 0 ? (
-                    dubsList.map((dub, i) => {
+                    dubsList.map((dub) => {
                       const isSelected = dub.subject_id === currentId;
                       return (
                         <TouchableOpacity
-                          key={dub.subject_id || i}
+                          key={dub.subject_id}
                           style={[styles.sheetRow, isSelected && styles.sheetRowSelected]}
                           onPress={() => onSwitchDub(dub.subject_id, dub.lang_name)}
                         >
                           <Ionicons
-                            name="volume-medium-outline"
+                            name="volume-high-outline"
                             size={18}
                             color={isSelected ? '#e50914' : '#64748b'}
                             style={{ marginRight: 12 }}
@@ -131,7 +166,7 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                               isSelected && styles.sheetRowTextSelected,
                             ]}
                           >
-                            {dub.lang_name || 'Original Audio'}
+                            {dub.lang_name || 'Audio Track'}
                           </Text>
                           {isSelected && (
                             <Ionicons name="checkmark-circle" size={20} color="#e50914" />
@@ -142,7 +177,7 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                   ) : (
                     <View style={[styles.sheetRow, styles.sheetRowSelected]}>
                       <Ionicons
-                        name="volume-medium-outline"
+                        name="volume-high-outline"
                         size={18}
                         color="#e50914"
                         style={{ marginRight: 12 }}
@@ -158,7 +193,7 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
 
               {/* QUALITY LIST */}
               {bottomSheet === 'quality' && (
-                <ScrollView style={styles.sheetList}>
+                <ScrollView style={styles.sheetList} contentContainerStyle={{ paddingBottom: 20 }}>
                   {playableStreams.map((s, i) => {
                     const isSelected = !useIframe && activeStream?.url === s.url;
                     return (
@@ -226,7 +261,7 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
 
               {/* SERVERS LIST */}
               {bottomSheet === 'servers' && (
-                <ScrollView style={styles.sheetList}>
+                <ScrollView style={styles.sheetList} contentContainerStyle={{ paddingBottom: 20 }}>
                   <TouchableOpacity
                     style={[styles.sheetRow, !useIframe && styles.sheetRowSelected]}
                     onPress={() => onSwitchServer('direct')}
@@ -286,7 +321,87 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                 </ScrollView>
               )}
 
-              {/* EPISODES — with season tabs */}
+              {/* SUBTITLES LIST & ONLINE SEARCH */}
+              {bottomSheet === 'subtitles' && (
+                <View style={{ flex: 1 }}>
+                  {onSearchOnlineSubs && (
+                    <View style={styles.subSearchHeader}>
+                      <TouchableOpacity
+                        style={[styles.onlineSubSearchBtn, isSearchingOnlineSubs && { opacity: 0.7 }]}
+                        onPress={onSearchOnlineSubs}
+                        disabled={isSearchingOnlineSubs}
+                        activeOpacity={0.8}
+                      >
+                        {isSearchingOnlineSubs ? (
+                          <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+                        ) : (
+                          <Ionicons name="search" size={16} color="#fff" style={{ marginRight: 8 }} />
+                        )}
+                        <Text style={styles.onlineSubSearchText}>
+                          {isSearchingOnlineSubs ? 'Searching OpenSubtitles…' : 'Search Online Subtitles'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  <ScrollView style={styles.sheetList} contentContainerStyle={{ paddingBottom: 24 }}>
+                    {/* Off option */}
+                    <TouchableOpacity
+                      style={[styles.sheetRow, !activeSubtitle && styles.sheetRowSelected]}
+                      onPress={() => onSelectSubtitle && onSelectSubtitle(null)}
+                    >
+                      <Ionicons
+                        name="close-circle-outline"
+                        size={18}
+                        color={!activeSubtitle ? '#e50914' : '#64748b'}
+                        style={{ marginRight: 12 }}
+                      />
+                      <Text style={[styles.sheetRowText, !activeSubtitle && styles.sheetRowTextSelected]}>
+                        Off (No Subtitles)
+                      </Text>
+                      {!activeSubtitle && <Ionicons name="checkmark-circle" size={20} color="#e50914" />}
+                    </TouchableOpacity>
+
+                    {/* Available tracks */}
+                    {subtitlesList && subtitlesList.length > 0 ? (
+                      subtitlesList.map((sub, idx) => {
+                        const isSelected = activeSubtitle?.id === sub.id;
+                        return (
+                          <TouchableOpacity
+                            key={sub.id || idx}
+                            style={[styles.sheetRow, isSelected && styles.sheetRowSelected]}
+                            onPress={() => onSelectSubtitle && onSelectSubtitle(sub)}
+                          >
+                            <Ionicons
+                              name={sub.isOnline ? "cloud-download-outline" : "chatbox-ellipses-outline"}
+                              size={18}
+                              color={isSelected ? '#e50914' : '#64748b'}
+                              style={{ marginRight: 12 }}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.sheetRowText, isSelected && styles.sheetRowTextSelected]}>
+                                {sub.language}
+                              </Text>
+                              {sub.isOnline && (
+                                <Text style={styles.sheetRowSub}>Auto-Matched Online Subtitle</Text>
+                              )}
+                            </View>
+                            {isSelected && <Ionicons name="checkmark-circle" size={20} color="#e50914" />}
+                          </TouchableOpacity>
+                        );
+                      })
+                    ) : (
+                      <View style={styles.sheetEmptyBox}>
+                        <Ionicons name="chatbubble-outline" size={32} color="#3f3f46" />
+                        <Text style={styles.sheetEmptyText}>No official subtitles loaded.</Text>
+                        <Text style={styles.sheetRowSub}>Tap 'Search Online Subtitles' above to find SRT files.</Text>
+                      </View>
+                    )}
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* EPISODES — with season tabs & scrollable list */}
               {bottomSheet === 'episodes' && (
                 <View style={{ flex: 1 }}>
                   {seasonsData.length > 1 && (
@@ -297,7 +412,7 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                       style={styles.seasonTabsScroll}
                     >
                       {seasonsData.map((s) => {
-                        const isActive = s.season === sheetSeason;
+                        const isActive = Number(s.season) === Number(sheetSeason);
                         return (
                           <TouchableOpacity
                             key={s.season}
@@ -317,11 +432,17 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                       })}
                     </ScrollView>
                   )}
-                  <ScrollView style={styles.sheetList} showsVerticalScrollIndicator={false}>
-                    {sheetSeasonEpisodes.length > 0 ? (
-                      sheetSeasonEpisodes.map((ep) => {
+                  <ScrollView
+                    style={styles.sheetList}
+                    contentContainerStyle={{ paddingBottom: 30 }}
+                    showsVerticalScrollIndicator={true}
+                    nestedScrollEnabled={true}
+                  >
+                    {effectiveEpisodes.length > 0 ? (
+                      effectiveEpisodes.map((ep) => {
                         const isCurrent =
-                          ep.episode === currentEpisode && sheetSeason === currentSeason;
+                          Number(ep.episode) === Number(currentEpisode) &&
+                          Number(sheetSeason) === Number(currentSeason);
                         return (
                           <TouchableOpacity
                             key={ep.episode}
@@ -375,7 +496,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     paddingTop: 12,
     paddingHorizontal: 16,
-    maxHeight: '72%',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
@@ -391,7 +511,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingBottom: 14,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.07)',
   },
@@ -405,7 +525,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sheetList: { paddingVertical: 6 },
+  sheetList: { flex: 1, paddingVertical: 6 },
   sheetRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -420,25 +540,46 @@ const styles = StyleSheet.create({
   sheetRowSub: { color: '#52525b', fontSize: 11, marginTop: 2 },
   sheetEmptyBox: { padding: 32, alignItems: 'center', gap: 10 },
   sheetEmptyText: { color: '#52525b', fontSize: 13 },
-  seasonTabsScroll: { marginVertical: 12 },
+  seasonTabsScroll: { marginVertical: 8, maxHeight: 42 },
   seasonTabsRow: { gap: 8, paddingHorizontal: 2 },
   seasonTab: {
     paddingHorizontal: 14,
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderRadius: 20,
     backgroundColor: '#1e2030',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
+    justifyContent: 'center',
   },
   seasonTabActive: { backgroundColor: '#e50914', borderColor: '#e50914' },
   seasonTabText: { color: '#94a3b8', fontSize: 13, fontWeight: '700' },
   seasonTabTextActive: { color: '#fff' },
   epRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
   epNumber: {
-    color: '#3f3f46',
+    color: '#e50914',
     fontSize: 13,
     fontWeight: '800',
     minWidth: 24,
-    textAlign: 'right',
+    textAlign: 'center',
+  },
+  subSearchHeader: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 6,
+  },
+  onlineSubSearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e50914',
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  onlineSubSearchText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

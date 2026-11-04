@@ -59,6 +59,9 @@ export default function PlayerScreen() {
     fallbackServers,
     progressRatio,
     sheetSeasonEpisodes,
+    subtitlesList,
+    activeSubtitle,
+    isSearchingOnlineSubs,
     loadStreams,
     formatTime,
     togglePlayPause,
@@ -69,6 +72,8 @@ export default function PlayerScreen() {
     switchDub,
     switchServer,
     switchEpisode,
+    searchOnlineSubs,
+    selectSubtitle,
     toggleControls,
     toggleFullscreen,
     resetControlsTimer,
@@ -230,6 +235,7 @@ export default function PlayerScreen() {
       <PlayerBottomSheet
         bottomSheet={bottomSheet}
         insets={insets}
+        isFullscreen={isFullscreen}
         dubsList={dubsList}
         currentId={currentId}
         playableStreams={playableStreams}
@@ -243,6 +249,9 @@ export default function PlayerScreen() {
         currentSeason={currentSeason}
         currentEpisode={currentEpisode}
         sheetSeasonEpisodes={sheetSeasonEpisodes}
+        subtitlesList={subtitlesList}
+        activeSubtitle={activeSubtitle}
+        isSearchingOnlineSubs={isSearchingOnlineSubs}
         onClose={() => setBottomSheet('none')}
         onSwitchDub={switchDub}
         onSwitchQuality={switchQuality}
@@ -250,6 +259,8 @@ export default function PlayerScreen() {
         onSwitchServer={switchServer}
         onSwitchEpisode={switchEpisode}
         onSetSheetSeason={setSheetSeason}
+        onSelectSubtitle={selectSubtitle}
+        onSearchOnlineSubs={searchOnlineSubs}
       />
     </View>
   );

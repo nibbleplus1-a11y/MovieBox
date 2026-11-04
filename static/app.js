@@ -4456,12 +4456,7 @@ function getContinueWatching() {
 function getLastWatchedProgress(subjectId) {
     if (!subjectId) return null;
     const list = getContinueWatching();
-    const item = list.find(i => String(i.subject_id) === String(subjectId)) || null;
-    if (item && activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie')) {
-        item.season = 0;
-        item.episode = 0;
-    }
-    return item;
+    return list.find(i => String(i.subject_id) === String(subjectId)) || null;
 }
 
 function saveContinueWatching() {
@@ -4471,7 +4466,8 @@ function saveContinueWatching() {
     const totalDuration = (plyrInstance && !isNaN(plyrInstance.duration)) ? plyrInstance.duration : (v ? v.duration : 0);
     if (curTime < 5) return;
     const list = getContinueWatching().filter(i => String(i.subject_id) !== String(currentPlayingSubjectId));
-    const isMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
+    const isExplicitSeries = Boolean(Number(currentSeason || 0) > 0 || Number(currentEpisode || 0) > 0);
+    const isMovie = !isExplicitSeries && Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
     list.unshift({
         subject_id: String(currentPlayingSubjectId),
         title: (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'Stream',
@@ -4743,16 +4739,16 @@ async function openDetailsModal(subjectId) {
         const seasons = ep ? ep.seasons : null;
 
         const saved = getLastWatchedProgress(subjectId);
-        const isMovie = Boolean(d.subject_type === 1 || d.type === 'Movie');
-        const hasSeries = !isMovie && Boolean(seasons && seasons.length > 0);
+        const hasSeries = Boolean((seasons && seasons.length > 0) || d.type === 'Series' || d.type === 'TV Series');
+        const isMovie = !hasSeries && Boolean(d.subject_type === 1 || d.type === 'Movie');
         
         let resumeSeason = 1;
         let resumeEpisode = 1;
         let resumeTime = 0;
         
         if (saved) {
-            if (!isMovie && saved.season > 0) resumeSeason = saved.season;
-            if (!isMovie && saved.episode > 0) resumeEpisode = saved.episode;
+            if (hasSeries && saved.season > 0) resumeSeason = Number(saved.season);
+            if (hasSeries && saved.episode > 0) resumeEpisode = Number(saved.episode);
             if (saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) {
                 resumeTime = saved.currentTime;
             }
@@ -4963,6 +4959,25 @@ async function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0)
     currentSeason = sNum;
     currentEpisode = eNum;
     showToast(`Loading S${sNum}E${eNum}…`);
+
+    // Immediately record progress so returning to detail screen remembers this episode
+    try {
+        const continueList = getContinueWatching().filter(i => String(i.subject_id) !== String(subjectId));
+        const titleToSave = (activeDetailItem && activeDetailItem.title) || 'TV Series';
+        const coverToSave = (activeDetailItem && activeDetailItem.cover) || null;
+        continueList.unshift({
+            subject_id: String(subjectId),
+            title: titleToSave,
+            cover: coverToSave,
+            currentTime: Math.floor(seekTime || 0),
+            duration: 0,
+            progress: 0,
+            season: sNum,
+            episode: eNum,
+            savedAt: Date.now()
+        });
+        localStorage.setItem('moviebox_continue', JSON.stringify(continueList.slice(0, 30)));
+    } catch {}
 
     // Reset playback server state for the new episode so stale URLs from previous episodes are never reused
     activeFallbackServers = [];
