@@ -211,7 +211,7 @@ export const PlayerDashboard: React.FC<PlayerDashboardProps> = ({
                   </Text>
                   {item.year ? (
                     <Text style={styles.cardSubText}>
-                      {item.year} {item.type ? `• ${item.type === 'Series' ? 'TV' : 'Movie'}` : ''}
+                      {item.year} {item.type ? `• ${item.type === 'Series' || item.type === 'TV Series' ? 'TV' : 'Movie'}` : ''}
                     </Text>
                   ) : null}
                 </TouchableOpacity>

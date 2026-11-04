@@ -44,7 +44,7 @@ export default function MovieCard({ id, title, cover, rating, type, onPress }: P
           ) : null}
           {type ? (
             <View style={styles.typeBadge}>
-              <Text style={styles.typeText}>{type === 'Series' ? 'TV' : 'MOVIE'}</Text>
+              <Text style={styles.typeText}>{type === 'Series' || type === 'TV Series' ? 'TV' : 'MOVIE'}</Text>
             </View>
           ) : null}
         </View>

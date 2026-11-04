@@ -101,8 +101,8 @@ export default function WatchlistScreen() {
       />
       <View style={styles.gridOverlay}>
         {item.type && (
-          <View style={[styles.gridTypeBadge, item.type === 'Series' && styles.gridTypeBadgeSeries]}>
-            <Text style={styles.gridTypeText}>{item.type === 'Series' ? 'TV' : 'FILM'}</Text>
+          <View style={[styles.gridTypeBadge, (item.type === 'Series' || item.type === 'TV Series') && styles.gridTypeBadgeSeries]}>
+            <Text style={styles.gridTypeText}>{item.type === 'Series' || item.type === 'TV Series' ? 'TV' : 'FILM'}</Text>
           </View>
         )}
         <TouchableOpacity
@@ -140,9 +140,9 @@ export default function WatchlistScreen() {
       <View style={styles.listBody}>
         <Text style={styles.listTitle} numberOfLines={2}>{item.title}</Text>
         {item.type && (
-          <View style={[styles.listTypePill, item.type === 'Series' && styles.listTypePillSeries]}>
-            <Text style={[styles.listTypeText, item.type === 'Series' && styles.listTypeTextSeries]}>
-              {item.type === 'Series' ? 'TV SHOW' : 'MOVIE'}
+          <View style={[styles.listTypePill, (item.type === 'Series' || item.type === 'TV Series') && styles.listTypePillSeries]}>
+            <Text style={[styles.listTypeText, (item.type === 'Series' || item.type === 'TV Series') && styles.listTypeTextSeries]}>
+              {item.type === 'Series' || item.type === 'TV Series' ? 'TV SHOW' : 'MOVIE'}
             </Text>
           </View>
         )}

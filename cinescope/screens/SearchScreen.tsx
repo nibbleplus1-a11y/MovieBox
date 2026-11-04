@@ -67,7 +67,7 @@ export default function SearchScreen() {
   };
 
   const getTypeStyle = (type?: string) => {
-    if (type === 'Series') return { bg: 'rgba(6,182,212,0.18)', border: 'rgba(6,182,212,0.45)', text: '#22d3ee' };
+    if (type === 'Series' || type === 'TV Series') return { bg: 'rgba(6,182,212,0.18)', border: 'rgba(6,182,212,0.45)', text: '#22d3ee' };
     return { bg: 'rgba(229,9,20,0.15)', border: 'rgba(229,9,20,0.45)', text: '#ff4d4f' };
   };
 
@@ -182,7 +182,7 @@ export default function SearchScreen() {
                     {item.type && (
                       <View style={[styles.typePill, { backgroundColor: typeStyle.bg, borderColor: typeStyle.border }]}>
                         <Text style={[styles.typePillText, { color: typeStyle.text }]}>
-                          {item.type === 'Series' ? 'TV SHOW' : 'MOVIE'}
+                          {item.type === 'Series' || item.type === 'TV Series' ? 'TV SHOW' : 'MOVIE'}
                         </Text>
                       </View>
                     )}

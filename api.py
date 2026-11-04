@@ -1087,15 +1087,19 @@ class MovieBoxEngine:
         if len(feed["south_indian"]) < 6:
             for kw in ["Pushpa", "Salaar", "Devara", "Leo", "KGF"]:
                 sparse_tasks.append(("south_indian", kw))
-        if len(feed["series"]) < 6:
-            for kw in ["Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys"]:
+        if len(feed["series"]) < 10:
+            for kw in ["Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys", "Peaky Blinders", "Succession", "The Last of Us", "Severance", "House of the Dragon", "Fallout"]:
                 sparse_tasks.append(("series", kw))
         if len(feed["asian_drama"]) < 6:
             for kw in ["Queen of Tears", "Squid Game", "Crash Landing on You", "All of Us Are Dead"]:
                 sparse_tasks.append(("asian_drama", kw))
-        if len(feed["anime"]) < 8:
-            for kw in ["Attack on Titan", "Demon Slayer", "Jujutsu Kaisen", "One Piece", "Naruto", "Dragon Ball"]:
+        if len(feed["anime"]) < 20:
+            for kw in ["Attack on Titan", "Demon Slayer", "Jujutsu Kaisen", "One Piece", "Naruto", "Dragon Ball", "Bleach", "My Hero Academia", "Chainsaw Man", "Solo Leveling", "Vinland Saga", "Black Clover", "Spy x Family", "Hunter x Hunter", "Fullmetal Alchemist"]:
                 sparse_tasks.append(("anime", kw))
+        # Always backfill anime_movies since upstream anime list only returns TV series
+        if len(feed["anime_movies"]) < 10:
+            for kw in ["Spirited Away", "Your Name", "Princess Mononoke", "Howl's Moving Castle", "My Neighbor Totoro", "The Boy and the Heron", "Akira", "Ghost in the Shell", "Weathering With You", "Nausicaa"]:
+                sparse_tasks.append(("anime_movies", kw))
 
         if sparse_tasks:
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1121,12 +1125,21 @@ class MovieBoxEngine:
                                 # Backfill anime sub-shelves too
                                 if cat == "anime":
                                     stype = it.get("subject_type")
-                                    if stype == 2:
+                                    item_type = it.get("type", "")
+                                    is_anime_series = stype == 2 or item_type == "TV Series"
+                                    if is_anime_series:
                                         if not any(x["subject_id"] == sid for x in feed["anime_series"]):
                                             feed["anime_series"].append(it)
                                     else:
                                         if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
                                             feed["anime_movies"].append(it)
+                                # Direct anime_movies backfill tasks
+                                elif cat == "anime_movies":
+                                    if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
+                                        feed["anime_movies"].append(it)
+                                        # Also add to main anime shelf if not already there
+                                        if not any(x["subject_id"] == sid for x in feed["anime"]):
+                                            feed["anime"].append(it)
                     except Exception:
                         pass
 

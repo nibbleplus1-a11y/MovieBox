@@ -935,7 +935,7 @@ function initGlobalSearch() {
                 dropdown.innerHTML = suggestions.slice(0, 8).map(s => {
                     const sid = (s.subject_id && s.subject_id !== 'None') ? s.subject_id : '';
                     const poster = s.cover ? `<img class="ac-thumb" src="${s.cover}" alt="" onerror="this.style.display='none'">` : '<div class="ac-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--violet)">🎬</div>';
-                    const typeBadge = s.type ? `<span class="badge ${s.type === 'Series' ? 'badge-primary' : 'badge-outline'} ac-badge">${escapeHtml(s.type)}</span>` : '';
+                    const typeBadge = s.type ? `<span class="badge ${(s.type === 'Series' || s.type === 'TV Series') ? 'badge-primary' : 'badge-outline'} ac-badge">${escapeHtml(s.type)}</span>` : '';
                     const ratingBadge = s.rating ? `<span class="ac-rating">★ ${s.rating}</span>` : '';
                     const yearSpan = s.year ? `<span class="ac-year">${s.year}</span>` : '';
                     const csBadge = s.coming_soon ? '<span class="badge-text-coming-soon">Coming Soon</span>' : '';
