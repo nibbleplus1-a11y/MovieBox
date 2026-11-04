@@ -941,7 +941,34 @@ class MovieBoxEngine:
             "anime": [],
             "anime_movies": [],
             "anime_series": [],
+            "anime_classic": [],
+            "cartoons": [],
             "asian_drama": []
+        }
+
+        # Indian films that share names with anime – must NOT go into anime shelves
+        _INDIAN_FILMS_BLOCKLIST = {"akira", "brahmastra", "baahubali", "rrr"}
+
+        # Titles that belong in anime_classic (landmark/older anime)
+        _ANIME_CLASSIC_TITLES = {
+            "akira", "ghost in the shell", "nausicaa", "nausicaä", "castle in the sky",
+            "grave of the fireflies", "dragon ball z", "sailor moon", "evangelion",
+            "neon genesis evangelion", "cowboy bebop", "trigun", "ruroni kenshin",
+            "rurouni kenshin", "inuyasha", "yu yu hakusho", "fullmetal alchemist",
+            "code geass", "death note", "fma"
+        }
+
+        # Western cartoon keywords – these go in cartoons shelf, NOT anime
+        _CARTOON_SHOW_TITLES = {
+            "tom and jerry", "looney tunes", "mickey mouse", "donald duck",
+            "scooby-doo", "scooby doo", "spongebob", "simpsons", "family guy",
+            "south park", "futurama", "american dad", "king of the hill",
+            "adventure time", "regular show", "gravity falls", "phineas and ferb",
+            "teen titans", "justice league", "batman animated", "x-men", "spider-man",
+            "avengers assemble", "ben 10", "dexter's laboratory", "powerpuff girls",
+            "ed edd n eddy", "courage the cowardly dog", "johnny bravo",
+            "ducktales", "chip and dale", "winnie the pooh", "peppa pig",
+            "paw patrol", "bluey"
         }
 
         # Helper: strip language/dub tags to get canonical base title for dedup
@@ -1031,12 +1058,28 @@ class MovieBoxEngine:
                             _global_seen_base[base] = sid
                         # Also populate anime sub-shelves
                         if target_key == "anime":
+                            # Skip Indian films that share anime names
+                            if any(ib in base for ib in _INDIAN_FILMS_BLOCKLIST if len(ib) > 4):
+                                feed[target_key].pop()  # remove what was just added
+                                continue
                             genre_low = (item.get("genre") or "").lower()
-                            anime_is_movie = stype == 1 or any(g in genre_low for g in ["animation", "animated"])
-                            if stype == 2 or "series" in genre_low or "show" in genre_low:
+                            title_low = base
+                            # Check if this is a western cartoon
+                            is_cartoon = any(ct in title_low for ct in _CARTOON_SHOW_TITLES)
+                            # Check if classic anime
+                            is_classic = any(cl in title_low for cl in _ANIME_CLASSIC_TITLES)
+                            if is_cartoon:
+                                if not any(x["subject_id"] == sid for x in feed["cartoons"]):
+                                    feed["cartoons"].append(item)
+                            elif is_classic:
+                                if not any(x["subject_id"] == sid for x in feed["anime_classic"]):
+                                    feed["anime_classic"].append(item)
+                                if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
+                                    feed["anime_movies"].append(item)
+                            elif stype == 2 or "series" in genre_low or "show" in genre_low:
                                 if not any(x["subject_id"] == sid for x in feed["anime_series"]):
                                     feed["anime_series"].append(item)
-                            elif anime_is_movie:
+                            else:
                                 if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
                                     feed["anime_movies"].append(item)
 
@@ -1098,8 +1141,16 @@ class MovieBoxEngine:
                 sparse_tasks.append(("anime", kw))
         # Always backfill anime_movies since upstream anime list only returns TV series
         if len(feed["anime_movies"]) < 10:
-            for kw in ["Spirited Away", "Your Name", "Princess Mononoke", "Howl's Moving Castle", "My Neighbor Totoro", "The Boy and the Heron", "Akira", "Ghost in the Shell", "Weathering With You", "Nausicaa"]:
+            for kw in ["Spirited Away", "Your Name", "Princess Mononoke", "Howl's Moving Castle", "My Neighbor Totoro", "The Boy and the Heron", "Ghost in the Shell", "Weathering With You", "Nausicaa of the Valley"]:
                 sparse_tasks.append(("anime_movies", kw))
+        # Backfill anime_classic with landmark anime titles
+        if len(feed["anime_classic"]) < 8:
+            for kw in ["Akira 1988", "Ghost in the Shell 1995", "Grave of the Fireflies", "Cowboy Bebop", "Neon Genesis Evangelion", "Dragon Ball Z", "Sailor Moon", "Fullmetal Alchemist Brotherhood", "Death Note", "Code Geass"]:
+                sparse_tasks.append(("anime_classic", kw))
+        # Backfill cartoons shelf
+        if len(feed["cartoons"]) < 8:
+            for kw in ["Tom and Jerry", "Looney Tunes", "Scooby-Doo", "The Simpsons", "SpongeBob SquarePants", "Adventure Time", "Gravity Falls", "Teen Titans", "Spider-Man Animated", "Batman The Animated Series"]:
+                sparse_tasks.append(("cartoons", kw))
 
         if sparse_tasks:
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1126,8 +1177,19 @@ class MovieBoxEngine:
                                 if cat == "anime":
                                     stype = it.get("subject_type")
                                     item_type = it.get("type", "")
+                                    title_low_it = _base_title(it.get("title") or "")
+                                    is_cartoon_it = any(ct in title_low_it for ct in _CARTOON_SHOW_TITLES)
+                                    is_classic_it = any(cl in title_low_it for cl in _ANIME_CLASSIC_TITLES)
                                     is_anime_series = stype == 2 or item_type == "TV Series"
-                                    if is_anime_series:
+                                    if is_cartoon_it:
+                                        if not any(x["subject_id"] == sid for x in feed["cartoons"]):
+                                            feed["cartoons"].append(it)
+                                    elif is_classic_it:
+                                        if not any(x["subject_id"] == sid for x in feed["anime_classic"]):
+                                            feed["anime_classic"].append(it)
+                                        if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
+                                            feed["anime_movies"].append(it)
+                                    elif is_anime_series:
                                         if not any(x["subject_id"] == sid for x in feed["anime_series"]):
                                             feed["anime_series"].append(it)
                                     else:
@@ -1137,9 +1199,18 @@ class MovieBoxEngine:
                                 elif cat == "anime_movies":
                                     if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
                                         feed["anime_movies"].append(it)
-                                        # Also add to main anime shelf if not already there
                                         if not any(x["subject_id"] == sid for x in feed["anime"]):
                                             feed["anime"].append(it)
+                                # anime_classic backfill
+                                elif cat == "anime_classic":
+                                    if not any(x["subject_id"] == sid for x in feed["anime_classic"]):
+                                        feed["anime_classic"].append(it)
+                                    if not any(x["subject_id"] == sid for x in feed["anime"]):
+                                        feed["anime"].append(it)
+                                # cartoons backfill
+                                elif cat == "cartoons":
+                                    if not any(x["subject_id"] == sid for x in feed["cartoons"]):
+                                        feed["cartoons"].append(it)
                     except Exception:
                         pass
 

@@ -13,6 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
 import { api, MovieCard as MovieCardData, Feed } from '../services/api';
 import { WatchProgressService, WatchProgressItem } from '../services/watchProgress';
+import { AdBannerPlaceholder } from '../components/ads/AdBannerPlaceholder';
 
 const { width } = Dimensions.get('window');
 const HERO_H = 430;
@@ -120,23 +121,25 @@ export default function HomeScreen() {
     { id: 'trending', title: 'Trending Now', icon: 'trending-up-outline', category: 'Trending', data: feed?.trending || [] },
     { id: 'cinema', title: 'In Cinema', icon: 'film-outline', category: 'Movies', data: feed?.cinema || [] },
     { id: 'hollywood', title: 'Hollywood Blockbusters', icon: 'sparkles-outline', category: 'Movies', data: feed?.hollywood || [] },
+    { id: 'series', title: 'Top TV Series', icon: 'tv-outline', category: 'TV Series', data: feed?.series || [] },
+    { id: 'anime', title: 'Popular Anime', icon: 'color-wand-outline', category: 'Anime', data: feed?.anime || [] },
+    { id: 'anime_series', title: '🔥 Top Anime Series', icon: 'tv-outline', category: 'Anime', data: (feed as any)?.anime_series || [] },
+    { id: 'anime_movies', title: '🎬 Iconic Anime Movies', icon: 'film-outline', category: 'Anime', data: (feed as any)?.anime_movies || [] },
+    { id: 'anime_classic', title: '⭐ All-Time Classic Anime', icon: 'star-outline', category: 'Anime', data: (feed as any)?.anime_classic || [] },
+    { id: 'cartoons', title: '🧸 Cartoons & Animation', icon: 'planet-outline', category: 'Cartoons', data: (feed as any)?.cartoons || [] },
     { id: 'bollywood', title: 'Bollywood Hits', icon: 'star-outline', category: 'Movies', data: feed?.bollywood || [] },
     { id: 'south_indian', title: 'South Indian Cinema', icon: 'flash-outline', category: 'Movies', data: feed?.south_indian || [] },
-    { id: 'series', title: 'Top TV Series', icon: 'tv-outline', category: 'TV Series', data: feed?.series || [] },
-    { id: 'anime', title: 'Anime & Animation', icon: 'color-wand-outline', category: 'Anime', data: feed?.anime || [] },
-    { id: 'anime_series', title: 'Anime Series', icon: 'tv-outline', category: 'Anime', data: (feed as any)?.anime_series || [] },
-    { id: 'anime_movies', title: 'Anime Movies', icon: 'film-outline', category: 'Anime', data: (feed as any)?.anime_movies || [] },
     { id: 'asian_drama', title: 'Asian & K-Drama', icon: 'heart-outline', category: 'TV Series', data: feed?.asian_drama || [] },
   ], [feed]);
 
   const filteredSections = useMemo(() => {
     return allSections.filter(s => {
       if (!s.data || s.data.length === 0) return false;
-      if (selectedCategory === 'All') return !['anime_series','anime_movies'].includes(s.id); // show combined anime in All
+      if (selectedCategory === 'All') return !['anime_series', 'anime_movies', 'anime_classic', 'cartoons'].includes(s.id); // show combined anime in All
       if (selectedCategory === 'Trending') return s.id === 'trending';
       if (selectedCategory === 'Movies') return ['cinema', 'hollywood', 'bollywood', 'south_indian'].includes(s.id);
       if (selectedCategory === 'TV Series') return ['series', 'asian_drama'].includes(s.id);
-      if (selectedCategory === 'Anime') return ['anime_series', 'anime_movies'].includes(s.id); // sub-categorized in Anime tab
+      if (selectedCategory === 'Anime') return ['anime_series', 'anime_movies', 'anime_classic', 'cartoons'].includes(s.id); // properly split in Anime tab
       return true;
     });
   }, [allSections, selectedCategory]);
@@ -385,53 +388,71 @@ export default function HomeScreen() {
         )}
 
         {/* Dynamic Content Shelves */}
-        {filteredSections.map(section => (
-          <View key={section.id} style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-                <Ionicons name={section.icon as any} size={16} color="#E50914" />
-                <Text style={styles.sectionTitle}>{section.title}</Text>
+        {filteredSections.map((section, idx) => (
+          <React.Fragment key={section.id}>
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                  <Ionicons name={section.icon as any} size={16} color="#E50914" />
+                  <Text style={styles.sectionTitle}>{section.title}</Text>
+                </View>
+                <Text style={styles.sectionCount}>{section.data.length} Titles</Text>
               </View>
-              <Text style={styles.sectionCount}>{section.data.length} Titles</Text>
-            </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.shelf}
-            >
-              {section.data.map(item => {
-                const itemRating = formatRating(item.rating || item.imdb_rating);
-                return (
-                  <TouchableOpacity
-                    key={item.subject_id}
-                    style={styles.shelfCard}
-                    onPress={() => openDetail(item)}
-                    activeOpacity={0.78}
-                  >
-                    <View style={styles.posterWrapper}>
-                      <Image
-                        source={{ uri: item.cover }}
-                        style={styles.shelfPoster}
-                        resizeMode="cover"
-                      />
-                      {itemRating ? (
-                        <View style={styles.ratingBadge}>
-                          <Ionicons name="star" size={9} color="#eab308" style={{ marginRight: 3 }} />
-                          <Text style={styles.ratingBadgeText}>{itemRating}</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.shelf}
+              >
+                {section.data.map(item => {
+                  const itemRating = formatRating(item.rating || item.imdb_rating);
+                  return (
+                    <TouchableOpacity
+                      key={item.subject_id}
+                      style={styles.shelfCard}
+                      onPress={() => openDetail(item)}
+                      activeOpacity={0.78}
+                    >
+                      <View style={styles.posterWrapper}>
+                        <Image
+                          source={{ uri: item.cover }}
+                          style={styles.shelfPoster}
+                          resizeMode="cover"
+                        />
+                        {itemRating ? (
+                          <View style={styles.ratingBadge}>
+                            <Ionicons name="star" size={9} color="#eab308" style={{ marginRight: 3 }} />
+                            <Text style={styles.ratingBadgeText}>{itemRating}</Text>
+                          </View>
+                        ) : null}
+                        <View style={styles.qualityTag}>
+                          <Text style={styles.qualityTagText}>1080p</Text>
                         </View>
-                      ) : null}
-                      <View style={styles.qualityTag}>
-                        <Text style={styles.qualityTagText}>1080p</Text>
                       </View>
-                    </View>
-                    <Text style={styles.shelfTitle} numberOfLines={2}>
-                      {item.title}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
+                      <Text style={styles.shelfTitle} numberOfLines={2}>
+                        {item.title}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* In-Feed Native Ad Banner Slot between shelves */}
+            {idx === 1 && (
+              <AdBannerPlaceholder
+                title="1080p Cinema Cloud Streaming"
+                subtitle="Sponsored Ad Placement · Multi-server cloud mirrors & ultra-low latency."
+                ctaText="Learn More"
+              />
+            )}
+            {idx === 3 && (
+              <AdBannerPlaceholder
+                title="Watch Free With Zero Buffering"
+                subtitle="High-speed CDN nodes with multi-language Dolby audio dubs."
+                ctaText="Explore App"
+              />
+            )}
+          </React.Fragment>
         ))}
 
         <View style={{ height: 80 }} />

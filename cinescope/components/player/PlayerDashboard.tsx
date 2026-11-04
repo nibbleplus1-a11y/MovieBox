@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Image, Dimensions
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StreamSource, FallbackServer, MovieCard as MovieCardData } from '../../services/api';
 import { BottomSheetType } from '../../hooks/usePlayerState';
+import { AdBannerPlaceholder } from '../ads/AdBannerPlaceholder';
 
 const { width } = Dimensions.get('window');
 const POSTER_W = (width - 48) / 3;
@@ -166,6 +167,13 @@ export const PlayerDashboard: React.FC<PlayerDashboardProps> = ({
           </ScrollView>
         )}
       </View>
+
+      {/* In-Player Sponsor Ad Slot */}
+      <AdBannerPlaceholder
+        variant="player"
+        title="1080p Ultra HD Fast Cloud Node"
+        ctaText="View Offer"
+      />
 
       {/* ─── SIMILAR MOVIES & TOPIC RECOMMENDATIONS ─── */}
       <View style={styles.similarSection}>

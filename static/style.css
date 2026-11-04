@@ -1383,6 +1383,16 @@ body {
     background: #E50914;
 }
 
+.section-dot.dot-sky {
+    background: #38BDF8;
+    box-shadow: 0 0 7px rgba(56, 189, 248, 0.45);
+}
+
+.section-dot.dot-amber {
+    background: #FBBF24;
+    box-shadow: 0 0 7px rgba(251, 191, 36, 0.45);
+}
+
 
 
 .section-header h2 {

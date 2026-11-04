@@ -56,8 +56,23 @@ export function usePlayerState() {
     type: initialType = 'Movie',
   } = (route.params as RouteParams) || {};
 
+  const cleanLanguageTag = (t?: string) => {
+    if (!t) return '';
+    return t
+      .replace(/\s*\[(?:English|Hindi|Tamil|Telugu|Korean|Japanese|Spanish|French|German|Italian|Chinese|Russian|Arabic|Portuguese|Original|Dubbed|Subbed)[^\]]*\]/gi, '')
+      .replace(/\s*\((?:English|Hindi|Tamil|Telugu|Korean|Japanese|Spanish|French|German|Italian|Chinese|Russian|Arabic|Portuguese|Dubbed|Subbed)[^\)]*\)/gi, '')
+      .trim();
+  };
+
   const isSeriesType = initialType === 'Series' || initialType === 'TV Series';
 
+  const [playerTitle, setPlayerTitle]           = useState<string>(() => {
+    const raw = title || '';
+    const clean = cleanLanguageTag(raw);
+    return initialDub && !initialDub.toLowerCase().includes('original')
+      ? `${clean} [${initialDub}]`
+      : clean || raw;
+  });
   const [currentId, setCurrentId]               = useState<string>(initialId);
   const [currentSeason, setCurrentSeason]       = useState<number>(initialSeason);
   const [currentEpisode, setCurrentEpisode]     = useState<number>(initialEpisode);
@@ -305,6 +320,13 @@ export function usePlayerState() {
   const switchDub = (dubId: string, dubName: string) => {
     setSelectedDubName(dubName);
     setCurrentId(dubId);
+    const raw = title || streamData?.title || '';
+    const clean = cleanLanguageTag(raw);
+    if (dubName && !dubName.toLowerCase().includes('original')) {
+      setPlayerTitle(`${clean} [${dubName}]`);
+    } else {
+      setPlayerTitle(clean || raw);
+    }
     setBottomSheet('none');
     resetControlsTimer();
   };
@@ -492,7 +514,7 @@ export function usePlayerState() {
   };
 
   return {
-    title: title as string | undefined,
+    title: (playerTitle || title) as string | undefined,
     cover: cover as string | undefined,
     isSeriesType,
     currentId, currentSeason, currentEpisode,

@@ -573,6 +573,8 @@ async function loadHomeFeed() {
         { id: 'southIndianRow', key: 'south_indian', defaultType: 'Movie' },
         { id: 'animeSeriesRow', key: 'anime_series', fallbackKey: 'anime', defaultType: 'TV Series' },
         { id: 'animeMoviesRow', key: 'anime_movies', fallbackKey: 'anime', defaultType: 'Movie' },
+        { id: 'animeClassicRow', key: 'anime_classic', fallbackKey: 'anime_movies', defaultType: 'Movie' },
+        { id: 'cartoonsRow', key: 'cartoons', defaultType: 'TV Series' },
         { id: 'asianDramaRow', key: 'asian_drama', defaultType: 'TV Series' }
     ];
 
@@ -1268,11 +1270,20 @@ async function switchAudioDub(dubSubjectId, langName) {
         if (activeStreamList.length > 0) {
             const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
             const listToUse = playableStreams.length > 0 ? playableStreams : activeStreamList;
-            const streamToPlay = listToUse[0];
-            currentPlayingStream = streamToPlay;
+            // Clean obsolete bracketed language tags (e.g. [English]) from title and update with active language
+            const rawTitle = activeMediaMeta?.title || '';
+            const cleanBase = rawTitle
+                .replace(/\s*\[(?:English|Hindi|Tamil|Telugu|Korean|Japanese|Spanish|French|German|Italian|Chinese|Russian|Arabic|Portuguese|Original|Dubbed|Subbed)[^\]]*\]/gi, '')
+                .replace(/\s*\((?:English|Hindi|Tamil|Telugu|Korean|Japanese|Spanish|French|German|Italian|Chinese|Russian|Arabic|Portuguese|Dubbed|Subbed)[^\)]*\)/gi, '')
+                .trim();
+            const updatedTitle = langName && !langName.toLowerCase().includes('original')
+                ? `${cleanBase} [${langName}]`
+                : cleanBase;
+            if (activeMediaMeta) activeMediaMeta.title = updatedTitle;
+            safeText('inPlayerTitle', updatedTitle);
 
             const newSrc = getEffectiveStreamUrl(streamToPlay);
-            setCinemaVideoSource(newSrc, streamToPlay, activeMediaMeta?.title);
+            setCinemaVideoSource(newSrc, streamToPlay, updatedTitle);
 
             // Guaranteed timestamp resume using polling + readiness listeners
             if (resumeTime > 0) {
@@ -1444,7 +1455,14 @@ function setCinemaVideoSource(src, stream, titleText) {
             hlsInstance = new Hls({
                 enableWorker: true,
                 lowLatencyMode: false,
-                backBufferLength: 90
+                backBufferLength: 90,
+                maxBufferLength: 60,
+                maxMaxBufferLength: 120,
+                maxBufferSize: 60 * 1000 * 1000,
+                maxBufferHole: 0.5,
+                highBufferWatchdogPeriod: 2,
+                nudgeOffset: 0.2,
+                nudgeMaxRetry: 5
             });
             hlsInstance.loadSource(src);
             hlsInstance.attachMedia(video);

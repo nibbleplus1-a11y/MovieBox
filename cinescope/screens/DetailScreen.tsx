@@ -11,6 +11,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { api, DetailData } from '../services/api';
 import { WatchlistService } from '../services/watchlist';
 import { WatchProgressService, WatchProgressItem } from '../services/watchProgress';
+import { AdBannerPlaceholder } from '../components/ads/AdBannerPlaceholder';
 
 const { width } = Dimensions.get('window');
 const BACKDROP_H = 330;
@@ -329,6 +330,13 @@ export default function DetailScreen() {
               </ScrollView>
             </Section>
           )}
+
+          {/* Ad Placement Slot */}
+          <AdBannerPlaceholder
+            title="Sponsor Offer · 1080p Cinema"
+            subtitle="Ad placement slot for Monetag / Adsterra high-CPM banner."
+            ctaText="Open Offer"
+          />
 
           {/* Episodes */}
           {seasonsData.length > 0 && (
