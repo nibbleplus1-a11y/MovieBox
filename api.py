@@ -1002,52 +1002,40 @@ class MovieBoxEngine:
             except Exception:
                 pass
 
-        # Targeted backfill for Bollywood if shelf is sparse (< 6 items)
+        # Parallel backfill for sparse shelves using ThreadPoolExecutor
+        sparse_tasks = []
         if len(feed["bollywood"]) < 6:
-            for b_kw in ["Kalki", "Jawan", "Animal", "Fighter", "Stree 2", "Pathaan", "Dunki"]:
-                if len(feed["bollywood"]) >= 12:
-                    break
-                try:
-                    for it in self.search(b_kw, per_page=2):
-                        if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed["bollywood"]):
-                            feed["bollywood"].append(it)
-                except Exception:
-                    pass
-
-        # Targeted backfill for South Indian if shelf is sparse (< 6 items)
+            for kw in ["Kalki", "Jawan", "Animal", "Fighter", "Stree 2"]:
+                sparse_tasks.append(("bollywood", kw))
         if len(feed["south_indian"]) < 6:
-            for si_kw in ["Pushpa", "Salaar", "Devara", "Leo", "KGF", "RRR", "Kantara"]:
-                if len(feed["south_indian"]) >= 12:
-                    break
-                try:
-                    for it in self.search(si_kw, per_page=2):
-                        if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed["south_indian"]):
-                            feed["south_indian"].append(it)
-                except Exception:
-                    pass
-
-        # Targeted backfill for Series & Asian Drama if sparse (< 6 items)
+            for kw in ["Pushpa", "Salaar", "Devara", "Leo", "KGF"]:
+                sparse_tasks.append(("south_indian", kw))
         if len(feed["series"]) < 6:
-            for ser_kw in ["Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys", "Prison Break", "Loki"]:
-                if len(feed["series"]) >= 12:
-                    break
-                try:
-                    for it in self.search(ser_kw, per_page=2):
-                        if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed["series"]):
-                            feed["series"].append(it)
-                except Exception:
-                    pass
-
+            for kw in ["Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys"]:
+                sparse_tasks.append(("series", kw))
         if len(feed["asian_drama"]) < 6:
-            for kd_kw in ["Queen of Tears", "Squid Game", "Crash Landing on You", "All of Us Are Dead", "Vincenzo"]:
-                if len(feed["asian_drama"]) >= 12:
-                    break
+            for kw in ["Queen of Tears", "Squid Game", "Crash Landing on You", "All of Us Are Dead"]:
+                sparse_tasks.append(("asian_drama", kw))
+
+        if sparse_tasks:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            def _fetch_kw(category, kw):
                 try:
-                    for it in self.search(kd_kw, per_page=2):
-                        if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed["asian_drama"]):
-                            feed["asian_drama"].append(it)
+                    return category, self.search(kw, per_page=2)
                 except Exception:
-                    pass
+                    return category, []
+
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = [executor.submit(_fetch_kw, cat, kw) for cat, kw in sparse_tasks]
+                for fut in as_completed(futures):
+                    try:
+                        cat, items = fut.result()
+                        for it in items:
+                            if it.get("subject_id") and not any(x["subject_id"] == it["subject_id"] for x in feed[cat]):
+                                if len(feed[cat]) < 12:
+                                    feed[cat].append(it)
+                    except Exception:
+                        pass
 
         # Derive rich genre and highlight shelves for complete site catalog
         all_collected = []
@@ -1074,7 +1062,7 @@ class MovieBoxEngine:
 
         total_items = sum(len(v) for v in feed.values())
         if total_items >= 20:
-            app_cache.set(cache_key, feed, ttl=600)  # 10-min cache for fresh movie rotation
+            app_cache.set(cache_key, feed, ttl=14400)  # 4-hour cache prevents slow reload stalls
         return feed
 
 

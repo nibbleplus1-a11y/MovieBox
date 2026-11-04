@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
 import { api, MovieCard as MovieCardData, Feed } from '../services/api';
 
@@ -17,6 +18,8 @@ const HERO_H = 430;
 
 const CATEGORIES = ['All', 'Movies', 'TV Series', 'Anime', 'Trending'] as const;
 type Category = typeof CATEGORIES[number];
+
+const CACHE_KEY = 'cinescope_feed_cache_v1';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -28,22 +31,40 @@ export default function HomeScreen() {
   const [heroIndex, setHeroIndex] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState<Category>('All');
 
-  const loadFeed = useCallback(async () => {
+  const loadFeed = useCallback(async (isSilent = false) => {
     try {
+      if (!isSilent) setError(null);
       const data = await api.feed();
       setFeed(data);
       setError(null);
+      AsyncStorage.setItem(CACHE_KEY, JSON.stringify(data)).catch(() => {});
     } catch (e: any) {
-      setError('Could not connect to streaming server. Please verify network connection.');
+      if (!feed) {
+        setError('Could not connect to streaming server. Please verify network connection.');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [feed]);
 
   useEffect(() => {
-    loadFeed();
-  }, [loadFeed]);
+    // 1. Instant render from local cache (0ms latency)
+    AsyncStorage.getItem(CACHE_KEY).then(raw => {
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && (parsed.trending?.length || parsed.cinema?.length)) {
+            setFeed(parsed);
+            setLoading(false);
+          }
+        } catch {}
+      }
+    }).finally(() => {
+      // 2. Fetch fresh feed in background
+      loadFeed(true);
+    });
+  }, []);
 
   // Auto-rotate hero spotlight every 4.5s
   useEffect(() => {
@@ -141,14 +162,6 @@ export default function HomeScreen() {
           </View>
           <Text style={styles.brandText}>CINE<Text style={{ color: '#E50914' }}>SCOPE</Text></Text>
         </View>
-        <TouchableOpacity
-          style={styles.searchPill}
-          onPress={() => navigation.navigate('Search')}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="search-outline" size={15} color="#94a3b8" style={{ marginRight: 6 }} />
-          <Text style={styles.searchPillText}>Search movies, shows…</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Category Pills Bar */}

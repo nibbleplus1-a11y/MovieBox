@@ -24,7 +24,6 @@ interface PlayerWebViewProps {
 }
 
 export const buildPlayerHTML = (videoSrc: string) => {
-  // FIX P1 #2: dynamically choose MIME type based on extension
   const isHls = videoSrc.includes('.m3u8');
   const mimeType = isHls ? 'application/x-mpegURL' : 'video/mp4';
 
@@ -33,7 +32,7 @@ export const buildPlayerHTML = (videoSrc: string) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <meta name="referrer" content="always" />
+  <meta name="referrer" content="no-referrer-when-downgrade" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -51,13 +50,15 @@ export const buildPlayerHTML = (videoSrc: string) => {
 <body>
   <video
     id="videoPlayer"
+    src="${videoSrc}"
     autoplay
     playsinline
     webkit-playsinline
     x5-playsinline="true"
     preload="auto"
+    crossorigin="anonymous"
   >
-    <source src="${videoSrc}" type="${mimeType}" />
+    <source src="${videoSrc}" type="${mimeType}" onerror="handleSourceError(this)" />
   </video>
 
   <script>
@@ -70,43 +71,59 @@ export const buildPlayerHTML = (videoSrc: string) => {
       }
     }
 
+    function handleSourceError(srcEl) {
+      const err = v.error ? ('Code ' + v.error.code + ': ' + (v.error.message || 'Source load error')) : 'Source failed to load';
+      post({ type: 'error', error: err });
+    }
+
     function tryPlay() {
       const p = v.play();
       if (p !== undefined && p.catch) {
         p.catch(function(err) {
-          // Fallback if browser blocks unmuted autoplay: start muted then unmute immediately
+          // If browser restricts unmuted autoplay, start muted and immediately unmute
           v.muted = true;
           v.play().then(function() {
-            setTimeout(function() { v.muted = false; }, 300);
+            setTimeout(function() { v.muted = false; }, 350);
             post({ type: 'playing' });
-          }).catch(function() {
+          }).catch(function(err2) {
             post({ type: 'waiting' });
           });
         });
       }
     }
 
-    v.addEventListener('loadedmetadata', () => {
+    v.addEventListener('loadedmetadata', function() {
       post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
       tryPlay();
     });
-    v.addEventListener('timeupdate', () => {
-      post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
-    });
-    v.addEventListener('playing', () => post({ type: 'playing' }));
-    v.addEventListener('pause', () => post({ type: 'pause' }));
-    v.addEventListener('waiting', () => post({ type: 'waiting' }));
-    v.addEventListener('canplay', () => {
+    v.addEventListener('loadeddata', function() {
       post({ type: 'canplay' });
       tryPlay();
     });
-    v.addEventListener('ended', () => post({ type: 'ended' }));
-    v.addEventListener('error', () => {
-      const err = v.error ? (v.error.message || ('Code: ' + v.error.code)) : 'Video playback error';
+    v.addEventListener('timeupdate', function() {
+      post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
+    });
+    v.addEventListener('playing', function() { post({ type: 'playing' }); });
+    v.addEventListener('pause', function() { post({ type: 'pause' }); });
+    v.addEventListener('waiting', function() { post({ type: 'waiting' }); });
+    v.addEventListener('canplay', function() {
+      post({ type: 'canplay' });
+      tryPlay();
+    });
+    v.addEventListener('canplaythrough', function() {
+      post({ type: 'canplay' });
+      tryPlay();
+    });
+    v.addEventListener('ended', function() { post({ type: 'ended' }); });
+    v.addEventListener('error', function() {
+      const err = v.error ? ('Code ' + v.error.code + ': ' + (v.error.message || 'Playback error')) : 'Video error';
       post({ type: 'error', error: err });
     });
 
-    // Ensure playback kicks off immediately on load
+    // Check if readyState is already available
+    if (v.readyState >= 2) {
+      post({ type: 'canplay' });
+    }
     tryPlay();
   </script>
 </body>
@@ -210,7 +227,7 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
         key={streamUrl}
         source={{
           html: buildPlayerHTML(streamUrl),
-          baseUrl: 'https://movieboxonline.net/',
+          baseUrl: '',
         }}
         originWhitelist={['*']}
         style={styles.webview}
@@ -219,6 +236,9 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
         allowsInlineMediaPlayback
         javaScriptEnabled
         domStorageEnabled
+        mixedContentMode="always"
+        allowsProtectedMedia
+        androidHardwareAccelerationDisabled={false}
         scrollEnabled={false}
         onMessage={onMessage}
       />

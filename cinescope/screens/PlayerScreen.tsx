@@ -1,16 +1,24 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, TouchableWithoutFeedback, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePlayerState } from '../hooks/usePlayerState';
 import { PlayerWebView } from '../components/player/PlayerWebView';
 import { PlayerControls } from '../components/player/PlayerControls';
 import { PlayerBottomSheet } from '../components/player/PlayerBottomSheet';
 import { PlayerDashboard } from '../components/player/PlayerDashboard';
+import { api, MovieCard as MovieCardData } from '../services/api';
+
+const CACHE_KEY = 'cinescope_feed_cache_v1';
 
 export default function PlayerScreen() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+
+  const [similarMovies, setSimilarMovies] = useState<MovieCardData[]>([]);
 
   const {
     title,
@@ -67,6 +75,57 @@ export default function PlayerScreen() {
     handleWebViewMessage,
     handleBack,
   } = usePlayerState();
+
+  // Load Similar Movies for Recommendation Shelf
+  useEffect(() => {
+    let isMounted = true;
+    const loadSimilar = async () => {
+      try {
+        let feedData: any = null;
+        const cached = await AsyncStorage.getItem(CACHE_KEY);
+        if (cached) {
+          try { feedData = JSON.parse(cached); } catch {}
+        }
+        if (!feedData) {
+          feedData = await api.feed().catch(() => null);
+        }
+        if (!feedData || !isMounted) return;
+
+        let pool: MovieCardData[] = [];
+        if (isSeriesType) {
+          pool = [...(feedData.series || []), ...(feedData.asian_drama || []), ...(feedData.trending || [])];
+        } else {
+          pool = [...(feedData.trending || []), ...(feedData.cinema || []), ...(feedData.hollywood || []), ...(feedData.top_rated || [])];
+        }
+
+        const filtered = pool.filter(m => m.subject_id !== currentId);
+        // Deduplicate
+        const seen = new Set<string>();
+        const unique: MovieCardData[] = [];
+        for (const item of filtered) {
+          if (!seen.has(item.subject_id)) {
+            seen.add(item.subject_id);
+            unique.push(item);
+          }
+          if (unique.length >= 12) break;
+        }
+
+        if (isMounted) setSimilarMovies(unique);
+      } catch {}
+    };
+
+    loadSimilar();
+    return () => { isMounted = false; };
+  }, [currentId, isSeriesType]);
+
+  const onSelectMovie = (m: MovieCardData) => {
+    navigation.replace('Player', {
+      id: m.subject_id,
+      title: m.title,
+      cover: m.cover,
+      type: m.type || (isSeriesType ? 'TV Series' : 'Movie'),
+    });
+  };
 
   const playerContainerStyle = isFullscreen
     ? styles.playerContainerFullscreen
@@ -158,10 +217,12 @@ export default function PlayerScreen() {
           fallbackServers={fallbackServers}
           useIframe={useIframe}
           selectedServer={selectedServer}
+          similarMovies={similarMovies}
           onOpenBottomSheet={(type) => setBottomSheet(type)}
           onSwitchDub={switchDub}
           onSwitchQuality={switchQuality}
           onSwitchServer={switchServer}
+          onSelectMovie={onSelectMovie}
         />
       )}
 
