@@ -2,7 +2,7 @@
   "expo": {
     "name": "MovieVerse",
     "slug": "cinescope",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -24,10 +24,12 @@
         "backgroundColor": "#0A0A0F"
       },
       "package": "com.cinescope.guide",
-      "versionCode": 3,
+      "versionCode": 4,
       "permissions": [
         "INTERNET",
-        "ACCESS_NETWORK_STATE"
+        "ACCESS_NETWORK_STATE",
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_EXTERNAL_STORAGE"
       ]
     },
     "plugins": [
@@ -35,10 +37,22 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "minSdkVersion": 24
           }
         }
-      ]
+      ],
+      [
+        "expo-file-system",
+        {
+          "android": {
+            "useNextStorageAPI": false
+          }
+        }
+      ],
+      "expo-media-library"
     ],
     "extra": {
       "eas": {

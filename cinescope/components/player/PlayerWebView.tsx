@@ -23,9 +23,76 @@ interface PlayerWebViewProps {
   onMessage: (event: { nativeEvent: { data: string } }) => void;
 }
 
-export const buildPlayerHTML = (videoSrc: string) => {
+export const buildPlayerHTML = (videoSrc: string): string => {
   const isHls = videoSrc.includes('.m3u8');
-  const mimeType = isHls ? 'application/x-mpegURL' : 'video/mp4';
+
+  // HLS.js script tag — only injected for HLS streams.
+  // We escape the closing </script> inside the template literal with a backslash
+  // to prevent the HTML parser from terminating the outer script block early.
+  const hlsScriptTag = isHls
+    ? `<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"><\/script>`
+    : '';
+
+  const hlsInit = isHls
+    ? `
+    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+      hlsInstance = new Hls({
+        enableWorker: false,
+        lowLatencyMode: false,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 120,
+        maxBufferSize: 60 * 1000 * 1000,
+        backBufferLength: 30,
+        maxBufferHole: 1.0,
+        manifestLoadingMaxRetry: 6,
+        levelLoadingMaxRetry: 6,
+        fragLoadingMaxRetry: 6,
+        manifestLoadingRetryDelay: 1000,
+        levelLoadingRetryDelay: 1000,
+        fragLoadingRetryDelay: 1000,
+        startLevel: -1,
+        abrEwmaDefaultEstimate: 2000000,
+        nudgeOffset: 0.3,
+        nudgeMaxRetry: 8,
+        highBufferWatchdogPeriod: 3
+      });
+      hlsInstance.loadSource('${videoSrc}');
+      hlsInstance.attachMedia(v);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, function() {
+        post({ type: 'canplay' });
+        tryPlay();
+      });
+      hlsInstance.on(Hls.Events.ERROR, function(event, data) {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              try { hlsInstance.startLoad(); } catch(e) {}
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              try { hlsInstance.recoverMediaError(); } catch(e) {}
+              break;
+            default:
+              post({ type: 'error', error: 'HLS fatal error: ' + data.details });
+              break;
+          }
+        } else if (data.details === 'bufferStalledError') {
+          try { v.currentTime = v.currentTime + 0.1; } catch(e) {}
+        }
+      });
+    } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      v.src = '${videoSrc}';
+      v.load();
+      tryPlay();
+    } else {
+      post({ type: 'error', error: 'HLS not supported on this device' });
+    }`
+    : `if (v.readyState >= 2) { post({ type: 'canplay' }); }
+    tryPlay();`;
+
+  const videoSrcAttr = isHls ? '' : `src="${videoSrc}"`;
+  const videoSourceTag = isHls
+    ? ''
+    : `<source src="${videoSrc}" type="video/mp4" onerror="handleSourceError(this)" />`;
 
   return `<!DOCTYPE html>
 <html>
@@ -64,28 +131,29 @@ export const buildPlayerHTML = (videoSrc: string) => {
       padding: 0 4px;
     }
   </style>
+  ${hlsScriptTag}
 </head>
 <body>
   <video
     id="videoPlayer"
-    src="${videoSrc}"
+    ${videoSrcAttr}
     autoplay
     playsinline
     webkit-playsinline
     x5-playsinline="true"
     preload="auto"
     crossorigin="anonymous"
-  >
-    <source src="${videoSrc}" type="${mimeType}" onerror="handleSourceError(this)" />
-  </video>
+  >${videoSourceTag}</video>
 
   <script>
-    const v = document.getElementById('videoPlayer');
+    var v = document.getElementById('videoPlayer');
     window.videoEl = v;
+    var hlsInstance = null;
 
+    // ── Subtitle track setter ──────────────────────────────────────────────
     window.setSubtitleTrack = function(url, label) {
       try {
-        const old = v.querySelectorAll('track');
+        var old = v.querySelectorAll('track');
         old.forEach(function(t) { t.remove(); });
         if (!url) {
           if (v.textTracks && v.textTracks.length > 0) {
@@ -148,15 +216,14 @@ export const buildPlayerHTML = (videoSrc: string) => {
     }
 
     function handleSourceError(srcEl) {
-      const err = v.error ? ('Code ' + v.error.code + ': ' + (v.error.message || 'Source load error')) : 'Source failed to load';
+      var err = v.error ? ('Code ' + v.error.code + ': ' + (v.error.message || 'Source load error')) : 'Source failed to load';
       post({ type: 'error', error: err });
     }
 
     function tryPlay() {
-      const p = v.play();
+      var p = v.play();
       if (p !== undefined && p.catch) {
         p.catch(function(err) {
-          // If browser restricts unmuted autoplay, start muted and immediately unmute
           v.muted = true;
           v.play().then(function() {
             setTimeout(function() { v.muted = false; }, 350);
@@ -168,40 +235,47 @@ export const buildPlayerHTML = (videoSrc: string) => {
       }
     }
 
+    // ── Stall recovery watchdog ────────────────────────────────────────────
+    var lastTime = -1;
+    var stallCount = 0;
+    setInterval(function() {
+      if (!v.paused && !v.ended && v.readyState > 2) {
+        if (v.currentTime === lastTime) {
+          stallCount++;
+          if (stallCount >= 2) {
+            try { v.currentTime = v.currentTime + 0.1; } catch(e) {}
+            if (hlsInstance) { try { hlsInstance.startLoad(); } catch(e) {} }
+            stallCount = 0;
+          }
+        } else {
+          stallCount = 0;
+        }
+        lastTime = v.currentTime;
+      }
+    }, 3000);
+
     v.addEventListener('loadedmetadata', function() {
       post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
       tryPlay();
     });
-    v.addEventListener('loadeddata', function() {
-      post({ type: 'canplay' });
-      tryPlay();
-    });
+    v.addEventListener('loadeddata', function() { post({ type: 'canplay' }); tryPlay(); });
     v.addEventListener('timeupdate', function() {
       post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
     });
     v.addEventListener('playing', function() { post({ type: 'playing' }); });
     v.addEventListener('pause', function() { post({ type: 'pause' }); });
     v.addEventListener('waiting', function() { post({ type: 'waiting' }); });
-    v.addEventListener('canplay', function() {
-      post({ type: 'canplay' });
-      tryPlay();
-    });
-    v.addEventListener('canplaythrough', function() {
-      post({ type: 'canplay' });
-      tryPlay();
-    });
+    v.addEventListener('canplay', function() { post({ type: 'canplay' }); tryPlay(); });
+    v.addEventListener('canplaythrough', function() { post({ type: 'canplay' }); tryPlay(); });
     v.addEventListener('ended', function() { post({ type: 'ended' }); });
     v.addEventListener('error', function() {
-      const err = v.error ? ('Code ' + v.error.code + ': ' + (v.error.message || 'Playback error')) : 'Video error';
+      var err = v.error ? ('Code ' + v.error.code + ': ' + (v.error.message || 'Playback error')) : 'Video error';
       post({ type: 'error', error: err });
     });
 
-    // Check if readyState is already available
-    if (v.readyState >= 2) {
-      post({ type: 'canplay' });
-    }
-    tryPlay();
-  </script>
+    // ── HLS.js or native fallback ──────────────────────────────────────────
+    ${hlsInit}
+  <\/script>
 </body>
 </html>`;
 };

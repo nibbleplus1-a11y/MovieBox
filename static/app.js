@@ -4273,15 +4273,26 @@ function downloadCurrentStream() {
     const filename = `${cleanTitle}_(${quality}).mp4`;
     const ref = currentPlayingStream.headers?.Referer || 'https://123moviesfree.club/';
     const downloadUrl = `/api/proxy/stream?url=${encodeURIComponent(currentPlayingStream.url)}&referer=${encodeURIComponent(ref)}&download=true&filename=${encodeURIComponent(filename)}`;
-    
-    showToast(`Downloading: ${filename}…`, 'info');
-    const a = document.createElement('a');
-    a.href = downloadUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => a.remove(), 200);
+
+    // Show pre-download interstitial ad, then trigger browser save
+    const startDownload = () => {
+        showToast(`⬇ Downloading: ${filename}…`, 'info');
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 200);
+    };
+
+    if (typeof AdEngine !== 'undefined' && AdEngine.canShowPreroll()) {
+        // Reuse preroll overlay — it auto-resolves after 5s and calls startDownload
+        AdEngine.runPrerollIfEligible(startDownload);
+    } else {
+        startDownload();
+    }
 }
+
 
 function copyMpvCommand() {
     if (!currentPlayingStream || !currentPlayingStream.url) { showToast('No active stream', 'error'); return; }
