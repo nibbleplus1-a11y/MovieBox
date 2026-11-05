@@ -45,14 +45,13 @@
         }
       ],
       [
-        "expo-file-system",
+        "expo-media-library",
         {
-          "android": {
-            "useNextStorageAPI": false
-          }
+          "photosPermission": "Allow MovieVerse to access your photos to save downloaded videos.",
+          "savePhotosPermission": "Allow MovieVerse to save downloaded videos to your device.",
+          "isAccessMediaLocationEnabled": true
         }
-      ],
-      "expo-media-library"
+      ]
     ],
     "extra": {
       "eas": {
