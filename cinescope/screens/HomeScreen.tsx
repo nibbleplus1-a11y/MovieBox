@@ -189,7 +189,7 @@ export default function HomeScreen() {
           <View style={styles.brandBadge}>
             <Ionicons name="film" size={14} color="#fff" />
           </View>
-          <Text style={styles.brandText}>CINE<Text style={{ color: '#E50914' }}>SCOPE</Text></Text>
+          <Text style={styles.brandText}>MOVIE<Text style={{ color: '#E50914' }}>VERSE</Text></Text>
         </View>
       </View>
 

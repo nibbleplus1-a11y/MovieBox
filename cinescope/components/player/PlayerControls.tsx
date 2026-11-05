@@ -38,6 +38,7 @@ interface PlayerControlsProps {
   onOpenBottomSheet: (type: BottomSheetType) => void;
   onResetTimer: () => void;
   onTrackLayout: (width: number) => void;
+  onDownload?: () => void;
 }
 
 export const PlayerControls: React.FC<PlayerControlsProps> = ({
@@ -67,6 +68,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   onOpenBottomSheet,
   onResetTimer,
   onTrackLayout,
+  onDownload,
 }) => {
   if (!controlsVisible) return null;
 
@@ -96,100 +98,110 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
           <View
             style={[
               styles.topBar,
-              { paddingTop: isFullscreen ? Math.max(insets.top, 14) : 12 },
+              { paddingTop: isFullscreen ? Math.max(insets.top, 14) : 8 },
             ]}
           >
-            <TouchableOpacity style={styles.iconCircleBtn} onPress={onBack} activeOpacity={0.8}>
-              <Ionicons name="chevron-back" size={22} color="#fff" />
+            <TouchableOpacity
+              style={[styles.iconCircleBtn, !isFullscreen && styles.iconCircleBtnCompact]}
+              onPress={onBack}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="chevron-back" size={isFullscreen ? 22 : 18} color="#fff" />
             </TouchableOpacity>
 
             <View style={styles.topTitleBox}>
-              <Text style={styles.topMovieTitle} numberOfLines={1}>
+              <Text style={[styles.topMovieTitle, !isFullscreen && styles.topMovieTitleCompact]} numberOfLines={1}>
                 {title || 'Now Playing'}
               </Text>
-              <Text style={styles.topMovieSubtitle} numberOfLines={1}>
+              <Text style={[styles.topMovieSubtitle, !isFullscreen && styles.topMovieSubtitleCompact]} numberOfLines={1}>
                 {epLabel ? `${epLabel} · ` : ''}
                 {selectedDubName} · {activeStreamQuality || '1080p'}
               </Text>
             </View>
 
-            <View style={styles.topRightIcons}>
+            <View style={[styles.topRightIcons, !isFullscreen && styles.topRightIconsCompact]}>
               <TouchableOpacity
-                style={styles.toolChip}
+                style={[styles.toolChip, !isFullscreen && styles.toolChipCompact]}
                 onPress={() => {
                   onOpenBottomSheet('audio');
                   onResetTimer();
                 }}
               >
-                <Ionicons name="volume-high-outline" size={13} color="#fff" />
-                <Text style={styles.toolChipText}> Audio</Text>
+                <Ionicons name="volume-high-outline" size={isFullscreen ? 13 : 11} color="#fff" />
+                <Text style={[styles.toolChipText, !isFullscreen && styles.toolChipTextCompact]}> Audio</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.toolChip}
+                style={[styles.toolChip, !isFullscreen && styles.toolChipCompact]}
                 onPress={() => {
                   onOpenBottomSheet('quality');
                   onResetTimer();
                 }}
               >
-                <Ionicons name="flash-outline" size={13} color="#fff" />
-                <Text style={styles.toolChipText}> Quality</Text>
+                <Ionicons name="flash-outline" size={isFullscreen ? 13 : 11} color="#fff" />
+                <Text style={[styles.toolChipText, !isFullscreen && styles.toolChipTextCompact]}> Quality</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.toolChip}
+                style={[styles.toolChip, !isFullscreen && styles.toolChipCompact]}
                 onPress={() => {
                   onOpenBottomSheet('subtitles');
                   onResetTimer();
                 }}
               >
-                <Ionicons name="chatbox-ellipses-outline" size={13} color="#fff" />
-                <Text style={styles.toolChipText}> Subs</Text>
+                <Ionicons name="chatbox-ellipses-outline" size={isFullscreen ? 13 : 11} color="#fff" />
+                <Text style={[styles.toolChipText, !isFullscreen && styles.toolChipTextCompact]}> Subs</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.iconCircleBtn}
+                style={[styles.iconCircleBtn, !isFullscreen && styles.iconCircleBtnCompact]}
                 onPress={() => {
                   setIsLocked(true);
                   onResetTimer();
                 }}
               >
-                <Ionicons name="lock-open-outline" size={17} color="#fff" />
+                <Ionicons name="lock-open-outline" size={isFullscreen ? 17 : 14} color="#fff" />
               </TouchableOpacity>
             </View>
           </View>
 
           {/* CENTER CONTROLS: -10s, Play/Pause, +10s */}
-          <View style={styles.centerControls} pointerEvents="box-none">
+          <View
+            style={[
+              styles.centerControls,
+              !isFullscreen && styles.centerControlsCompact,
+            ]}
+            pointerEvents="box-none"
+          >
             <TouchableOpacity
-              style={styles.seekBtn}
+              style={[styles.seekBtn, !isFullscreen && styles.seekBtnCompact]}
               onPress={() => onSeekRelative(-10)}
               activeOpacity={0.7}
             >
-              <Ionicons name="play-back" size={28} color="#fff" />
-              <Text style={styles.seekBtnSub}>10</Text>
+              <Ionicons name="play-back" size={isFullscreen ? 28 : 20} color="#fff" />
+              <Text style={[styles.seekBtnSub, !isFullscreen && styles.seekBtnSubCompact]}>10</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.playPauseBtn}
+              style={[styles.playPauseBtn, !isFullscreen && styles.playPauseBtnCompact]}
               onPress={onTogglePlayPause}
               activeOpacity={0.85}
             >
               <Ionicons
                 name={isPlaying ? 'pause' : 'play'}
-                size={28}
+                size={isFullscreen ? 28 : 20}
                 color="#fff"
-                style={{ marginLeft: isPlaying ? 0 : 3 }}
+                style={{ marginLeft: isPlaying ? 0 : 2 }}
               />
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.seekBtn}
+              style={[styles.seekBtn, !isFullscreen && styles.seekBtnCompact]}
               onPress={() => onSeekRelative(10)}
               activeOpacity={0.7}
             >
-              <Ionicons name="play-forward" size={28} color="#fff" />
-              <Text style={styles.seekBtnSub}>10</Text>
+              <Ionicons name="play-forward" size={isFullscreen ? 28 : 20} color="#fff" />
+              <Text style={[styles.seekBtnSub, !isFullscreen && styles.seekBtnSubCompact]}>10</Text>
             </TouchableOpacity>
           </View>
 
@@ -197,16 +209,15 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
           <View
             style={[
               styles.bottomBar,
-              { paddingBottom: isFullscreen ? Math.max(insets.bottom, 10) + 4 : 10 },
+              { paddingBottom: isFullscreen ? Math.max(insets.bottom, 10) + 4 : 8 },
             ]}
           >
             {/* Scrubber Bar */}
             <View style={styles.scrubberRow}>
-              <Text style={styles.timeText}>{formatTime(currentTime)}</Text>
+              <Text style={[styles.timeText, !isFullscreen && styles.timeTextCompact]}>{formatTime(currentTime)}</Text>
               <TouchableWithoutFeedback
                 onPress={(e) => {
                   const touchX = e.nativeEvent.locationX;
-                  // FIX P1 #4: measured trackWidth prevents magic number skewing
                   const effectiveWidth = Math.max(1, trackWidth);
                   onSeekAbsolute(touchX / effectiveWidth);
                 }}
@@ -217,18 +228,17 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
                 >
                   <View style={styles.scrubberBg} />
                   <View style={[styles.scrubberFill, { width: `${progressRatio * 100}%` }]} />
-                  {/* FIX P4 #21: clean centering without magic top number */}
                   <View style={[styles.scrubberThumb, { left: `${progressRatio * 100}%` }]} />
                 </View>
               </TouchableWithoutFeedback>
-              <Text style={styles.timeText}>{formatTime(duration)}</Text>
+              <Text style={[styles.timeText, !isFullscreen && styles.timeTextCompact]}>{formatTime(duration)}</Text>
             </View>
 
             {/* Feature Tray */}
             <View style={styles.bottomTray}>
               <View style={styles.bottomTrayLeft}>
                 <TouchableOpacity
-                  style={styles.trayActionBtn}
+                  style={[styles.trayActionBtn, !isFullscreen && styles.trayActionBtnCompact]}
                   onPress={() => {
                     onOpenBottomSheet('speed');
                     onResetTimer();
@@ -236,15 +246,15 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
                 >
                   <Ionicons
                     name="speedometer-outline"
-                    size={12}
+                    size={isFullscreen ? 12 : 10}
                     color="#cbd5e1"
-                    style={{ marginRight: 4 }}
+                    style={{ marginRight: 3 }}
                   />
-                  <Text style={styles.trayActionText}>{playbackSpeed}x</Text>
+                  <Text style={[styles.trayActionText, !isFullscreen && styles.trayActionTextCompact]}>{playbackSpeed}x</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.trayActionBtn}
+                  style={[styles.trayActionBtn, !isFullscreen && styles.trayActionBtnCompact]}
                   onPress={() => {
                     onOpenBottomSheet('servers');
                     onResetTimer();
@@ -252,16 +262,16 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
                 >
                   <Ionicons
                     name="cloud-outline"
-                    size={12}
+                    size={isFullscreen ? 12 : 10}
                     color="#cbd5e1"
-                    style={{ marginRight: 4 }}
+                    style={{ marginRight: 3 }}
                   />
-                  <Text style={styles.trayActionText}>Server</Text>
+                  <Text style={[styles.trayActionText, !isFullscreen && styles.trayActionTextCompact]}>Server</Text>
                 </TouchableOpacity>
 
                 {seasonsCount > 0 && (
                   <TouchableOpacity
-                    style={styles.trayActionBtn}
+                    style={[styles.trayActionBtn, !isFullscreen && styles.trayActionBtnCompact]}
                     onPress={() => {
                       onOpenBottomSheet('episodes');
                       onResetTimer();
@@ -269,17 +279,37 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
                   >
                     <Ionicons
                       name="list"
-                      size={12}
+                      size={isFullscreen ? 12 : 10}
                       color="#cbd5e1"
-                      style={{ marginRight: 4 }}
+                      style={{ marginRight: 3 }}
                     />
-                    <Text style={styles.trayActionText}>Episodes</Text>
+                    <Text style={[styles.trayActionText, !isFullscreen && styles.trayActionTextCompact]}>Episodes</Text>
+                  </TouchableOpacity>
+                )}
+
+                {onDownload && (
+                  <TouchableOpacity
+                    style={[styles.trayActionBtn, !isFullscreen && styles.trayActionBtnCompact]}
+                    onPress={() => {
+                      onDownload();
+                      onResetTimer();
+                    }}
+                  >
+                    <Ionicons
+                      name="cloud-download-outline"
+                      size={isFullscreen ? 12 : 10}
+                      color="#38bdf8"
+                      style={{ marginRight: 3 }}
+                    />
+                    <Text style={[styles.trayActionText, !isFullscreen && styles.trayActionTextCompact, { color: '#38bdf8' }]}>
+                      {isFullscreen ? 'Download' : 'DL'}
+                    </Text>
                   </TouchableOpacity>
                 )}
               </View>
 
               <TouchableOpacity style={styles.fullscreenToggle} onPress={onToggleFullscreen}>
-                <Ionicons name={isFullscreen ? 'contract' : 'expand'} size={22} color="#fff" />
+                <Ionicons name={isFullscreen ? 'contract' : 'expand'} size={isFullscreen ? 22 : 18} color="#fff" />
               </TouchableOpacity>
             </View>
           </View>
@@ -298,8 +328,8 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    gap: 10,
+    paddingHorizontal: 12,
+    gap: 8,
   },
   iconCircleBtn: {
     width: 36,
@@ -309,10 +339,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  iconCircleBtnCompact: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
   topTitleBox: { flex: 1 },
   topMovieTitle: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  topMovieTitleCompact: { fontSize: 11 },
   topMovieSubtitle: { color: '#a1a1aa', fontSize: 11, marginTop: 1 },
+  topMovieSubtitleCompact: { fontSize: 9 },
   topRightIcons: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  topRightIconsCompact: { gap: 4 },
   toolChip: {
     backgroundColor: 'rgba(0,0,0,0.65)',
     borderRadius: 6,
@@ -323,12 +361,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  toolChipCompact: {
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
   toolChipText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  toolChipTextCompact: { fontSize: 9 },
   centerControls: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 40,
+  },
+  centerControlsCompact: {
+    gap: 20,
   },
   seekBtn: {
     alignItems: 'center',
@@ -336,7 +383,12 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
   },
+  seekBtnCompact: {
+    width: 36,
+    height: 36,
+  },
   seekBtnSub: { color: '#fff', fontSize: 11, fontWeight: '800', marginTop: 2 },
+  seekBtnSubCompact: { fontSize: 9, marginTop: 0 },
   playPauseBtn: {
     width: 66,
     height: 66,
@@ -349,14 +401,20 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     elevation: 8,
   },
+  playPauseBtnCompact: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    elevation: 4,
+  },
   bottomBar: {
-    paddingHorizontal: 14,
-    gap: 8,
+    paddingHorizontal: 12,
+    gap: 6,
   },
   scrubberRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
   },
   timeText: {
     color: '#cbd5e1',
@@ -365,9 +423,13 @@ const styles = StyleSheet.create({
     minWidth: 42,
     textAlign: 'center',
   },
+  timeTextCompact: {
+    fontSize: 9,
+    minWidth: 34,
+  },
   scrubberTrack: {
     flex: 1,
-    height: 20,
+    height: 18,
     justifyContent: 'center',
     position: 'relative',
   },
@@ -386,13 +448,13 @@ const styles = StyleSheet.create({
   },
   scrubberThumb: {
     position: 'absolute',
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#fff',
     top: '50%',
-    marginTop: -7,
-    marginLeft: -7,
+    marginTop: -6,
+    marginLeft: -6,
     shadowColor: '#e50914',
     shadowOpacity: 0.6,
     shadowRadius: 4,
@@ -403,19 +465,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  bottomTrayLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bottomTrayLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   trayActionBtn: {
     backgroundColor: 'rgba(0,0,0,0.5)',
     borderRadius: 6,
     paddingHorizontal: 8,
-    paddingVertical: 5,
+    paddingVertical: 4,
     flexDirection: 'row',
     alignItems: 'center',
   },
+  trayActionBtnCompact: {
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
   trayActionText: { color: '#cbd5e1', fontSize: 11, fontWeight: '600' },
+  trayActionTextCompact: { fontSize: 9 },
   fullscreenToggle: {
-    width: 38,
-    height: 38,
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
   },

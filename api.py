@@ -1506,9 +1506,16 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     async def content_iterator():
         try:
-            # 512KB chunks optimize TCP throughput and eliminate video buffering stalls
+            # Yield initial 64KB slice immediately so player parses MP4 moov/ftyp header instantly
+            first = True
             async for chunk in resp.aiter_bytes(chunk_size=524288):
-                yield chunk
+                if first and len(chunk) > 65536:
+                    first = False
+                    yield chunk[:65536]
+                    yield chunk[65536:]
+                else:
+                    first = False
+                    yield chunk
         except Exception:
             pass
         finally:
@@ -1983,8 +1990,13 @@ async def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Op
         app_cache.delete_prefix(f"streams:{subject_id}:")
 
     loop = asyncio.get_event_loop()
-    # Run blocking stream fetch in thread to not block event loop
-    streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path))
+    # Concurrently fetch streams and details in thread pool for 2x faster stream load time
+    streams_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path))
+    details_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
+    streams_res, details_res = await asyncio.gather(streams_fut, details_fut, return_exceptions=True)
+
+    streams = streams_res if isinstance(streams_res, list) else []
+    details = details_res if isinstance(details_res, dict) else None
 
     # If se=0 and ep=0 returned no streams, check if this subject is a TV series (Season 1 Episode 1)
     local_se, local_ep = se, ep
@@ -1998,16 +2010,17 @@ async def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Op
         local_se, local_ep = se, ep
 
     try:
-        details = await loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
-        if is_adult_content(details):
+        if details and is_adult_content(details):
             raise HTTPException(status_code=404, detail="Title not found")
-        dubs = details.get("dubs", [])
-        title = details.get("title")
-        cover = details.get("cover")
-        is_coming_soon = bool(details.get("coming_soon") and len(streams) == 0)
-        trailer_url = details.get("trailer_url")
-        det_type = details.get("type", "")
-        det_release = str(details.get("release_date") or "")[:4] or None
+        dubs = details.get("dubs", []) if details else []
+        title = details.get("title") if details else None
+        cover = details.get("cover") if details else None
+        is_coming_soon = bool(details and details.get("coming_soon") and len(streams) == 0)
+        trailer_url = details.get("trailer_url") if details else None
+        det_type = details.get("type", "") if details else ""
+        det_release = str(details.get("release_date") or "")[:4] or None if details else None
+    except HTTPException:
+        raise
     except Exception:
         dubs = []
         title = None

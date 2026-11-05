@@ -13,7 +13,7 @@ interface AdBannerPlaceholderProps {
 
 export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
   variant = 'feed',
-  title = 'CineScope 1080p Cloud Network',
+  title = 'MovieVerse 1080p Cloud Network',
   subtitle = 'High-speed ad-supported cinema streaming with 5.1 surround dubs & zero buffering.',
   ctaText = 'Learn More',
   onPress,

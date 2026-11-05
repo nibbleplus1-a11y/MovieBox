@@ -52,7 +52,7 @@ export const PlayerDashboard: React.FC<PlayerDashboardProps> = ({
 }) => {
   const currentServerName = useIframe
     ? (fallbackServers.find((s) => s.id === selectedServer)?.name || 'Mirror Server')
-    : 'CineScope CDN';
+    : 'MovieVerse CDN';
 
   return (
     <ScrollView

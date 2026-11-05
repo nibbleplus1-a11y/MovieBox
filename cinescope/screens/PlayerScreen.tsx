@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, TouchableWithoutFeedback, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, TouchableWithoutFeedback, useWindowDimensions, Linking, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -9,16 +9,19 @@ import { PlayerWebView } from '../components/player/PlayerWebView';
 import { PlayerControls } from '../components/player/PlayerControls';
 import { PlayerBottomSheet } from '../components/player/PlayerBottomSheet';
 import { PlayerDashboard } from '../components/player/PlayerDashboard';
+import { PlayerAdModal } from '../components/ads/PlayerAdModal';
 import { api, MovieCard as MovieCardData } from '../services/api';
 
-const CACHE_KEY = 'cinescope_feed_cache_v1';
+const CACHE_KEY = 'movieverse_feed_cache_v2';
 
 export default function PlayerScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const { width: screenWidth } = useWindowDimensions();
 
   const [similarMovies, setSimilarMovies] = useState<MovieCardData[]>([]);
+  const [showPrerollAd, setShowPrerollAd] = useState<boolean>(true);
+  const [showPostrollAd, setShowPostrollAd] = useState<boolean>(false);
 
   const {
     title,
@@ -104,7 +107,6 @@ export default function PlayerScreen() {
         }
 
         const filtered = pool.filter(m => m.subject_id !== currentId);
-        // Deduplicate
         const seen = new Set<string>();
         const unique: MovieCardData[] = [];
         for (const item of filtered) {
@@ -132,6 +134,28 @@ export default function PlayerScreen() {
     });
   };
 
+  const handleDownloadCurrent = () => {
+    if (activeStream?.url) {
+      const cleanName = (title || streamData?.title || 'Movie').replace(/[^a-zA-Z0-9_\-]/g, '_');
+      const epTag = currentSeason > 0 ? `_S${currentSeason}E${currentEpisode}` : '';
+      const dlUrl = api.proxyUrl(activeStream.url, activeStream.headers?.Referer) + `&download=true&filename=${encodeURIComponent(cleanName + epTag + '.mp4')}`;
+      Linking.openURL(dlUrl).catch(() => {
+        Alert.alert('Download', 'Could not open download link in browser.');
+      });
+    } else {
+      Alert.alert('Download', 'Stream is preparing. Please try again in a moment.');
+    }
+  };
+
+  const triggerExitWithAd = () => {
+    setShowPostrollAd(true);
+  };
+
+  const onCompletePostroll = () => {
+    setShowPostrollAd(false);
+    handleBack();
+  };
+
   const playerContainerStyle = isFullscreen
     ? styles.playerContainerFullscreen
     : { height: (screenWidth * 9) / 16, width: '100%' };
@@ -155,7 +179,7 @@ export default function PlayerScreen() {
           seasonsCount={seasonsData.length}
           webViewRef={webViewRef}
           onRetry={() => loadStreams(currentId, currentSeason, currentEpisode)}
-          onBack={handleBack}
+          onBack={triggerExitWithAd}
           onToggleFullscreen={toggleFullscreen}
           onOpenBottomSheet={(type) => {
             setBottomSheet(type);
@@ -196,13 +220,14 @@ export default function PlayerScreen() {
             onSeekRelative={seekRelative}
             onSeekAbsolute={seekAbsolute}
             onToggleFullscreen={toggleFullscreen}
-            onBack={handleBack}
+            onBack={triggerExitWithAd}
             onOpenBottomSheet={(type) => {
               setBottomSheet(type);
               resetControlsTimer();
             }}
             onResetTimer={resetControlsTimer}
             onTrackLayout={(w) => setTrackWidth(w)}
+            onDownload={handleDownloadCurrent}
           />
         )}
       </View>
@@ -262,6 +287,23 @@ export default function PlayerScreen() {
         onSelectSubtitle={selectSubtitle}
         onSearchOnlineSubs={searchOnlineSubs}
       />
+
+      {/* PRE-ROLL AD MODAL (Before Movie Starts) */}
+      <PlayerAdModal
+        visible={showPrerollAd}
+        mode="preroll"
+        title={title || streamData?.title}
+        onComplete={() => setShowPrerollAd(false)}
+      />
+
+      {/* POST-ROLL AD MODAL (After Closing Player) */}
+      <PlayerAdModal
+        visible={showPostrollAd}
+        mode="postroll"
+        title={title || streamData?.title}
+        onComplete={onCompletePostroll}
+        onClose={onCompletePostroll}
+      />
     </View>
   );
 }
@@ -269,7 +311,7 @@ export default function PlayerScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#090a0f',
+    backgroundColor: '#07080B',
   },
   playerContainer: {
     width: '100%',

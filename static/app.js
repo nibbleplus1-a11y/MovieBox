@@ -1,5 +1,5 @@
 /**
- * CineScope Cinema — v3.0 Client Logic
+ * MovieVerse Cinema — v3.0 Client Logic
  * Modern, adaptive cinema streaming with multi-audio dubs and 1080p player
  */
 
@@ -181,23 +181,13 @@ const AdEngine = {
     },
 
     canShowPreroll() {
-        if (!this.config || !this.config.enabled) return false;
-        if (!this.config.monetag || !this.config.monetag.preroll_enabled) return false;
-        // Never stall playback for ads if no publisher zone ID or direct link is provided
-        if (!this.config.monetag.zone_id && !this.config.monetag.direct_link) return false;
-
-        const lastPreroll = parseInt(localStorage.getItem('cinescope_last_preroll_time') || '0', 10);
+        if (!this.config || !this.config.enabled) return true;
+        const lastPreroll = parseInt(sessionStorage.getItem('movieverse_last_preroll_time') || '0', 10);
         const now = Date.now();
-
-        if (this.config.test_mode) {
+        // 8 second debounce between rapid stream starts
+        if (now - lastPreroll < 8000) {
             return false;
         }
-
-        const cooldown = (this.config.monetag.preroll_cooldown_seconds || 300) * 1000;
-        if (now - lastPreroll < cooldown) {
-            return false;
-        }
-
         return true;
     },
 
@@ -219,7 +209,7 @@ const AdEngine = {
         this.prerollSecondsLeft = totalDuration;
 
         // Record timestamp for frequency capping
-        localStorage.setItem('cinescope_last_preroll_time', Date.now().toString());
+        sessionStorage.setItem('movieverse_last_preroll_time', Date.now().toString());
 
         // Setup UI
         const skipBtn = document.getElementById('prerollSkipBtn');
@@ -295,30 +285,20 @@ const AdEngine = {
     },
 
     canShowExitInterstitial() {
-        if (!this.config || !this.config.enabled) return false;
-        if (!this.config.monetag || !this.config.monetag.exit_interstitial_enabled) return false;
-
-        const lastExit = parseInt(localStorage.getItem('cinescope_last_exit_ad_time') || '0', 10);
+        if (!this.config || !this.config.enabled) return true;
+        const lastExit = parseInt(sessionStorage.getItem('movieverse_last_exit_time') || '0', 10);
         const now = Date.now();
-
-        // In test mode, allow exit ads to appear without long cooldown lockout
-        if (this.config.test_mode) {
-            if (now - lastExit < 1500) return false; // 1.5s debounce
-            return true;
-        }
-
-        const cooldown = (this.config.monetag.exit_cooldown_seconds || 60) * 1000;
-        if (now - lastExit < cooldown) {
+        // 4 second debounce on exit
+        if (now - lastExit < 4000) {
             return false;
         }
-
         return true;
     },
 
     showExitInterstitial() {
         if (!this.canShowExitInterstitial()) return;
 
-        localStorage.setItem('cinescope_last_exit_ad_time', Date.now().toString());
+        sessionStorage.setItem('movieverse_last_exit_time', Date.now().toString());
         const modal = document.getElementById('exitInterstitialModal');
         if (modal) {
             modal.style.display = 'flex';
@@ -335,13 +315,13 @@ const AdEngine = {
     },
 
     showSocialBar() {
-        if (sessionStorage.getItem('cinescope_social_bar_dismissed')) return;
+        if (sessionStorage.getItem('movieverse_social_bar_dismissed')) return;
         const bar = document.getElementById('adsterraSocialBar');
         if (bar) bar.style.display = 'flex';
     },
 
     dismissSocialBar() {
-        sessionStorage.setItem('cinescope_social_bar_dismissed', 'true');
+        sessionStorage.setItem('movieverse_social_bar_dismissed', 'true');
         const bar = document.getElementById('adsterraSocialBar');
         if (bar) bar.style.display = 'none';
     }
@@ -371,6 +351,13 @@ document.addEventListener('DOMContentLoaded', () => {
     safeRun(initKeyboardShortcuts, 'initKeyboardShortcuts');
     safeRun(renderRecentSearchChips, 'renderRecentSearchChips');
     safeRun(() => AdEngine.init(), 'AdEngine.init');
+    safeRun(() => {
+        const dismissed = sessionStorage.getItem('movieverse_apk_banner_dismissed');
+        const banner = document.getElementById('mobileApkBanner');
+        if (banner && dismissed !== '1' && window.innerWidth <= 768) {
+            banner.style.display = 'flex';
+        }
+    }, 'initMobileApkBanner');
 });
 
 // ─── MOBILE NAV ─────────────────────────────────────────────────────────────
@@ -379,11 +366,18 @@ function toggleMobileNav() {
     if (nav) nav.classList.toggle('mobile-open');
 }
 
+function dismissMobileApkBanner() {
+    const banner = document.getElementById('mobileApkBanner');
+    if (banner) banner.style.display = 'none';
+    sessionStorage.setItem('movieverse_apk_banner_dismissed', '1');
+}
+
 // ─── TAB SWITCHING ───────────────────────────────────────────────────────────
 function switchTab(tabId) {
     currentTab = tabId;
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.mob-nav-item').forEach(b => b.classList.remove('active'));
 
     const nav = document.getElementById('mainNavLinks');
     if (nav) nav.classList.remove('mobile-open');
@@ -393,6 +387,9 @@ function switchTab(tabId) {
 
     const btn = document.getElementById(`tabBtn-${tabId}`);
     if (btn) btn.classList.add('active');
+
+    const mobBtn = document.getElementById(`mobTab-${tabId}`);
+    if (mobBtn) mobBtn.classList.add('active');
 
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -456,15 +453,55 @@ function initHeroCarousel() {
     banner.addEventListener('mouseenter', () => { isHeroAutoplayPaused = true; });
     banner.addEventListener('mouseleave', () => { isHeroAutoplayPaused = false; });
 
-    // Touch swipe and touch pause (mobile)
-    banner.addEventListener('touchstart', (e) => {
+    // Mouse drag support for desktop users
+    let isMouseDown = false;
+    let mouseStartX = 0;
+    let mouseEndX = 0;
+
+    banner.addEventListener('mousedown', (e) => {
+        if (e.target.closest('button') || e.target.closest('a')) return;
+        isMouseDown = true;
         isHeroAutoplayPaused = true;
-        heroTouchStartX = e.changedTouches[0].screenX;
+        mouseStartX = e.clientX;
+        mouseEndX = e.clientX;
+        banner.style.cursor = 'grabbing';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isMouseDown) return;
+        mouseEndX = e.clientX;
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (!isMouseDown) return;
+        isMouseDown = false;
+        isHeroAutoplayPaused = false;
+        banner.style.cursor = '';
+        const diff = mouseEndX - mouseStartX;
+        if (Math.abs(diff) > 40) {
+            if (diff < 0) nextHeroSlide();
+            else prevHeroSlide();
+        }
+    });
+
+    // Touch swipe support using clientX for smooth mobile drag
+    banner.addEventListener('touchstart', (e) => {
+        if (e.target.closest('button') || e.target.closest('a')) return;
+        isHeroAutoplayPaused = true;
+        if (e.touches && e.touches[0]) {
+            heroTouchStartX = e.touches[0].clientX;
+            heroTouchEndX = e.touches[0].clientX;
+        }
     }, { passive: true });
 
-    banner.addEventListener('touchend', (e) => {
+    banner.addEventListener('touchmove', (e) => {
+        if (e.touches && e.touches[0]) {
+            heroTouchEndX = e.touches[0].clientX;
+        }
+    }, { passive: true });
+
+    banner.addEventListener('touchend', () => {
         isHeroAutoplayPaused = false;
-        heroTouchEndX = e.changedTouches[0].screenX;
         handleHeroSwipe();
     }, { passive: true });
 }
@@ -846,7 +883,7 @@ function setupCatalogInfiniteScroll() {
 
 // ─── MEDIA CARD HTML ─────────────────────────────────────────────────────────
 function createMediaCardHtml(item) {
-    const fallback = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="100%" height="100%" fill="%230d1020"/><text x="50%" y="44%" fill="%238b5cf6" font-family="sans-serif" font-size="16" font-weight="bold" text-anchor="middle">CineScope</text><text x="50%" y="54%" fill="%235a6480" font-family="sans-serif" font-size="11" text-anchor="middle">${encodeURIComponent((item.title || 'Cinema').slice(0, 22))}</text></svg>`;
+    const fallback = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450"><rect width="100%" height="100%" fill="%230d1020"/><text x="50%" y="44%" fill="%238b5cf6" font-family="sans-serif" font-size="16" font-weight="bold" text-anchor="middle">MovieVerse</text><text x="50%" y="54%" fill="%235a6480" font-family="sans-serif" font-size="11" text-anchor="middle">${encodeURIComponent((item.title || 'Cinema').slice(0, 22))}</text></svg>`;
 
     const poster = item.cover || fallback;
     const rating = item.rating || item.imdb_rating || '';
@@ -1011,14 +1048,14 @@ async function performFullSearch(query) {
 
 // ─── RECENT SEARCHES ──────────────────────────────────────────────────────────
 function getRecentSearches() {
-    try { return JSON.parse(localStorage.getItem('cinescope_recent_searches') || '[]'); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem('movieverse_recent_searches') || '[]'); } catch { return []; }
 }
 
 function saveRecentSearch(query) {
     if (!query || query.length < 2) return;
     let recent = getRecentSearches().filter(q => q.toLowerCase() !== query.toLowerCase());
     recent.unshift(query);
-    localStorage.setItem('cinescope_recent_searches', JSON.stringify(recent.slice(0, 8)));
+    localStorage.setItem('movieverse_recent_searches', JSON.stringify(recent.slice(0, 8)));
     renderRecentSearchChips();
 }
 
@@ -1515,7 +1552,7 @@ function setCinemaVideoSource(src, stream, titleText) {
 
             plyrInstance.source = {
                 type: 'video',
-                title: titleText || (activeMediaMeta && activeMediaMeta.title) || 'CineScope Stream',
+                title: titleText || (activeMediaMeta && activeMediaMeta.title) || 'MovieVerse Stream',
                 sources: [
                     {
                         src: src,
@@ -2436,28 +2473,11 @@ async function tryDirectThenProxy(stream, titleText, seekToTime = 0) {
         return;
     }
 
-    // Test direct CDN reachability with a quick HEAD request
-    let directOk = false;
-    try {
-        const testResp = await fetch(directUrl, {
-            method: 'HEAD',
-            mode: 'cors',
-            signal: AbortSignal.timeout(3500)
-        });
-        // Any non-error response means browser can reach CDN directly
-        if (testResp.status < 500) {
-            directOk = true;
-        }
-    } catch (e) {
-        // CORS opaque response, network error, or timeout — try anyway since video element
-        // doesn't require CORS headers for plain MP4 video playback
-        console.log('[CineScope] Direct HEAD check:', e.message);
-        // Still try direct since <video> tag doesn't enforce CORS like fetch() does
-        directOk = true;
-    }
+    // Instant start: bypass blocking 3.5s pre-flight check so playback begins immediately
+    let directOk = true;
 
     if (directOk) {
-        console.log('[CineScope] Attempting direct CDN stream (bypassing VPS proxy):', directUrl);
+        console.log('[MovieVerse] Attempting direct CDN stream (bypassing VPS proxy):', directUrl);
         _directStreamWorked = false;  // Will be set true on first successful timeupdate
 
         // Set direct URL — video element doesn't require CORS headers for MP4
@@ -2468,7 +2488,7 @@ async function tryDirectThenProxy(stream, titleText, seekToTime = 0) {
         if (video) {
             const onDirectError = () => {
                 if (_directStreamWorked) return; // Already played successfully, don't fallback
-                console.warn('[CineScope] Direct CDN stream failed on <video> — falling back to proxy');
+                console.warn('[MovieVerse] Direct CDN stream failed on <video> — falling back to proxy');
                 _directStreamFailed = true;
                 const resumeTime = video.currentTime || seekToTime || 0;
                 setCinemaVideoSource(proxyUrl, stream, titleText);
@@ -3439,7 +3459,7 @@ function changePlayerServer(serverId) {
             if (resumeSec > 0) video.currentTime = resumeSec;
             video.play().catch(() => {});
         }
-        showToast('Switched to Server 1 (CineScope Direct 1080p)');
+        showToast('Switched to Server 1 (MovieVerse Direct 1080p)');
         renderSettingsServerList(_testedServersList, 'direct');
         renderInPlayerServerDropdown();
         renderPlayerServerPills();

@@ -78,7 +78,7 @@ export default function SettingsScreen() {
           action: () =>
             Alert.alert(
               'Streaming CDN',
-              'Connected to CineScope High-Speed Edge Network.\nAll 1080p & 4K media nodes are optimal.',
+              'Connected to MovieVerse High-Speed Edge Network.\nAll 1080p & 4K media nodes are optimal.',
               [{ text: 'OK' }]
             ),
         },
@@ -226,13 +226,13 @@ export default function SettingsScreen() {
         {/* Disclaimer */}
         <View style={styles.disclaimer}>
           <Text style={styles.disclaimerText}>
-            CineScope aggregates publicly available streaming links. We do not host any video content.
+            MovieVerse aggregates publicly available streaming links. We do not host any video content.
             All streams are sourced from third-party providers.
           </Text>
         </View>
 
         {/* Version info */}
-        <Text style={styles.versionFooter}>CineScope v2.0.0 • Built with ❤️ for cinephiles</Text>
+        <Text style={styles.versionFooter}>MovieVerse v2.1.0 • Built with ❤️ for cinephiles</Text>
       </ScrollView>
     </View>
   );
