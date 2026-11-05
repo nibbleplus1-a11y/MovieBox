@@ -76,7 +76,7 @@ export const buildPlayerHTML = (videoSrc: string): string => {
               break;
           }
         } else if (data.details === 'bufferStalledError') {
-          try { v.currentTime = v.currentTime + 0.1; } catch(e) {}
+          if (hlsInstance) { try { hlsInstance.startLoad(); } catch(e) {} }
         }
       });
     } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
@@ -90,9 +90,6 @@ export const buildPlayerHTML = (videoSrc: string): string => {
     tryPlay();`;
 
   const videoSrcAttr = isHls ? '' : `src="${videoSrc}"`;
-  const videoSourceTag = isHls
-    ? ''
-    : `<source src="${videoSrc}" type="video/mp4" onerror="handleSourceError(this)" />`;
 
   return `<!DOCTYPE html>
 <html>
@@ -143,7 +140,8 @@ export const buildPlayerHTML = (videoSrc: string): string => {
     x5-playsinline="true"
     preload="auto"
     crossorigin="anonymous"
-  >${videoSourceTag}</video>
+    onerror="handleSourceError(this)"
+  ></video>
 
   <script>
     var v = document.getElementById('videoPlayer');
@@ -235,22 +233,25 @@ export const buildPlayerHTML = (videoSrc: string): string => {
       }
     }
 
-    // ── Stall recovery watchdog ────────────────────────────────────────────
-    var lastTime = -1;
-    var stallCount = 0;
+    // ── Safe playback recovery watchdog ──────────────────────────────────
+    // Does NOT alter currentTime (which cancels the browser Range request and clears buffer).
+    // Gently re-triggers play() only if decoder froze unexpectedly while having enough data.
+    var lastStuckTime = -1;
+    var stuckDuration = 0;
     setInterval(function() {
-      if (!v.paused && !v.ended && v.readyState > 2) {
-        if (v.currentTime === lastTime) {
-          stallCount++;
-          if (stallCount >= 2) {
-            try { v.currentTime = v.currentTime + 0.1; } catch(e) {}
-            if (hlsInstance) { try { hlsInstance.startLoad(); } catch(e) {} }
-            stallCount = 0;
+      if (!v.paused && !v.ended && v.readyState >= 3) {
+        if (v.currentTime === lastStuckTime) {
+          stuckDuration += 3;
+          if (stuckDuration >= 12) {
+            tryPlay();
+            stuckDuration = 0;
           }
         } else {
-          stallCount = 0;
+          stuckDuration = 0;
+          lastStuckTime = v.currentTime;
         }
-        lastTime = v.currentTime;
+      } else {
+        stuckDuration = 0;
       }
     }, 3000);
 

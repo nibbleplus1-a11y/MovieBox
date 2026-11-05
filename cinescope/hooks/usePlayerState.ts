@@ -209,9 +209,10 @@ export function usePlayerState() {
       if (loadTokenRef.current !== token) return; // stale — discard
       setStreamData(data);
 
-      const playable = (data.streams || []).filter(isPlayableStream); // FIX P4 #22
+      const playable = (data.streams || []).filter(isPlayableStream);
       if (playable.length > 0) {
-        const best = playable.find(s => s.quality === '1080p') || playable[0];
+        // Fast-start on mobile: prefer 720p if available for smooth, buffer-free playback
+        const best = playable.find(s => s.quality === '720p') || playable.find(s => s.quality === '1080p') || playable[0];
         setActiveStream(best);
         setSelectedServer('direct');
         setUseIframe(false);

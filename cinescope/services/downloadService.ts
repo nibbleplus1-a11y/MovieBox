@@ -47,7 +47,7 @@ export async function downloadStream(opts: DownloadOptions): Promise<void> {
   }
 
   // Write to app cache directory first (always writable)
-  const localUri = FileSystem.cacheDirectory + filename;
+  const localUri = ((FileSystem as any).cacheDirectory || (FileSystem as any).documentDirectory || '') + filename;
 
   try {
     const downloadResumable = FileSystem.createDownloadResumable(

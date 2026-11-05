@@ -403,7 +403,7 @@ export default function HomeScreen() {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.shelf}
               >
-                {section.data.map(item => {
+                {section.data.map((item: any) => {
                   const itemRating = formatRating(item.rating || item.imdb_rating);
                   return (
                     <TouchableOpacity
@@ -815,7 +815,7 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   cwPlayOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...(StyleSheet.absoluteFill as any),
     backgroundColor: 'rgba(0,0,0,0.35)',
     justifyContent: 'center',
     alignItems: 'center',
