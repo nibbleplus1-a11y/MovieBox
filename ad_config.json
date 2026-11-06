@@ -3,7 +3,7 @@
   "test_mode": false,
   "monetag": {
     "enabled": true,
-    "zone_id": "",
+    "zone_id": "12207544",
     "direct_link": "https://monetag.com",
     "preroll_enabled": false,
     "preroll_duration_seconds": 0,

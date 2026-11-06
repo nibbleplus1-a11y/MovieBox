@@ -62,6 +62,13 @@ if os.path.exists(STATIC_DIR):
 def read_root():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
+@app.get("/sw.js")
+def serve_sw():
+    sw_path = os.path.join(STATIC_DIR, "sw.js")
+    if os.path.exists(sw_path):
+        return FileResponse(sw_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="Service worker not found")
+
 @app.get("/app.apk")
 @app.get("/download/app")
 def download_apk():
