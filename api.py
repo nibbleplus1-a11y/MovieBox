@@ -1508,11 +1508,11 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
         try:
             # Yield initial 32KB slice immediately so player parses MP4 moov/ftyp header instantly
             first = True
-            async for chunk in resp.aiter_bytes(chunk_size=131072):
-                if first and len(chunk) > 32768:
+            async for chunk in resp.aiter_bytes(chunk_size=524288):
+                if first and len(chunk) > 65536:
                     first = False
-                    yield chunk[:32768]
-                    yield chunk[32768:]
+                    yield chunk[:65536]
+                    yield chunk[65536:]
                 else:
                     first = False
                     yield chunk

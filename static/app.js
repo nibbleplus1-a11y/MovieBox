@@ -181,11 +181,13 @@ const AdEngine = {
     },
 
     canShowPreroll() {
-        if (!this.config || !this.config.enabled) return true;
+        if (!this.config || !this.config.enabled) return false;
+        if (!this.config.monetag || !this.config.monetag.preroll_enabled) return false;
+        if (!this.config.monetag.zone_id || this.config.monetag.zone_id.trim() === '') return false;
         const lastPreroll = parseInt(sessionStorage.getItem('movieverse_last_preroll_time') || '0', 10);
         const now = Date.now();
-        // 8 second debounce between rapid stream starts
-        if (now - lastPreroll < 8000) {
+        const cooldown = ((this.config.monetag && this.config.monetag.preroll_cooldown_seconds) || 300) * 1000;
+        if (now - lastPreroll < cooldown) {
             return false;
         }
         return true;
@@ -3328,12 +3330,28 @@ function setupPlaybackWatchdog(video) {
         resetInPlayerInactivityTimer();
     });
 
-    // Video buffering events: show/hide buffering indicator without forcing server changes
+    // Video buffering events: show buffering indicator with 1-tap fast switch
     video.addEventListener('waiting', () => {
         showBuffering('Buffering stream…');
+        const actions = document.getElementById('videoBufferingActions');
+        if (actions) {
+            setTimeout(() => {
+                if (video.readyState < 3 && !video.paused) {
+                    actions.style.display = 'flex';
+                }
+            }, 2500);
+            setTimeout(() => {
+                if (video.readyState < 3 && !video.paused && currentSelectedServer === 'direct') {
+                    console.log('[MovieVerse] S1 Direct stalled > 6s — auto-switching to fast backup server');
+                    switchBufferingToFastServer();
+                }
+            }, 6000);
+        }
     });
     video.addEventListener('stalled', () => {
-        showBuffering('Buffering stream…');
+        showBuffering('Connecting to high-speed stream…');
+        const actions = document.getElementById('videoBufferingActions');
+        if (actions) actions.style.display = 'flex';
     });
     video.addEventListener('playing', () => {
         hideBuffering();
@@ -3341,7 +3359,8 @@ function setupPlaybackWatchdog(video) {
 
     video.addEventListener('error', () => {
         if (!video.error || video.error.code === 1) return;
-        showToast('Stream encountered an issue. Tap a backup server below to switch.', 'warning');
+        showToast('Direct stream unavailable. Switching to fast backup server…', 'warning');
+        switchBufferingToFastServer();
     });
 }
 
@@ -3534,15 +3553,14 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     const plyrEl = document.querySelector('#videoStage .plyr');
 
     const baseTitle = (activeMediaMeta && activeMediaMeta.title) ? activeMediaMeta.title : 'MovieBox Stream';
-    const isMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
-    if (isMovie) {
+    const isStrictSeries = Boolean(
+        activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2)
+    );
+    if (!isStrictSeries) {
         currentSeason = 0;
         currentEpisode = 0;
     }
-    const isSeries = !isMovie && Boolean(
-        (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2)) ||
-        (currentEpisode > 0 && currentSeason > 0)
-    );
+    const isSeries = isStrictSeries;
     const epSuffix = (isSeries && currentEpisode > 0) ? ` • S${currentSeason || 1} E${currentEpisode}` : '';
     const titleText = `${baseTitle}${epSuffix}`;
     safeText('playerMediaTitle', titleText);
@@ -4381,19 +4399,10 @@ function closePlayerModal() {
 async function renderPlayerSeriesRibbon() {
     const ribbon = document.getElementById('playerSeriesRibbon');
     if (!ribbon) return;
-    const mediaType = activeMediaMeta && (activeMediaMeta.type || '');
-    const isMovie = Boolean(mediaType === 'Movie' || (activeMediaMeta && activeMediaMeta.subject_type === 1));
-    if (isMovie) {
-        ribbon.style.display = 'none';
-        return;
-    }
-    const isSeries = Boolean(
-        mediaType === 'Series' ||
-        mediaType === 'TV Series' ||
-        (activeMediaMeta && activeMediaMeta.subject_type === 2) ||
-        (currentEpisode > 0 && currentSeason > 0)
+    const isStrictSeries = Boolean(
+        activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2)
     );
-    if (!isSeries) {
+    if (!isStrictSeries) {
         ribbon.style.display = 'none';
         return;
     }

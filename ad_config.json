@@ -5,8 +5,8 @@
     "enabled": true,
     "zone_id": "",
     "direct_link": "https://monetag.com",
-    "preroll_enabled": true,
-    "preroll_duration_seconds": 8,
+    "preroll_enabled": false,
+    "preroll_duration_seconds": 0,
     "preroll_cooldown_seconds": 300,
     "exit_interstitial_enabled": true,
     "exit_cooldown_seconds": 120
