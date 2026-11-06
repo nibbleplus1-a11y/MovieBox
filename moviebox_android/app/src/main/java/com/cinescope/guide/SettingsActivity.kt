@@ -24,7 +24,7 @@ class SettingsActivity : AppCompatActivity() {
         // Show current server URL (from remote config)
         val currentUrl = Firebase.remoteConfig.getString("app_url")
         binding.tvCurrentServer.text = if (currentUrl.isBlank() || currentUrl == "https://www.themoviedb.org")
-            "http://137.23.40.164 (Oracle Cloud)" else currentUrl
+            "https://movieverse.click" else currentUrl
 
         binding.tvVersion.text = "CineScope v${BuildConfig.VERSION_NAME}"
         binding.tvAbout.text = "CineScope is your personal movie guide. " +

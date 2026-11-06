@@ -58,7 +58,7 @@ class SplashActivity : AppCompatActivity() {
 
             // Default values — points to the live Oracle Cloud server
             remoteConfig.setDefaultsAsync(mapOf(
-                "app_url" to "http://137.23.40.164",
+                "app_url" to "https://movieverse.click",
                 "streaming_enabled" to true,
                 "ad_banner_id" to "ca-app-pub-3940256099942544/6300978111"  // Test ID by default
             ))

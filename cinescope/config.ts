@@ -17,7 +17,7 @@ export const CONFIG = {
   // ═══════════════════════════════════════════════════════════════
   // PRIMARY SERVER — set via EXPO_PUBLIC_API_URL env var, or edit here
   // ═══════════════════════════════════════════════════════════════
-  APP_URL: process.env.EXPO_PUBLIC_API_URL || 'http://movieverse.click',
+  APP_URL: process.env.EXPO_PUBLIC_API_URL || 'https://movieverse.click',
 
   // ═══════════════════════════════════════════════════════════════
   // REMOTE CONFIG — set this to your GitHub Gist raw URL.
