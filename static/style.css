@@ -11688,9 +11688,184 @@ kbd {
         cursor: grabbing;
     }
 
+
     .horizontal-scroll-row {
         scroll-padding-left: 14px;
         padding-left: 14px !important;
         padding-right: 14px !important;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOBILE PLAYER & TOP-BAR RESPONSIVE FIX (v5.0 — Hotfix)
+   Fixes: button overflow on small phones, player height, video fill
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 600px) {
+
+    /* Make the top bar a single tight row */
+    .in-player-top-bar {
+        padding: 6px 8px !important;
+        flex-wrap: nowrap;
+        gap: 4px;
+        align-items: center;
+    }
+
+    /* Title row: compress */
+    .in-player-title-row {
+        gap: 4px;
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+    }
+
+    .in-player-title {
+        font-size: 11px !important;
+        max-width: 70px !important;
+    }
+
+    /* Badge pills: smaller */
+    .in-player-badge,
+    .in-player-badge.badge-quality,
+    .in-player-badge.badge-server {
+        font-size: 8px !important;
+        padding: 2px 4px !important;
+    }
+
+    /* Actions row: compact no-wrap */
+    .in-player-top-actions {
+        gap: 3px;
+        flex-shrink: 0;
+        flex-wrap: nowrap;
+    }
+
+    /* HUD button: icon-only (hide text via font-size:0) */
+    .in-player-hud-btn {
+        padding: 5px 7px !important;
+        font-size: 0 !important;
+        gap: 0 !important;
+        min-width: 30px;
+        justify-content: center;
+        border-radius: 7px;
+    }
+
+    .in-player-hud-btn svg {
+        width: 14px !important;
+        height: 14px !important;
+        margin: 0 !important;
+        flex-shrink: 0;
+    }
+
+    /* Back button: keep tiny text so it's clear */
+    .in-player-title-row .in-player-hud-btn {
+        font-size: 10px !important;
+        padding: 4px 6px !important;
+        gap: 2px !important;
+    }
+
+    .in-player-title-row .in-player-hud-btn svg {
+        margin-right: 2px !important;
+    }
+
+    /* Player modal: full screen, no padding */
+    .player-modal {
+        padding: 0 !important;
+        align-items: stretch !important;
+    }
+
+    .player-modal-content {
+        max-width: 100vw !important;
+        height: 100svh !important;
+        max-height: 100svh !important;
+        border-radius: 0 !important;
+        border: none !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+    }
+
+    /* Video stage: proper 16:9 aspect, full width */
+    .video-stage {
+        width: 100% !important;
+        height: auto !important;
+        aspect-ratio: 16 / 9 !important;
+        min-height: 180px;
+        flex-shrink: 0;
+    }
+
+    /* Cinema footer: scrollable below video */
+    .player-cinema-footer {
+        flex: 1 1 auto !important;
+        overflow-y: auto !important;
+        padding: 10px 12px !important;
+        gap: 8px !important;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Server strip: horizontal scroll on mobile */
+    .server-strip-pills {
+        overflow-x: auto !important;
+        flex-wrap: nowrap !important;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 4px;
+    }
+    .server-strip-pills::-webkit-scrollbar { display: none; }
+    .server-pill-tab { flex-shrink: 0 !important; }
+
+    /* Episode row: horizontal scroll */
+    .episode-tabs-row {
+        overflow-x: auto !important;
+        flex-wrap: nowrap !important;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+    .episode-tabs-row::-webkit-scrollbar { display: none; }
+
+    /* Preroll ad: mobile-friendly sizing */
+    .preroll-card {
+        margin: 0 8px;
+        border-radius: 14px;
+    }
+    .preroll-top {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    .preroll-ad-title {
+        font-size: 15px !important;
+        line-height: 1.3;
+    }
+    .preroll-ad-desc {
+        font-size: 12px !important;
+    }
+
+    /* Download btn: compact */
+    .meta-download-btn {
+        padding: 6px 10px !important;
+        font-size: 11px !important;
+    }
+}
+
+/* ── Landscape on mobile: side-by-side player + info ── */
+@media (max-width: 900px) and (orientation: landscape) {
+
+    .player-modal-content {
+        flex-direction: row !important;
+        height: 100svh !important;
+        overflow: hidden;
+    }
+
+    .video-stage {
+        width: 58vw !important;
+        height: 100% !important;
+        aspect-ratio: unset !important;
+        flex-shrink: 0;
+    }
+
+    .player-cinema-footer {
+        flex: 1 1 auto !important;
+        overflow-y: auto !important;
+        min-width: 0;
+        padding: 12px !important;
     }
 }
