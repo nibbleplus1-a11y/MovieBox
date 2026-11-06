@@ -2269,6 +2269,48 @@ async def trigger_server_deploy(secret: Optional[str] = Query(None)):
     return {"status": "success", "message": "Deployed latest GitHub commit", "log": res}
 
 
+@app.post("/api/admin/setup-ssl")
+async def trigger_setup_ssl(
+    secret: Optional[str] = Query(None),
+    domain: str = Query("movieverse.click"),
+    email: Optional[str] = Query(None)
+):
+    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
+    if not secret or not secrets.compare_digest(secret, expected):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    def _execute_ssl_setup():
+        import subprocess
+        log_lines = []
+        try:
+            cmd = ["sudo", "bash", "setup-ssl.sh", domain]
+            if email:
+                cmd.append(email)
+            log_lines.append(f"Executing: {' '.join(cmd)}")
+            res = subprocess.run(
+                cmd,
+                cwd="/home/ubuntu/MovieBox",
+                capture_output=True,
+                text=True,
+                timeout=180
+            )
+            log_lines.append(f"Return code: {res.returncode}")
+            if res.stdout:
+                log_lines.append("=== STDOUT ===")
+                log_lines.append(res.stdout.strip())
+            if res.stderr:
+                log_lines.append("=== STDERR ===")
+                log_lines.append(res.stderr.strip())
+        except Exception as e:
+            log_lines.append(f"Exception: {str(e)}")
+        return "\n".join(log_lines)
+
+    loop = asyncio.get_event_loop()
+    output = await loop.run_in_executor(_bg_executor, _execute_ssl_setup)
+    return {"status": "completed", "domain": domain, "log": output}
+
+
+
 @app.get("/api/hero-trending")
 def get_hero_trending():
     cache_key = "feed:hero_daily_trending"

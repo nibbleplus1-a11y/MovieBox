@@ -34,7 +34,7 @@ if [ -n "$EMAIL" ]; then
     EMAIL_FLAG="--email $EMAIL --no-eff-email"
 fi
 
-sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos $EMAIL_FLAG --redirect
+sudo certbot --nginx -d "$DOMAIN" -d "www.$DOMAIN" --non-interactive --agree-tos $EMAIL_FLAG --redirect
 
 echo "=== [4/4] Testing Nginx Configuration & Reloading ==="
 sudo nginx -t
