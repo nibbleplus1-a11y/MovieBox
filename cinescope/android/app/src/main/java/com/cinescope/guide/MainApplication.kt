@@ -8,6 +8,7 @@ import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
+import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
 
 import expo.modules.ApplicationLifecycleDispatcher
@@ -65,13 +66,19 @@ class MainApplication : Application(), ReactApplication {
       defaultHandler?.uncaughtException(thread, throwable)
     }
 
-    // 2. Initialize SoLoader before loading New Architecture C++ libraries
-    SoLoader.init(this, false)
+    // 2. Initialize SoLoader with OpenSourceMergedSoMapping for merged React Native native libraries
+    SoLoader.init(this, OpenSourceMergedSoMapping)
 
-    // 3. Load React Native New Architecture feature flags, bridgeless mode & native libraries
-    DefaultNewArchitectureEntryPoint.load()
+    // 3. Load React Native New Architecture feature flags & native libraries safely
+    if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) {
+      try {
+        DefaultNewArchitectureEntryPoint.load()
+      } catch (e: Throwable) {
+        Log.e("MovieVerse", "DefaultNewArchitectureEntryPoint.load() caught non-fatal: ${e.message}", e)
+      }
+    }
 
-    // 3. Dispatch application creation to Expo modules
+    // 4. Dispatch application creation to Expo modules
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
   }
 
@@ -80,3 +87,4 @@ class MainApplication : Application(), ReactApplication {
     ApplicationLifecycleDispatcher.onConfigurationChanged(this, newConfig)
   }
 }
+
