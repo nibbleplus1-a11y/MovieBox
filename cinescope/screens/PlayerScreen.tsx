@@ -30,7 +30,7 @@ export default function PlayerScreen() {
   const { width: screenWidth } = useWindowDimensions();
 
   const [similarMovies, setSimilarMovies] = useState<MovieCardData[]>([]);
-  const [showPrerollAd, setShowPrerollAd] = useState<boolean>(true);
+  const [showPrerollAd, setShowPrerollAd] = useState<boolean>(false);
   const [showPostrollAd, setShowPostrollAd] = useState<boolean>(false);
 
   // Download state

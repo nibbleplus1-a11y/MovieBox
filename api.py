@@ -1526,16 +1526,9 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     async def content_iterator():
         try:
-            # Yield initial 32KB slice immediately so player parses MP4 moov/ftyp header instantly
-            first = True
-            async for chunk in resp.aiter_bytes(chunk_size=524288):
-                if first and len(chunk) > 65536:
-                    first = False
-                    yield chunk[:65536]
-                    yield chunk[65536:]
-                else:
-                    first = False
-                    yield chunk
+            # Yield fast 64KB slices immediately so player parses MP4 moov/ftyp header instantly without buffering
+            async for chunk in resp.aiter_bytes(chunk_size=65536):
+                yield chunk
         except Exception:
             pass
         finally:
@@ -2683,6 +2676,119 @@ async def update_ads_config(request: Request):
         return {"status": "success", "config": new_config}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/ads/banner", response_class=HTMLResponse)
+def get_ads_banner_html():
+    """Serves real Monetag & Adsterra ad scripts inside a mobile-optimized banner iframe/webview."""
+    config_path = os.path.join(os.path.dirname(__file__), "ad_config.json")
+    ad_cfg = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                ad_cfg = json.load(f)
+        except Exception:
+            pass
+
+    zone_id = ad_cfg.get("monetag", {}).get("zone_id", "306845")
+    monetag_script = ad_cfg.get("monetag", {}).get("script_url", "https://quge5.com/88/tag.min.js")
+    adsterra_script = ad_cfg.get("adsterra", {}).get("social_bar_script_url", "https://bancadeltempoidea.org/14/864b2583dd6f8b32bbfd87b7b4af65c8")
+    direct_link = ad_cfg.get("monetag", {}).get("direct_link", "https://monetag.com")
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .ad-card {{
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: linear-gradient(135deg, rgba(229,9,20,0.12), rgba(15,23,42,0.9));
+      border: 1px solid rgba(229,9,20,0.3);
+      border-radius: 10px;
+      text-decoration: none;
+      color: inherit;
+      cursor: pointer;
+    }}
+    .ad-left {{
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      overflow: hidden;
+    }}
+    .badge-row {{
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }}
+    .ad-badge {{
+      background: #E50914;
+      color: #fff;
+      font-size: 9px;
+      font-weight: 800;
+      padding: 2px 5px;
+      border-radius: 3px;
+      letter-spacing: 0.5px;
+    }}
+    .ad-tagline {{
+      font-size: 11px;
+      color: #94a3b8;
+    }}
+    .ad-title {{
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }}
+    .ad-cta {{
+      background: #E50914;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 6px;
+      white-space: nowrap;
+      flex-shrink: 0;
+      margin-left: 10px;
+    }}
+  </style>
+  <!-- Adsterra Social Bar Script -->
+  <script data-cfasync="false" src="{adsterra_script}"></script>
+  <!-- Monetag MultiTag Script -->
+  <script src="{monetag_script}" data-zone="{zone_id}" async data-cfasync="false"></script>
+</head>
+<body>
+  <a href="{direct_link}" target="_blank" rel="noopener" class="ad-card" id="adCardLink">
+    <div class="ad-left">
+      <div class="badge-row">
+        <span class="ad-badge">SPONSORED</span>
+        <span class="ad-tagline">MovieVerse Cloud Premium</span>
+      </div>
+      <span class="ad-title">Ultra HD Streaming & Multi-Audio Dubs</span>
+    </div>
+    <span class="ad-cta">Explore ↗</span>
+  </a>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 if __name__ == "__main__":
     import uvicorn

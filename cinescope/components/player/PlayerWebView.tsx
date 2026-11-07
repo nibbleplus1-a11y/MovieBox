@@ -139,7 +139,6 @@ export const buildPlayerHTML = (videoSrc: string): string => {
     webkit-playsinline
     x5-playsinline="true"
     preload="auto"
-    crossorigin="anonymous"
     onerror="handleSourceError(this)"
   ></video>
 
@@ -378,7 +377,7 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
         key={streamUrl}
         source={{
           html: buildPlayerHTML(streamUrl),
-          baseUrl: '',
+          baseUrl: 'https://movieverse.click/',
         }}
         originWhitelist={['*']}
         style={styles.webview}

@@ -1,7 +1,9 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, Platform } from 'react-native';
+import { WebView } from 'react-native-webview';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { CONFIG } from '../../config';
 
 interface AdBannerPlaceholderProps {
   variant?: 'feed' | 'compact' | 'player';
@@ -11,6 +13,9 @@ interface AdBannerPlaceholderProps {
   onPress?: () => void;
 }
 
+const AD_BANNER_URL = `${CONFIG.APP_URL.replace(/\/$/, '')}/api/ads/banner`;
+const MONETAG_DIRECT_URL = 'https://monetag.com';
+
 export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
   variant = 'feed',
   title = 'MovieVerse 1080p Cloud Network',
@@ -18,11 +23,13 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
   ctaText = 'Learn More',
   onPress,
 }) => {
+  const [webViewFailed, setWebViewFailed] = useState(false);
+
   const handlePress = () => {
     if (onPress) {
       onPress();
     } else {
-      Linking.openURL('https://monetag.com').catch(() => {});
+      Linking.openURL(MONETAG_DIRECT_URL).catch(() => {});
     }
   };
 
@@ -33,7 +40,7 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
           <View style={styles.adBadge}>
             <Text style={styles.adBadgeText}>SPONSORED</Text>
           </View>
-          <Text style={styles.adNote}>Ad Placement Preview</Text>
+          <Text style={styles.adNote}>Cinema Cloud Partner</Text>
         </View>
         <View style={styles.playerContentRow}>
           <Ionicons name="sparkles" size={16} color="#E50914" style={{ marginRight: 8 }} />
@@ -48,6 +55,32 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
     );
   }
 
+  // Real Monetag / Adsterra live webview banner
+  if (!webViewFailed) {
+    const bannerHeight = variant === 'compact' ? 64 : 78;
+    return (
+      <View style={[styles.container, { height: bannerHeight, backgroundColor: '#0f172a' }]}>
+        <WebView
+          source={{ uri: AD_BANNER_URL }}
+          style={styles.adWebView}
+          scrollEnabled={false}
+          javaScriptEnabled
+          domStorageEnabled
+          mixedContentMode="always"
+          onError={() => setWebViewFailed(true)}
+          onHttpError={() => setWebViewFailed(true)}
+          onNavigationStateChange={(navState) => {
+            // If user clicked link inside ad, open in external browser
+            if (navState.url && navState.url !== AD_BANNER_URL && !navState.url.startsWith('about:')) {
+              Linking.openURL(navState.url).catch(() => {});
+            }
+          }}
+        />
+      </View>
+    );
+  }
+
+  // Graceful fallback if webview fails or offline
   return (
     <View style={styles.container}>
       <LinearGradient
@@ -58,9 +91,9 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
       >
         <View style={styles.topRow}>
           <View style={styles.adBadge}>
-            <Text style={styles.adBadgeText}>ADVERTISEMENT</Text>
+            <Text style={styles.adBadgeText}>SPONSORED</Text>
           </View>
-          <Text style={styles.adNetworkLabel}>Monetag / Adsterra Slot</Text>
+          <Text style={styles.adNetworkLabel}>Ad Partner Showcase</Text>
         </View>
 
         <View style={styles.bodyRow}>
@@ -91,137 +124,139 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
 const styles = StyleSheet.create({
   container: {
     marginHorizontal: 16,
-    marginVertical: 14,
+    marginVertical: 10,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
     overflow: 'hidden',
     backgroundColor: '#0c0f17',
   },
+  adWebView: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
   gradientBg: {
-    padding: 14,
+    padding: 12,
   },
   topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   adBadge: {
-    backgroundColor: 'rgba(229, 9, 20, 0.2)',
-    paddingHorizontal: 7,
+    backgroundColor: '#E50914',
+    paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(229, 9, 20, 0.5)',
   },
   adBadgeText: {
-    color: '#FF4D5A',
+    color: '#ffffff',
     fontSize: 9,
     fontWeight: '800',
-    letterSpacing: 0.8,
+    letterSpacing: 0.5,
   },
   adNetworkLabel: {
-    color: '#64748B',
-    fontSize: 10,
+    color: '#64748b',
+    fontSize: 11,
     fontWeight: '500',
   },
   bodyRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   iconBox: {
     width: 44,
     height: 44,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: 'rgba(229, 9, 20, 0.12)',
     alignItems: 'center',
-    marginRight: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    marginRight: 10,
   },
   textBox: {
     flex: 1,
   },
   title: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: '#ffffff',
+    fontSize: 13,
     fontWeight: '700',
-    marginBottom: 3,
+    marginBottom: 2,
   },
   subtitle: {
-    color: '#94A3B8',
+    color: '#94a3b8',
     fontSize: 11,
-    lineHeight: 16,
+    lineHeight: 15,
   },
   bottomRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
-    paddingTop: 10,
+    justifyContent: 'space-between',
+    paddingTop: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
   },
   disclaimerText: {
-    color: '#64748B',
+    color: '#64748b',
     fontSize: 10,
     flex: 1,
-    marginRight: 8,
   },
   ctaButton: {
     backgroundColor: '#E50914',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
+    marginLeft: 8,
   },
   ctaText: {
-    color: '#FFFFFF',
+    color: '#ffffff',
     fontSize: 11,
     fontWeight: '700',
   },
+  // Player variant
   playerContainer: {
-    marginHorizontal: 12,
+    marginHorizontal: 16,
     marginVertical: 8,
-    backgroundColor: 'rgba(12, 16, 26, 0.85)',
-    borderRadius: 8,
+    padding: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    padding: 8,
+    borderColor: 'rgba(229, 9, 20, 0.25)',
   },
   badgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
-    gap: 6,
+    justifyContent: 'space-between',
+    marginBottom: 6,
   },
   adNote: {
-    color: '#64748B',
-    fontSize: 9,
+    color: '#64748b',
+    fontSize: 10,
+    fontWeight: '500',
   },
   playerContentRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   playerTitle: {
-    color: '#E2E8F0',
+    flex: 1,
+    color: '#ffffff',
     fontSize: 12,
     fontWeight: '600',
-    flex: 1,
   },
   playerCtaBtn: {
-    backgroundColor: 'rgba(229, 9, 20, 0.18)',
+    backgroundColor: 'rgba(229, 9, 20, 0.2)',
     borderWidth: 1,
-    borderColor: 'rgba(229, 9, 20, 0.4)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    marginLeft: 6,
+    borderColor: '#E50914',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginLeft: 8,
   },
   playerCtaText: {
-    color: '#FF6B6B',
-    fontSize: 10,
+    color: '#ff4d4f',
+    fontSize: 11,
     fontWeight: '700',
   },
 });

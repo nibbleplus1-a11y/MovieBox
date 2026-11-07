@@ -79,7 +79,7 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   };
 
   const handleOpenSponsor = () => {
-    Linking.openURL('https://movieboxonline.net/').catch(() => {});
+    Linking.openURL('https://monetag.com').catch(() => {});
   };
 
   const widthInterpolated = progressAnim.interpolate({

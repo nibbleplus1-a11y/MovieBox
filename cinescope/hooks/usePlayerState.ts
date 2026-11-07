@@ -211,8 +211,8 @@ export function usePlayerState() {
 
       const playable = (data.streams || []).filter(isPlayableStream);
       if (playable.length > 0) {
-        // Fast-start on mobile: prefer 720p if available for smooth, buffer-free playback
-        const best = playable.find(s => s.quality === '720p') || playable.find(s => s.quality === '1080p') || playable[0];
+        // Fast-start on mobile: prefer 720p or 480p for smooth, instant start, fallback to 1080p
+        const best = playable.find(s => s.quality === '720p') || playable.find(s => s.quality === '480p') || playable.find(s => s.quality === '1080p') || playable[0];
         setActiveStream(best);
         setSelectedServer('direct');
         setUseIframe(false);
@@ -500,6 +500,17 @@ export function usePlayerState() {
           case 'error':
             console.warn('Video error from player:', msg.error);
             setIsBuffering(false);
+            if (streamData?.fallback_servers && streamData.fallback_servers.length > 0 && selectedServer === 'direct') {
+              console.log('Failing over to fallback cloud server on playback error');
+              const srv = streamData.fallback_servers[0];
+              setSelectedServer(srv.id);
+              setIframeServerName(srv.name || srv.id);
+              setStreamUrl(srv.url);
+              setUseIframe(true);
+              setIsPlaying(true);
+            } else {
+              setError(msg.error || 'Playback stalled. Please switch server or quality.');
+            }
             break;
           default:
             break;
