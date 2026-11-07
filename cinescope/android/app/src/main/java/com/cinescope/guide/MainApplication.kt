@@ -8,6 +8,7 @@ import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
+import com.facebook.soloader.SoLoader
 
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ExpoReactHostFactory
@@ -64,7 +65,10 @@ class MainApplication : Application(), ReactApplication {
       defaultHandler?.uncaughtException(thread, throwable)
     }
 
-    // 2. Load React Native New Architecture feature flags, bridgeless mode & native libraries
+    // 2. Initialize SoLoader before loading New Architecture C++ libraries
+    SoLoader.init(this, false)
+
+    // 3. Load React Native New Architecture feature flags, bridgeless mode & native libraries
     DefaultNewArchitectureEntryPoint.load()
 
     // 3. Dispatch application creation to Expo modules
