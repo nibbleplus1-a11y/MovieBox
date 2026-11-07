@@ -31,7 +31,9 @@ export default function PlayerScreen() {
 
   const [similarMovies, setSimilarMovies] = useState<MovieCardData[]>([]);
   const [showPrerollAd, setShowPrerollAd] = useState<boolean>(false);
+  const [prerollShown, setPrerollShown] = useState<boolean>(false);
   const [showPostrollAd, setShowPostrollAd] = useState<boolean>(false);
+
 
   // Download state
   const [showDownloadAd, setShowDownloadAd] = useState<boolean>(false);
@@ -141,6 +143,21 @@ export default function PlayerScreen() {
     loadSimilar();
     return () => { isMounted = false; };
   }, [currentId, isSeriesType]);
+
+  // ── Trigger preroll interstitial once when stream URL first becomes ready ───
+  useEffect(() => {
+    if (streamUrl && !loading && !error && !prerollShown) {
+      setPrerollShown(true);
+      setShowPrerollAd(true);
+    }
+  }, [streamUrl, loading, error]);
+
+  // Reset preroll gate when user switches movie/episode
+  useEffect(() => {
+    setPrerollShown(false);
+  }, [currentId, currentSeason, currentEpisode]);
+
+
 
   const onSelectMovie = (m: MovieCardData) => {
     navigation.replace('Player', {

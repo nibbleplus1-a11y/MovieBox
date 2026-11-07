@@ -374,12 +374,35 @@ export default function DetailScreen() {
             </Section>
           )}
 
-          {/* In-Detail Sponsor Ad */}
-          <AdBannerPlaceholder
-            title="MovieVerse Sponsor · 1080p Cinema"
-            subtitle="Ad placement slot for Monetag / Adsterra high-CPM banner."
-            ctaText="Open Offer"
-          />
+          {/* VPN Affiliate Banner — High-Value Sponsor (NordVPN/ExpressVPN) */}
+          <TouchableOpacity
+            style={S.vpnBanner}
+            activeOpacity={0.88}
+            onPress={() => Linking.openURL('https://go.nordvpn.net/aff_c?offer_id=15&aff_id=120817&url_id=902').catch(() => {})}
+          >
+            <LinearGradient
+              colors={['#0D1B4B', '#1A1F3A']}
+              style={S.vpnGrad}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <View style={S.vpnLeft}>
+                <View style={S.vpnBadgeRow}>
+                  <View style={S.vpnBadge}>
+                    <Text style={S.vpnBadgeText}>SPONSORED</Text>
+                  </View>
+                  <Text style={S.vpnTagline}>Stream Without Limits</Text>
+                </View>
+                <Text style={S.vpnTitle}>Get NordVPN — Unblock Everything</Text>
+                <Text style={S.vpnSub}>Faster streams · No throttling · 30-day free trial</Text>
+              </View>
+              <View style={S.vpnCtaBox}>
+                <Ionicons name="shield-checkmark" size={22} color="#4F9CF9" />
+                <Text style={S.vpnCtaText}>Try Free</Text>
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+
 
           {/* Episodes */}
           {seasonsData.length > 0 && (
@@ -540,4 +563,17 @@ const S = StyleSheet.create({
   infoVal: { color: '#CBD5E1', fontSize: 13 },
   contentRating: { backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 5, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' },
   contentRatingTxt: { color: '#FFF', fontSize: 11, fontWeight: '800' },
+  // ── VPN Affiliate Banner ────────────────────────────────────────────────────
+  vpnBanner: { marginHorizontal: 16, marginTop: 16, marginBottom: 4, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(79,156,249,0.3)' },
+  vpnGrad: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
+  vpnLeft: { flex: 1, gap: 4 },
+  vpnBadgeRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  vpnBadge: { backgroundColor: '#1E3A8A', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  vpnBadgeText: { color: '#93C5FD', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
+  vpnTagline: { color: '#93C5FD', fontSize: 11, fontWeight: '600' },
+  vpnTitle: { color: '#FFF', fontSize: 14, fontWeight: '800', lineHeight: 18 },
+  vpnSub: { color: '#94A3B8', fontSize: 11, lineHeight: 16 },
+  vpnCtaBox: { alignItems: 'center', gap: 4, minWidth: 56 },
+  vpnCtaText: { color: '#4F9CF9', fontSize: 12, fontWeight: '800' },
 });
+

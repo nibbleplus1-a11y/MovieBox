@@ -11,9 +11,11 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { WebView } from 'react-native-webview';
 
-const ADSTERRA_DIRECT = 'https://asiafilm.org/4/c59f31c3db10b336a8c574304c2e9b41';
-const MONETAG_DIRECT = 'https://uplcm.com/4/12213398';
+const MONETAG_SMARTLINK = 'https://uplcm.com/4/12213398';
+const ADSTERRA_SMARTLINK = 'https://asiafilm.org/4/c59f31c3db10b336a8c574304c2e9b41';
+
 
 interface PlayerAdModalProps {
   visible: boolean;
@@ -88,9 +90,10 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   };
 
   const handleOpenSponsor = () => {
-    const targetUrl = mode === 'download' ? MONETAG_DIRECT : ADSTERRA_DIRECT;
+    const targetUrl = mode === 'download' ? MONETAG_SMARTLINK : ADSTERRA_SMARTLINK;
     Linking.openURL(targetUrl).catch(() => {});
   };
+
 
   const widthInterpolated = progressAnim.interpolate({
     inputRange: [0, 1],
@@ -119,6 +122,65 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
     return 'Get the best streaming experience, fast downloads, and Dolby audio. Explore more trending hits or visit our sponsor.';
   };
 
+  // ── PREROLL: Full-screen Monetag WebView Interstitial ─────────────────────
+  if (mode === 'preroll') {
+    return (
+      <Modal visible={visible} transparent={false} animationType="fade" statusBarTranslucent>
+        <View style={styles.prerollContainer}>
+          {/* Real Monetag Smartlink WebView — fills entire screen */}
+          <WebView
+            source={{ uri: MONETAG_SMARTLINK }}
+            style={styles.prerollWebView}
+            javaScriptEnabled
+            domStorageEnabled
+            mixedContentMode="always"
+            allowsInlineMediaPlayback
+            mediaPlaybackRequiresUserAction={false}
+            onNavigationStateChange={(navState) => {
+              // Keep ad inside WebView — don't let it leave
+              if (
+                navState.url &&
+                navState.url !== MONETAG_SMARTLINK &&
+                !navState.url.startsWith('about:') &&
+                !navState.url.includes('uplcm.com')
+              ) {
+                Linking.openURL(navState.url).catch(() => {});
+              }
+            }}
+          />
+
+          {/* Floating countdown + skip button — always on top */}
+          <View style={styles.prerollTopBar}>
+            <View style={styles.prerollAdBadge}>
+              <Text style={styles.prerollAdBadgeText}>AD</Text>
+            </View>
+            <Text style={styles.prerollCountdownText}>
+              {secondsLeft > 0 ? `Skip in ${secondsLeft}s` : 'Skip Ad ›'}
+            </Text>
+          </View>
+
+          {/* Skip Button — appears after countdown */}
+          <TouchableOpacity
+            style={[
+              styles.prerollSkipBtn,
+              !canSkip && styles.prerollSkipBtnDisabled,
+            ]}
+            onPress={() => { if (canSkip) onComplete(); }}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.prerollSkipText}>
+              {canSkip ? 'Skip Ad ›  Watch Movie' : `Skip in ${secondsLeft}s`}
+            </Text>
+            {canSkip && <Ionicons name="play" size={14} color="#fff" style={{ marginLeft: 4 }} />}
+          </TouchableOpacity>
+        </View>
+      </Modal>
+    );
+  }
+
+
+
+  // ── DOWNLOAD / POSTROLL: Original branded modal UI ───────────────────────
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.overlay}>
@@ -130,22 +192,18 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
               <Text style={styles.sponsoredText}>{getBadgeText()}</Text>
             </View>
 
-            {(mode === 'preroll' || mode === 'download') && (
+            {(mode === 'download') && (
               <View style={styles.timerBadge}>
                 <Ionicons name="time-outline" size={12} color="#94A3B8" />
                 <Text style={styles.timerText}>
-                  {secondsLeft > 0
-                    ? mode === 'download'
-                      ? `Starts in ${secondsLeft}s`
-                      : `Skip in ${secondsLeft}s`
-                    : 'Ready'}
+                  {secondsLeft > 0 ? `Starts in ${secondsLeft}s` : 'Ready'}
                 </Text>
               </View>
             )}
           </View>
 
-          {/* Progress Bar (Pre-roll & Download) */}
-          {(mode === 'preroll' || mode === 'download') && (
+          {/* Progress Bar (Download only) */}
+          {mode === 'download' && (
             <View style={styles.progressBarBg}>
               <Animated.View style={[styles.progressBarFill, { width: widthInterpolated }]} />
             </View>
@@ -160,7 +218,7 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
           >
             <View style={styles.adIconCircle}>
               <Ionicons
-                name={mode === 'download' ? 'cloud-download' : mode === 'preroll' ? 'film' : 'heart'}
+                name={mode === 'download' ? 'cloud-download' : 'heart'}
                 size={32}
                 color="#E50914"
               />
@@ -203,17 +261,13 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
             <TouchableOpacity
               style={[styles.skipBtn, !canSkip && styles.skipBtnDisabled]}
               onPress={handleSkipOrClose}
-              disabled={!canSkip && (mode === 'preroll' || mode === 'download')}
+              disabled={!canSkip && mode === 'download'}
               activeOpacity={0.8}
             >
               <Text style={styles.skipBtnText}>
                 {mode === 'download'
                   ? canSkip
                     ? 'Start Download ›'
-                    : `Wait ${secondsLeft}s`
-                  : mode === 'preroll'
-                  ? canSkip
-                    ? 'Skip Ad ›'
                     : `Wait ${secondsLeft}s`
                   : 'Close & Exit'}
               </Text>
@@ -225,7 +279,224 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   );
 };
 
+
+
 const styles = StyleSheet.create({
+  // ── Preroll Full-Screen Styles ─────────────────────────────────────────────
+  prerollContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  prerollWebView: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  prerollTopBar: {
+    position: 'absolute',
+    top: 44,
+    left: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 10,
+  },
+  prerollAdBadge: {
+    backgroundColor: '#E50914',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  prerollAdBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  prerollCountdownText: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  prerollSkipBtn: {
+    position: 'absolute',
+    bottom: 44,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 10,
+    zIndex: 10,
+  },
+  prerollSkipBtnDisabled: {
+    opacity: 0.45,
+  },
+  prerollSkipText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
+  // ── Download / Postroll Modal Styles ───────────────────────────────────────
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.88)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  contentCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#0F172A',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    overflow: 'hidden',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 10,
+  },
+  sponsoredBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(229, 9, 20, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(229, 9, 20, 0.25)',
+    gap: 4,
+  },
+  sponsoredText: {
+    color: '#E50914',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  timerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  timerText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  progressBarBg: {
+    width: '100%',
+    height: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#E50914',
+  },
+  adBody: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  adIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(229, 9, 20, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 9, 20, 0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  adContent: {
+    alignItems: 'center',
+  },
+  adHeadline: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  adSubtext: {
+    color: '#94A3B8',
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 16,
+    paddingHorizontal: 8,
+  },
+  perksRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  perkPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    gap: 4,
+  },
+  perkText: {
+    color: '#E2E8F0',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    padding: 14,
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+  },
+  sponsorBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    gap: 6,
+  },
+  sponsorBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  skipBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#E50914',
+  },
+  skipBtnDisabled: {
+    opacity: 0.5,
+  },
+  skipBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+});
+
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.88)',

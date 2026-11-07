@@ -2677,6 +2677,89 @@ async def update_ads_config(request: Request):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.get("/api/ads/vast", response_class=HTMLResponse)
+async def get_ads_vast(request: Request):
+    """Returns a self-hosted VAST 2.0 XML tag for in-stream video pre-roll ads.
+    Compatible with Google IMA SDK and all VAST-capable players."""
+    config_path = os.path.join(os.path.dirname(__file__), "ad_config.json")
+    ad_cfg = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                ad_cfg = json.load(f)
+        except Exception:
+            pass
+
+    preroll = ad_cfg.get("video_preroll", {})
+    video_url = preroll.get("video_ad_url", "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4")
+    sponsor_url = preroll.get("sponsor_url", "https://asiafilm.org/4/c59f31c3db10b336a8c574304c2e9b41")
+    sponsor_name = preroll.get("sponsor_name", "MovieVerse Cinema Partner")
+    skip_offset = preroll.get("skip_delay_seconds", 5)
+    duration = preroll.get("duration_seconds", 15)
+
+    # Format duration as HH:MM:SS for VAST
+    h = duration // 3600
+    m = (duration % 3600) // 60
+    s = duration % 60
+    dur_str = f"{h:02d}:{m:02d}:{s:02d}"
+    skip_str = f"00:00:{skip_offset:02d}"
+
+    # Impression tracking pixel (we log internally)
+    base_url = str(request.base_url).rstrip("/")
+    tracking_url = f"{base_url}/api/ads/vast/track?event=impression"
+    start_url = f"{base_url}/api/ads/vast/track?event=start"
+    complete_url = f"{base_url}/api/ads/vast/track?event=complete"
+    skip_url = f"{base_url}/api/ads/vast/track?event=skip"
+    click_url = f"{base_url}/api/ads/vast/track?event=click"
+
+    vast_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<VAST version="2.0">
+  <Ad id="movieverse-preroll-1">
+    <InLine>
+      <AdSystem>MovieVerse Ad Server 1.0</AdSystem>
+      <AdTitle>{sponsor_name} - Pre-Roll Ad</AdTitle>
+      <Description>Sponsored content before your movie. Skip after {skip_offset} seconds.</Description>
+      <Error>{base_url}/api/ads/vast/track?event=error&amp;code=[ERRORCODE]</Error>
+      <Impression id="imp1"><![CDATA[{tracking_url}]]></Impression>
+      <Creatives>
+        <Creative id="cr1" sequence="1">
+          <Linear skipoffset="{skip_str}">
+            <Duration>{dur_str}</Duration>
+            <TrackingEvents>
+              <Tracking event="start"><![CDATA[{start_url}]]></Tracking>
+              <Tracking event="skip"><![CDATA[{skip_url}]]></Tracking>
+              <Tracking event="complete"><![CDATA[{complete_url}]]></Tracking>
+              <Tracking event="firstQuartile"><![CDATA[{base_url}/api/ads/vast/track?event=firstQuartile]]></Tracking>
+              <Tracking event="midpoint"><![CDATA[{base_url}/api/ads/vast/track?event=midpoint]]></Tracking>
+              <Tracking event="thirdQuartile"><![CDATA[{base_url}/api/ads/vast/track?event=thirdQuartile]]></Tracking>
+            </TrackingEvents>
+            <VideoClicks>
+              <ClickThrough id="ct1"><![CDATA[{sponsor_url}]]></ClickThrough>
+              <ClickTracking id="ctr1"><![CDATA[{click_url}]]></ClickTracking>
+            </VideoClicks>
+            <MediaFiles>
+              <MediaFile id="mf1" delivery="progressive" type="video/mp4" bitrate="500" width="1280" height="720">
+                <![CDATA[{video_url}]]>
+              </MediaFile>
+            </MediaFiles>
+          </Linear>
+        </Creative>
+      </Creatives>
+    </InLine>
+  </Ad>
+</VAST>"""
+    return HTMLResponse(content=vast_xml, media_type="application/xml")
+
+
+@app.get("/api/ads/vast/track")
+async def track_vast_event(event: str = "impression", code: str = ""):
+    """Receives VAST tracking pixel pings from the IMA SDK. Logs events server-side."""
+    print(f"[VAST] Event: {event}" + (f" code={code}" if code else ""), flush=True)
+    # Return a 1x1 transparent GIF pixel
+    pixel = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
+    return Response(content=pixel, media_type="image/gif")
+
+
 @app.get("/api/ads/banner", response_class=HTMLResponse)
 def get_ads_banner_html():
     """Serves real Monetag & Adsterra ad scripts inside a mobile-optimized banner iframe/webview."""
@@ -2691,6 +2774,7 @@ def get_ads_banner_html():
 
     zone_id = ad_cfg.get("monetag", {}).get("zone_id", "306845")
     monetag_script = ad_cfg.get("monetag", {}).get("script_url", "https://quge5.com/88/tag.min.js")
+    adsterra_script = ad_cfg.get("adsterra", {}).get("social_bar_script_url", "")
     direct_link = ad_cfg.get("adsterra", {}).get("direct_link") or ad_cfg.get("monetag", {}).get("direct_link", "https://uplcm.com/4/12213398")
 
     html = f"""<!DOCTYPE html>
