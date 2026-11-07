@@ -102,6 +102,16 @@ async def report_log(request: Request, secret: Optional[str] = Query(None)):
         f.write(body)
     return {"status": "received", "size": len(body)}
 
+@app.post("/api/report-crash")
+async def report_crash(request: Request):
+    body = await request.body()
+    crash_path = os.path.join(STATIC_DIR, "app_crash.log")
+    with open(crash_path, "ab") as f:
+        f.write(f"\n--- {datetime.utcnow().isoformat()} ---\n".encode("utf-8"))
+        f.write(body)
+        f.write(b"\n")
+    return {"status": "ok"}
+
 class SimpleCache:
     def __init__(self, maxsize: int = 500, default_ttl: int = 600):
         self.maxsize = maxsize
