@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity,
-  StyleSheet, Dimensions, Share, Animated, Linking, Alert,
+  StyleSheet, Dimensions, Share, Animated, Linking, Alert, Modal, ActivityIndicator,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,6 +12,8 @@ import { api, DetailData } from '../services/api';
 import { WatchlistService } from '../services/watchlist';
 import { WatchProgressService, WatchProgressItem } from '../services/watchProgress';
 import { AdBannerPlaceholder } from '../components/ads/AdBannerPlaceholder';
+import { downloadStream } from '../services/downloadService';
+import { PlayerAdModal } from '../components/ads/PlayerAdModal';
 
 const { width } = Dimensions.get('window');
 const BACKDROP_H = 340;
@@ -107,6 +109,13 @@ export default function DetailScreen() {
   const [synopsisExpanded, setSynopsisExpanded] = useState(false);
   const fadeIn = useRef(new Animated.Value(0)).current;
 
+  // Sponsored Download states
+  const [showDownloadAd, setShowDownloadAd]   = useState<boolean>(false);
+  const [pendingDownload, setPendingDownload] = useState<{ url: string; filename: string } | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState<number>(0);
+  const [isDownloading, setIsDownloading]     = useState<boolean>(false);
+  const [downloadFilename, setDownloadFilename] = useState<string>('');
+
   const loadData = useCallback(async () => {
     setLoading(true); setError(null);
     try {
@@ -178,16 +187,49 @@ export default function DetailScreen() {
       if (targetStream?.url) {
         const cleanName = (detail?.title || initTitle || 'Movie').replace(/[^a-zA-Z0-9_\-]/g, '_');
         const epTag = season > 0 ? `_S${season}E${ep}` : '';
-        const dlUrl = api.proxyUrl(targetStream.url, targetStream.headers?.Referer) + `&download=true&filename=${encodeURIComponent(cleanName + epTag + '.mp4')}`;
-        Linking.openURL(dlUrl).catch(() => {
-          Alert.alert('Download', 'Could not open download in browser.');
-        });
+        const filename = `${cleanName}${epTag}.mp4`;
+        const dlUrl = api.proxyUrl(targetStream.url, targetStream.headers?.Referer) + `&download=true&filename=${encodeURIComponent(filename)}`;
+        
+        // Show sponsored unlock ad FIRST
+        setPendingDownload({ url: dlUrl, filename });
+        setShowDownloadAd(true);
       } else {
-        Alert.alert('Download', 'Direct MP4 stream not available for download. Streaming is ready!');
+        Alert.alert('Download', 'Direct MP4 stream not available for download right now.');
       }
     } catch {
       Alert.alert('Download', 'Download server is busy. Please try again.');
     }
+  };
+
+  const onDownloadAdComplete = () => {
+    setShowDownloadAd(false);
+    if (!pendingDownload) return;
+    const { url, filename } = pendingDownload;
+    setPendingDownload(null);
+
+    setIsDownloading(true);
+    setDownloadFilename(filename);
+    setDownloadProgress(0);
+
+    downloadStream({
+      url,
+      filename,
+      onProgress: (p) => setDownloadProgress(p),
+      onComplete: (localUri) => {
+        setIsDownloading(false);
+        setDownloadProgress(0);
+        Alert.alert(
+          '✅ Download Complete',
+          `"${filename}" has been saved to your device in the MovieVerse folder.`,
+          [{ text: 'OK' }],
+        );
+      },
+      onError: (err) => {
+        setIsDownloading(false);
+        setDownloadProgress(0);
+        Alert.alert('Download Failed', err || 'Could not download the file. Please try again.');
+      },
+    });
   };
 
   // ── Derived ──────────────────────────────────────────────────────────────────
@@ -483,6 +525,35 @@ export default function DetailScreen() {
           )}
         </View>
       </Animated.ScrollView>
+
+      {/* PRE-DOWNLOAD AD MODAL (Before Download Starts) */}
+      <PlayerAdModal
+        visible={showDownloadAd}
+        mode="download"
+        title={pendingDownload?.filename || detail?.title || ''}
+        onComplete={onDownloadAdComplete}
+        onClose={() => setShowDownloadAd(false)}
+      />
+
+      {/* IN-APP DOWNLOAD PROGRESS OVERLAY */}
+      {isDownloading && (
+        <Modal transparent animationType="fade" visible>
+          <View style={S.dlOverlay}>
+            <View style={S.dlCard}>
+              <ActivityIndicator size="large" color="#E50914" style={{ marginBottom: 12 }} />
+              <Text style={S.dlTitle}>Downloading in MovieVerse…</Text>
+              <Text style={S.dlFilename} numberOfLines={2}>
+                {downloadFilename}
+              </Text>
+              <View style={S.dlBarBg}>
+                <View style={[S.dlBarFill, { width: `${Math.round(downloadProgress * 100)}%` }]} />
+              </View>
+              <Text style={S.dlPercent}>{Math.round(downloadProgress * 100)}%</Text>
+              <Text style={S.dlHint}>File is saving directly to your device storage.</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -575,5 +646,59 @@ const S = StyleSheet.create({
   vpnSub: { color: '#94A3B8', fontSize: 11, lineHeight: 16 },
   vpnCtaBox: { alignItems: 'center', gap: 4, minWidth: 56 },
   vpnCtaText: { color: '#4F9CF9', fontSize: 12, fontWeight: '800' },
+  // ── In-App Download Overlay ─────────────────────────────────────────────────
+  dlOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  dlCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#0F172A',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  dlTitle: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  dlFilename: {
+    color: '#94A3B8',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  dlBarBg: {
+    width: '100%',
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  dlBarFill: {
+    height: '100%',
+    backgroundColor: '#E50914',
+    borderRadius: 3,
+  },
+  dlPercent: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  dlHint: {
+    color: '#64748B',
+    fontSize: 11,
+    textAlign: 'center',
+  },
 });
 

@@ -8,6 +8,7 @@ import {
   Text,
   Modal,
   ActivityIndicator,
+  BackHandler,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -101,6 +102,7 @@ export default function PlayerScreen() {
     resetControlsTimer,
     handleWebViewMessage,
     handleBack,
+    sendVideoCommand,
   } = usePlayerState();
 
   // Load Similar Movies for Recommendation Shelf
@@ -149,8 +151,14 @@ export default function PlayerScreen() {
     if (streamUrl && !loading && !error && !prerollShown) {
       setPrerollShown(true);
       setShowPrerollAd(true);
+      sendVideoCommand('if(window.videoEl){ window.videoEl.pause(); }');
     }
   }, [streamUrl, loading, error]);
+
+  const onCompletePreroll = () => {
+    setShowPrerollAd(false);
+    sendVideoCommand('if(window.videoEl){ window.videoEl.muted = false; window.videoEl.play(); }');
+  };
 
   // Reset preroll gate when user switches movie/episode
   useEffect(() => {
@@ -223,6 +231,7 @@ export default function PlayerScreen() {
   };
 
   const triggerExitWithAd = () => {
+    sendVideoCommand('if(window.videoEl){ window.videoEl.pause(); }');
     setShowPostrollAd(true);
   };
 
@@ -230,6 +239,29 @@ export default function PlayerScreen() {
     setShowPostrollAd(false);
     handleBack();
   };
+
+  // Android hardware back handler: intercept to show exit ad first
+  useEffect(() => {
+    const onBackPress = () => {
+      if (showPostrollAd) {
+        onCompletePostroll();
+        return true;
+      }
+      if (showPrerollAd) {
+        onCompletePreroll();
+        return true;
+      }
+      if (showDownloadAd) {
+        setShowDownloadAd(false);
+        return true;
+      }
+      triggerExitWithAd();
+      return true;
+    };
+
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [showPostrollAd, showPrerollAd, showDownloadAd]);
 
   const playerContainerStyle = isFullscreen
     ? styles.playerContainerFullscreen
@@ -368,7 +400,7 @@ export default function PlayerScreen() {
         visible={showPrerollAd}
         mode="preroll"
         title={title || streamData?.title}
-        onComplete={() => setShowPrerollAd(false)}
+        onComplete={onCompletePreroll}
       />
 
       {/* PRE-DOWNLOAD AD MODAL (Before Download Starts) */}

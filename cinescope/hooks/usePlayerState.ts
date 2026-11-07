@@ -548,7 +548,7 @@ export function usePlayerState() {
     switchQuality, switchDub, switchServer, switchEpisode,
     searchOnlineSubs, selectSubtitle,
     toggleControls, toggleFullscreen, resetControlsTimer,
-    handleWebViewMessage, handleBack,
+    handleWebViewMessage, handleBack, sendVideoCommand,
   };
 }
 
