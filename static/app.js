@@ -181,94 +181,11 @@ const AdEngine = {
     },
 
     canShowPreroll() {
-        if (!this.config || !this.config.enabled) return false;
-        if (!this.config.monetag || !this.config.monetag.preroll_enabled) return false;
-        if (!this.config.monetag.zone_id || this.config.monetag.zone_id.trim() === '') return false;
-        const lastPreroll = parseInt(sessionStorage.getItem('movieverse_last_preroll_time') || '0', 10);
-        const now = Date.now();
-        const cooldown = ((this.config.monetag && this.config.monetag.preroll_cooldown_seconds) || 300) * 1000;
-        if (now - lastPreroll < cooldown) {
-            return false;
-        }
-        return true;
+        return false;
     },
 
     runPrerollIfEligible(onComplete) {
-        this.playbackStartTime = Date.now();
-        if (!this.canShowPreroll()) {
-            if (typeof onComplete === 'function') onComplete();
-            return;
-        }
-
-        const overlay = document.getElementById('cinemaPrerollOverlay');
-        if (!overlay) {
-            if (typeof onComplete === 'function') onComplete();
-            return;
-        }
-
-        this.onPrerollCompleteCallback = onComplete;
-        const totalDuration = (this.config.monetag && this.config.monetag.preroll_duration_seconds) || 5;
-        this.prerollSecondsLeft = totalDuration;
-
-        // Record timestamp for frequency capping
-        sessionStorage.setItem('movieverse_last_preroll_time', Date.now().toString());
-
-        // Setup UI
-        const skipBtn = document.getElementById('prerollSkipBtn');
-        const timerText = document.getElementById('prerollTimerText');
-        const progressBar = document.getElementById('prerollProgressBar');
-
-        if (skipBtn) {
-            skipBtn.disabled = true;
-            skipBtn.classList.remove('can-skip');
-            skipBtn.textContent = `Skip in ${this.prerollSecondsLeft}s`;
-        }
-        if (timerText) timerText.textContent = `Movie starts in ${this.prerollSecondsLeft}s`;
-        if (progressBar) progressBar.style.width = '0%';
-
-        // Setup Ad Sponsor Link
-        const adLink = document.getElementById('prerollAdLink');
-        if (adLink && this.config.monetag && this.config.monetag.direct_link) {
-            adLink.href = this.config.monetag.direct_link;
-        }
-
-        overlay.style.display = 'flex';
-
-        // Clear any existing timer
-        if (this.prerollTimer) clearInterval(this.prerollTimer);
-
-        let elapsedTenths = 0;
-        const totalTenths = totalDuration * 10;
-
-        this.prerollTimer = setInterval(() => {
-            elapsedTenths++;
-            const pct = Math.min(100, (elapsedTenths / totalTenths) * 100);
-            if (progressBar) progressBar.style.width = `${pct}%`;
-
-            if (elapsedTenths % 10 === 0) {
-                this.prerollSecondsLeft--;
-                if (this.prerollSecondsLeft > 0) {
-                    if (skipBtn && !skipBtn.classList.contains('can-skip')) {
-                        skipBtn.textContent = `Skip in ${this.prerollSecondsLeft}s`;
-                    }
-                    if (timerText) timerText.textContent = `Movie starts in ${this.prerollSecondsLeft}s`;
-                } else {
-                    // Timer finished, allow skip or auto-proceed
-                    if (skipBtn) {
-                        skipBtn.disabled = false;
-                        skipBtn.classList.add('can-skip');
-                        skipBtn.textContent = 'Skip Ad ⏭';
-                    }
-                    if (timerText) timerText.textContent = 'Ready to stream!';
-                    clearInterval(this.prerollTimer);
-                    this.prerollTimer = null;
-                    // Auto-start after a brief pause if user hasn't clicked skip
-                    setTimeout(() => {
-                        this.dismissPreroll();
-                    }, 800);
-                }
-            }
-        }, 100);
+        if (typeof onComplete === 'function') onComplete();
     },
 
     dismissPreroll() {
@@ -287,25 +204,11 @@ const AdEngine = {
     },
 
     canShowExitInterstitial() {
-        if (!this.config || !this.config.enabled) return true;
-        const lastExit = parseInt(sessionStorage.getItem('movieverse_last_exit_time') || '0', 10);
-        const now = Date.now();
-        // 4 second debounce on exit
-        if (now - lastExit < 4000) {
-            return false;
-        }
-        return true;
+        return false;
     },
 
     showExitInterstitial() {
-        if (!this.canShowExitInterstitial()) return;
-
-        sessionStorage.setItem('movieverse_last_exit_time', Date.now().toString());
-        const modal = document.getElementById('exitInterstitialModal');
-        if (modal) {
-            modal.style.display = 'flex';
-            modal.classList.add('active');
-        }
+        return;
     },
 
     closeExitInterstitial() {

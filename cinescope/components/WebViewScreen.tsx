@@ -56,7 +56,7 @@ export default function WebViewScreen({ url, urlSuffix = '' }: Props) {
       <div style="font-size:64px;margin-bottom:20px">📡</div>
       <h2 style="color:#fff;margin-bottom:12px">No Connection</h2>
       <p style="color:#B0B0CC;line-height:1.6;margin-bottom:28px">
-        CineScope needs internet to load content.<br/>
+        MovieVerse needs internet to load content.<br/>
         Check your connection and try again.
       </p>
       <button onclick="window.location.reload()"

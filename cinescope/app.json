@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "MovieVerse",
-    "slug": "cinescope",
+    "slug": "movieverse",
     "version": "1.0.4",
     "orientation": "default",
     "icon": "./assets/icon.png",

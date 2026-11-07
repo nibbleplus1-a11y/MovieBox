@@ -11763,6 +11763,10 @@ kbd {
     #playerModal.player-modal {
         position: fixed !important;
         inset: 0 !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
         width: 100vw !important;
         height: 100dvh !important;
         max-height: 100dvh !important;
@@ -11774,6 +11778,8 @@ kbd {
         border-radius: 0 !important;
         display: flex !important;
         flex-direction: column !important;
+        align-items: stretch !important;
+        justify-content: flex-start !important;
         overflow: hidden !important;
     }
 
@@ -11782,32 +11788,51 @@ kbd {
     }
 
     .player-modal-content {
-        width: 100% !important;
-        max-width: 100% !important;
+        width: 100vw !important;
+        max-width: 100vw !important;
         height: 100% !important;
-        max-height: 100% !important;
+        max-height: 100dvh !important;
         border: none !important;
         border-radius: 0 !important;
         display: flex !important;
         flex-direction: column !important;
+        align-items: stretch !important;
+        justify-content: flex-start !important;
         background: #06080d !important;
         box-shadow: none !important;
         margin: 0 !important;
         padding: 0 !important;
         overflow: hidden !important;
+        transform: none !important;
     }
 
-    /* Video Stage: Fixed 16:9 at top in Portrait */
+    /* Video Stage: Exactly 16:9 flush at top in portrait */
     .video-stage {
-        width: 100% !important;
+        width: 100vw !important;
+        max-width: 100vw !important;
         aspect-ratio: 16 / 9 !important;
+        min-height: 0 !important;
         height: auto !important;
-        max-height: 38vh !important;
+        max-height: 42vh !important;
         background: #000 !important;
         position: relative !important;
         flex-shrink: 0 !important;
         overflow: hidden !important;
         border-radius: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        top: 0 !important;
+    }
+
+    /* Completely suppress annoying stretched placeholder ad cards */
+    #cinemaPrerollOverlay,
+    .cinema-preroll-overlay,
+    #exitInterstitialModal,
+    .exit-interstitial-modal,
+    #adsterraSocialBar {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
     }
 
     #cinemaVideo {

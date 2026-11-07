@@ -78,7 +78,7 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
         </View>
 
         <View style={styles.bottomRow}>
-          <Text style={styles.disclaimerText}>Ads keep CineScope 100% free with no subscription</Text>
+          <Text style={styles.disclaimerText}>Ads keep MovieVerse 100% free with no subscription</Text>
           <TouchableOpacity style={styles.ctaButton} onPress={handlePress} activeOpacity={0.85}>
             <Text style={styles.ctaText}>{ctaText} ↗</Text>
           </TouchableOpacity>

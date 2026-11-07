@@ -119,18 +119,18 @@ export default function SettingsScreen() {
         },
         {
           icon: 'star-outline',
-          label: 'Rate CineScope',
+          label: 'Rate MovieVerse',
           subtitle: 'Leave a review on the store',
           action: () =>
-            Alert.alert('Rate CineScope', 'Thanks for using CineScope! Share it with friends and family.', [{ text: 'OK' }]),
+            Alert.alert('Rate MovieVerse', 'Thanks for using MovieVerse! Share it with friends and family.', [{ text: 'OK' }]),
         },
         {
           icon: 'information-circle-outline',
           label: 'App Version',
-          subtitle: 'CineScope Mobile Edition',
+          subtitle: 'MovieVerse Mobile Edition',
           value: '2.5.0',
           action: () =>
-            Alert.alert('CineScope', 'Version 2.5.0\nBuilt with React Native & Expo\n\nYour premium cinema streaming platform.', [{ text: 'OK' }]),
+            Alert.alert('MovieVerse', 'Version 2.5.0\nBuilt with React Native & Expo\n\nYour premium cinema streaming platform.', [{ text: 'OK' }]),
         },
       ],
     },

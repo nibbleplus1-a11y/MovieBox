@@ -28,8 +28,8 @@ export const CONFIG = {
   REMOTE_CONFIG_URL: process.env.EXPO_PUBLIC_REMOTE_CONFIG_URL || '',
 
   // App info
-  APP_NAME: 'CineScope',
-  APP_TAGLINE: 'MOVIE GUIDE & DISCOVERY',
+  APP_NAME: 'MovieVerse',
+  APP_TAGLINE: '1080P CINEMA & STREAM HUB',
 
   // ═══════════════════════════════════════════════════════════════
   // AdMob IDs — REPLACE with real IDs after AdMob approval

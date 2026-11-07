@@ -39,8 +39,8 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
         pass
 
 app = FastAPI(
-    title="CineScope 1080p Cinema API",
-    description="REST API for CineScope with 1080p Stream & Subtitle Extraction",
+    title="MovieVerse 1080p Cinema API",
+    description="REST API for MovieVerse with 1080p Stream & Subtitle Extraction",
     version="2.5.0",
     docs_url=None,
     redoc_url=None,
@@ -70,12 +70,15 @@ def serve_sw():
     raise HTTPException(status_code=404, detail="Service worker not found")
 
 @app.get("/app.apk")
+@app.get("/movieverse.apk")
+@app.get("/cinescope.apk")
 @app.get("/download/app")
 def download_apk():
-    apk_path = os.path.join(STATIC_DIR, "cinescope.apk")
-    if os.path.exists(apk_path):
-        return FileResponse(apk_path, media_type="application/vnd.android.package-archive", filename="CineScope.apk")
-    raise HTTPException(status_code=404, detail="APK build in progress or not yet uploaded.")
+    for name in ["movieverse.apk", "cinescope.apk"]:
+        apk_path = os.path.join(STATIC_DIR, name)
+        if os.path.exists(apk_path):
+            return FileResponse(apk_path, media_type="application/vnd.android.package-archive", filename="MovieVerse.apk")
+    raise HTTPException(status_code=404, detail="MovieVerse APK build in progress or not yet uploaded.")
 
 @app.post("/api/admin/upload-apk")
 async def upload_apk(request: Request, secret: Optional[str] = Query(None)):
@@ -83,10 +86,10 @@ async def upload_apk(request: Request, secret: Optional[str] = Query(None)):
     if not secret or not secrets.compare_digest(secret, expected):
         raise HTTPException(status_code=403, detail="Unauthorized")
     body = await request.body()
-    apk_path = os.path.join(STATIC_DIR, "cinescope.apk")
-    with open(apk_path, "wb") as f:
-        f.write(body)
-    return {"status": "success", "size": len(body), "path": "/download/app"}
+    for name in ["movieverse.apk", "cinescope.apk"]:
+        with open(os.path.join(STATIC_DIR, name), "wb") as f:
+            f.write(body)
+    return {"status": "success", "size": len(body), "path": "/download/app", "filename": "MovieVerse.apk"}
 
 @app.post("/api/admin/report-log")
 async def report_log(request: Request, secret: Optional[str] = Query(None)):

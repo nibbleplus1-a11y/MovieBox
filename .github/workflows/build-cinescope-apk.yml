@@ -1,4 +1,4 @@
-name: Build CineScope Android APK
+name: Build MovieVerse Android APK
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
 
 jobs:
   build-apk:
-    name: Build CineScope Standalone APK
+    name: Build MovieVerse Standalone APK
     runs-on: ubuntu-latest
     timeout-minutes: 35
 
@@ -104,7 +104,7 @@ jobs:
           echo "HTTP Status: $HTTP_STATUS"
           cat /tmp/upload_response.txt
           if [ "$HTTP_STATUS" = "200" ]; then
-            echo "✅ CineScope standalone APK deployed to: ${BASE_URL}/download/app"
+            echo "✅ MovieVerse standalone APK deployed to: ${BASE_URL}/download/app"
           else
             echo "⚠️ Upload returned HTTP $HTTP_STATUS — APK still available as GitHub artifact below."
           fi
@@ -122,11 +122,11 @@ jobs:
           curl -s -X POST --data-binary "@gradle_build.log" \
             "${BASE_URL}/api/admin/report-log?secret=${SECRET}" || true
 
-      - name: Upload CineScope APK as GitHub Artifact
+      - name: Upload MovieVerse APK as GitHub Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cinescope-standalone-release-apk
+          name: movieverse-standalone-release-apk
           path: |
             cinescope/android/app/build/outputs/apk/release/*.apk
             cinescope/android/app/build/outputs/apk/**/*.apk

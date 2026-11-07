@@ -279,7 +279,7 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                           !useIframe && styles.sheetRowTextSelected,
                         ]}
                       >
-                        CineScope Direct CDN
+                        MovieVerse Direct CDN
                       </Text>
                       <Text style={styles.sheetRowSub}>Fastest · Native Stream</Text>
                     </View>

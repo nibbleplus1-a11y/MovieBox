@@ -119,7 +119,7 @@ export default function SplashScreen({ onFinish }: Props) {
         }}
       >
         <Text style={styles.appName}>
-          Cine<Text style={styles.appNameAccent}>Scope</Text>
+          Movie<Text style={styles.appNameAccent}>Verse</Text>
         </Text>
         <Text style={styles.tagline}>{CONFIG.APP_TAGLINE}</Text>
       </Animated.View>
