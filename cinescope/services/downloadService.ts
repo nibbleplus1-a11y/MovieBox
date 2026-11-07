@@ -4,7 +4,7 @@
  * Downloads the proxied MP4 stream directly into the device gallery/files.
  */
 
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { Alert, Platform } from 'react-native';
 
@@ -46,8 +46,9 @@ export async function downloadStream(opts: DownloadOptions): Promise<void> {
     return;
   }
 
-  // Write to app cache directory first (always writable)
-  const localUri = ((FileSystem as any).cacheDirectory || (FileSystem as any).documentDirectory || '') + filename;
+  // Write to app directory first (always writable)
+  const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+  const localUri = baseDir.endsWith('/') ? `${baseDir}${filename}` : `${baseDir}/${filename}`;
 
   try {
     const downloadResumable = FileSystem.createDownloadResumable(

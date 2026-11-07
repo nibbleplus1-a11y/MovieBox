@@ -2857,17 +2857,34 @@ def get_ads_banner_html():
   <script data-cfasync="false" src="{adsterra_script}"></script>
   <!-- Monetag MultiTag Script -->
   <script src="{monetag_script}" data-zone="{zone_id}" async data-cfasync="false"></script>
+  <script>
+    // When Monetag or Adsterra injects dynamic ad overlay, hide fallback text to prevent visual clash
+    try {
+      var obs = new MutationObserver(function() {
+        var dyn = document.querySelectorAll('div[class*="zone-"], div[id*="zone-"], div[class*="inpage"], iframe, div[style*="z-index"]');
+        if (dyn.length > 0) {
+          var card = document.getElementById('adCardLink');
+          if (card) { card.style.background = 'transparent'; card.style.border = 'none'; }
+          var left = document.getElementById('adLeftContent');
+          if (left) left.style.display = 'none';
+          var cta = document.getElementById('adCtaBtn');
+          if (cta) cta.style.display = 'none';
+        }
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+    } catch(e) {}
+  </script>
 </head>
 <body>
   <a href="{direct_link}" target="_blank" rel="noopener" class="ad-card" id="adCardLink">
-    <div class="ad-left">
+    <div class="ad-left" id="adLeftContent">
       <div class="badge-row">
         <span class="ad-badge">SPONSORED</span>
-        <span class="ad-tagline">MovieVerse Cloud Premium</span>
+        <span class="ad-tagline">MovieVerse Cloud Partner</span>
       </div>
-      <span class="ad-title">Ultra HD Streaming & Multi-Audio Dubs</span>
+      <span class="ad-title">Ultra HD Streaming & Fast Cloud Node</span>
     </div>
-    <span class="ad-cta">Explore ↗</span>
+    <span class="ad-cta" id="adCtaBtn">Explore ↗</span>
   </a>
 </body>
 </html>"""

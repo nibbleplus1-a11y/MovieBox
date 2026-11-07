@@ -33,33 +33,17 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
     }
   };
 
-  if (variant === 'player') {
-    return (
-      <View style={styles.playerContainer}>
-        <View style={styles.badgeRow}>
-          <View style={styles.adBadge}>
-            <Text style={styles.adBadgeText}>SPONSORED</Text>
-          </View>
-          <Text style={styles.adNote}>Cinema Cloud Partner</Text>
-        </View>
-        <View style={styles.playerContentRow}>
-          <Ionicons name="sparkles" size={16} color="#E50914" style={{ marginRight: 8 }} />
-          <Text style={styles.playerTitle} numberOfLines={1}>
-            {title}
-          </Text>
-          <TouchableOpacity style={styles.playerCtaBtn} onPress={handlePress} activeOpacity={0.8}>
-            <Text style={styles.playerCtaText}>{ctaText} ↗</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  // Real Monetag / Adsterra live webview banner
+  // Real Monetag / Adsterra live webview banner for all variants (feed, player, compact)
   if (!webViewFailed) {
-    const bannerHeight = variant === 'compact' ? 64 : 78;
+    const bannerHeight = variant === 'compact' ? 64 : 80;
     return (
-      <View style={[styles.container, { height: bannerHeight, backgroundColor: '#0f172a' }]}>
+      <View
+        style={[
+          styles.container,
+          { height: bannerHeight, backgroundColor: '#0f172a' },
+          variant === 'player' && { marginHorizontal: 16, marginVertical: 8, borderRadius: 10 },
+        ]}
+      >
         <WebView
           source={{ uri: AD_BANNER_URL }}
           style={styles.adWebView}
