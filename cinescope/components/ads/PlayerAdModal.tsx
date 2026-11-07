@@ -12,9 +12,12 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
+const ADSTERRA_DIRECT = 'https://asiafilm.org/4/c59f31c3db10b336a8c574304c2e9b41';
+const MONETAG_DIRECT = 'https://uplcm.com/4/12213398';
+
 interface PlayerAdModalProps {
   visible: boolean;
-  mode: 'preroll' | 'postroll';
+  mode: 'preroll' | 'postroll' | 'download';
   title?: string;
   onComplete: () => void;
   onClose?: () => void;
@@ -34,7 +37,7 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   useEffect(() => {
     if (!visible) return;
 
-    if (mode === 'preroll') {
+    if (mode === 'preroll' || mode === 'download') {
       setSecondsLeft(5);
       setCanSkip(false);
       progressAnim.setValue(0);
@@ -50,9 +53,15 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
           if (prev <= 1) {
             clearInterval(timer);
             setCanSkip(true);
+            if (mode === 'download') {
+              // Auto-trigger download on timer finish
+              setTimeout(() => {
+                onComplete();
+              }, 400);
+            }
             return 0;
           }
-          if (prev <= 3) {
+          if (prev <= 2) {
             setCanSkip(true);
           }
           return prev - 1;
@@ -70,7 +79,7 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   if (!visible) return null;
 
   const handleSkipOrClose = () => {
-    if (mode === 'preroll') {
+    if (mode === 'preroll' || mode === 'download') {
       onComplete();
     } else {
       if (onClose) onClose();
@@ -79,13 +88,36 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   };
 
   const handleOpenSponsor = () => {
-    Linking.openURL('https://monetag.com').catch(() => {});
+    const targetUrl = mode === 'download' ? MONETAG_DIRECT : ADSTERRA_DIRECT;
+    Linking.openURL(targetUrl).catch(() => {});
   };
 
   const widthInterpolated = progressAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0%', '100%'],
   });
+
+  const getBadgeText = () => {
+    if (mode === 'download') return 'SPONSORED DOWNLOAD GATEWAY';
+    if (mode === 'preroll') return 'SPONSORED PRE-ROLL';
+    return 'SPONSORED SHOWCASE';
+  };
+
+  const getHeadline = () => {
+    if (mode === 'download') return 'Free 1080p Download Unlocked';
+    if (mode === 'preroll') return 'MovieVerse Ultra HD Stream';
+    return 'Thanks for Watching on MovieVerse!';
+  };
+
+  const getSubtext = () => {
+    if (mode === 'download') {
+      return `High-speed cinema download for "${title || 'your video'}" is sponsored by our ad partners. Tap below to support or download will begin automatically.`;
+    }
+    if (mode === 'preroll') {
+      return `Loading high-speed cinema stream for "${title || 'Now Playing'}". Fast, ad-free streaming available with MovieVerse VIP.`;
+    }
+    return 'Get the best streaming experience, fast downloads, and Dolby audio. Explore more trending hits or visit our sponsor.';
+  };
 
   return (
     <Modal visible={visible} transparent animationType="fade">
@@ -95,23 +127,25 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
           <View style={styles.headerRow}>
             <View style={styles.sponsoredBadge}>
               <Ionicons name="sparkles" size={12} color="#E50914" />
-              <Text style={styles.sponsoredText}>
-                {mode === 'preroll' ? 'SPONSORED ADVERTISEMENT' : 'SPONSORED SHOWCASE'}
-              </Text>
+              <Text style={styles.sponsoredText}>{getBadgeText()}</Text>
             </View>
 
-            {mode === 'preroll' && (
+            {(mode === 'preroll' || mode === 'download') && (
               <View style={styles.timerBadge}>
                 <Ionicons name="time-outline" size={12} color="#94A3B8" />
                 <Text style={styles.timerText}>
-                  {secondsLeft > 0 ? `Starts in ${secondsLeft}s` : 'Ready to play'}
+                  {secondsLeft > 0
+                    ? mode === 'download'
+                      ? `Starts in ${secondsLeft}s`
+                      : `Skip in ${secondsLeft}s`
+                    : 'Ready'}
                 </Text>
               </View>
             )}
           </View>
 
-          {/* Progress Bar (Pre-roll only) */}
-          {mode === 'preroll' && (
+          {/* Progress Bar (Pre-roll & Download) */}
+          {(mode === 'preroll' || mode === 'download') && (
             <View style={styles.progressBarBg}>
               <Animated.View style={[styles.progressBarFill, { width: widthInterpolated }]} />
             </View>
@@ -126,23 +160,15 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
           >
             <View style={styles.adIconCircle}>
               <Ionicons
-                name={mode === 'preroll' ? 'film' : 'heart'}
+                name={mode === 'download' ? 'cloud-download' : mode === 'preroll' ? 'film' : 'heart'}
                 size={32}
                 color="#E50914"
               />
             </View>
 
             <View style={styles.adContent}>
-              <Text style={styles.adHeadline}>
-                {mode === 'preroll'
-                  ? 'MovieVerse 1080p Ultra HD'
-                  : 'Thanks for Watching on MovieVerse!'}
-              </Text>
-              <Text style={styles.adSubtext}>
-                {mode === 'preroll'
-                  ? `Loading high-speed cinema stream for "${title || 'Now Playing'}". Fast, ad-free streaming available with MovieVerse VIP.`
-                  : 'Get the best streaming experience, fast downloads, and Dolby audio. Explore more trending hits or visit our sponsor.'}
-              </Text>
+              <Text style={styles.adHeadline}>{getHeadline()}</Text>
+              <Text style={styles.adSubtext}>{getSubtext()}</Text>
 
               <View style={styles.perksRow}>
                 <View style={styles.perkPill}>
@@ -151,11 +177,11 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
                 </View>
                 <View style={styles.perkPill}>
                   <Ionicons name="cloud-download" size={11} color="#38BDF8" />
-                  <Text style={styles.perkText}>Offline MP4</Text>
+                  <Text style={styles.perkText}>Direct MP4</Text>
                 </View>
                 <View style={styles.perkPill}>
-                  <Ionicons name="volume-high" size={11} color="#10B981" />
-                  <Text style={styles.perkText}>Multi-Audio</Text>
+                  <Ionicons name="shield-checkmark" size={11} color="#10B981" />
+                  <Text style={styles.perkText}>Safe & Verified</Text>
                 </View>
               </View>
             </View>
@@ -169,20 +195,26 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
               activeOpacity={0.8}
             >
               <Ionicons name="open-outline" size={15} color="#fff" />
-              <Text style={styles.sponsorBtnText}>Visit Sponsor</Text>
+              <Text style={styles.sponsorBtnText}>
+                {mode === 'download' ? 'Visit Sponsor Offer ↗' : 'Visit Sponsor ↗'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.skipBtn, !canSkip && styles.skipBtnDisabled]}
               onPress={handleSkipOrClose}
-              disabled={!canSkip && mode === 'preroll'}
+              disabled={!canSkip && (mode === 'preroll' || mode === 'download')}
               activeOpacity={0.8}
             >
-              <Text style={[styles.skipBtnText, !canSkip && styles.skipBtnTextDisabled]}>
-                {mode === 'preroll'
+              <Text style={styles.skipBtnText}>
+                {mode === 'download'
+                  ? canSkip
+                    ? 'Start Download ›'
+                    : `Wait ${secondsLeft}s`
+                  : mode === 'preroll'
                   ? canSkip
                     ? 'Skip Ad ›'
-                    : `Skip in ${secondsLeft}s`
+                    : `Wait ${secondsLeft}s`
                   : 'Close & Exit'}
               </Text>
             </TouchableOpacity>
@@ -200,25 +232,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-    zIndex: 9999,
   },
   contentCard: {
     width: '100%',
-    maxWidth: 440,
-    backgroundColor: '#0F131F',
+    maxWidth: 420,
+    backgroundColor: '#0F172A',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.6,
-    shadowRadius: 24,
-    elevation: 12,
   },
   headerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 10,
@@ -226,13 +253,13 @@ const styles = StyleSheet.create({
   sponsoredBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
     backgroundColor: 'rgba(229, 9, 20, 0.12)',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: 'rgba(229, 9, 20, 0.3)',
+    borderColor: 'rgba(229, 9, 20, 0.25)',
+    gap: 4,
   },
   sponsoredText: {
     color: '#E50914',
@@ -247,116 +274,110 @@ const styles = StyleSheet.create({
   },
   timerText: {
     color: '#94A3B8',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
   },
   progressBarBg: {
     width: '100%',
     height: 3,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   progressBarFill: {
     height: '100%',
     backgroundColor: '#E50914',
   },
   adBody: {
-    padding: 18,
+    padding: 20,
     alignItems: 'center',
   },
   adIconCircle: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: 'rgba(229, 9, 20, 0.12)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(229, 9, 20, 0.4)',
+    borderWidth: 1,
+    borderColor: 'rgba(229, 9, 20, 0.25)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   adContent: {
     alignItems: 'center',
   },
   adHeadline: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '800',
     textAlign: 'center',
-    marginBottom: 6,
+    marginBottom: 8,
   },
   adSubtext: {
     color: '#94A3B8',
     fontSize: 12,
     lineHeight: 18,
     textAlign: 'center',
-    marginBottom: 14,
+    marginBottom: 16,
     paddingHorizontal: 8,
   },
   perksRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 4,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
   },
   perkPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
     gap: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   perkText: {
-    color: '#CBD5E1',
-    fontSize: 10,
-    fontWeight: '700',
+    color: '#E2E8F0',
+    fontSize: 11,
+    fontWeight: '600',
   },
   actionRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     padding: 14,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
     gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
   },
   sponsorBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    justifyContent: 'center',
+    paddingVertical: 12,
     borderRadius: 8,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.15)',
+    gap: 6,
   },
   sponsorBtnText: {
     color: '#FFFFFF',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
   },
   skipBtn: {
     flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: '#E50914',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#E50914',
   },
   skipBtnDisabled: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    opacity: 0.5,
   },
   skipBtnText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
-  },
-  skipBtnTextDisabled: {
-    color: '#64748B',
   },
 });

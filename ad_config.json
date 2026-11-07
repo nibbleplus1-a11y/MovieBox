@@ -5,22 +5,38 @@
     "enabled": true,
     "zone_id": "306845",
     "script_url": "https://quge5.com/88/tag.min.js",
-    "direct_link": "https://monetag.com",
-    "preroll_enabled": false,
-    "preroll_duration_seconds": 0,
-    "preroll_cooldown_seconds": 300,
-    "exit_interstitial_enabled": false,
-    "exit_cooldown_seconds": 600
+    "direct_link": "https://uplcm.com/4/12213398",
+    "preroll_enabled": true,
+    "preroll_duration_seconds": 5,
+    "preroll_cooldown_seconds": 180,
+    "exit_interstitial_enabled": true,
+    "exit_cooldown_seconds": 300
   },
   "adsterra": {
     "enabled": true,
     "social_bar_enabled": true,
     "social_bar_script_url": "https://bancadeltempoidea.org/14/864b2583dd6f8b32bbfd87b7b4af65c8",
+    "direct_link": "https://asiafilm.org/4/c59f31c3db10b336a8c574304c2e9b41",
     "native_banner_enabled": true,
     "banner_key": ""
   },
-  "admob": {
+  "video_preroll": {
     "enabled": true,
+    "duration_seconds": 5,
+    "skip_delay_seconds": 5,
+    "sponsor_name": "Cinema Cloud Partner",
+    "sponsor_url": "https://asiafilm.org/4/c59f31c3db10b336a8c574304c2e9b41",
+    "video_ad_url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+  },
+  "download_gate": {
+    "enabled": true,
+    "delay_seconds": 5,
+    "sponsor_url": "https://uplcm.com/4/12213398",
+    "headline": "Free 1080p Download Unlocked by Sponsor",
+    "subline": "High-speed download begins automatically in 5s..."
+  },
+  "admob": {
+    "enabled": false,
     "app_id": "",
     "banner_unit_id": "",
     "interstitial_unit_id": "",

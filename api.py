@@ -2691,8 +2691,7 @@ def get_ads_banner_html():
 
     zone_id = ad_cfg.get("monetag", {}).get("zone_id", "306845")
     monetag_script = ad_cfg.get("monetag", {}).get("script_url", "https://quge5.com/88/tag.min.js")
-    adsterra_script = ad_cfg.get("adsterra", {}).get("social_bar_script_url", "https://bancadeltempoidea.org/14/864b2583dd6f8b32bbfd87b7b4af65c8")
-    direct_link = ad_cfg.get("monetag", {}).get("direct_link", "https://monetag.com")
+    direct_link = ad_cfg.get("adsterra", {}).get("direct_link") or ad_cfg.get("monetag", {}).get("direct_link", "https://uplcm.com/4/12213398")
 
     html = f"""<!DOCTYPE html>
 <html>

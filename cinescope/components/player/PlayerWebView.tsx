@@ -142,10 +142,63 @@ export const buildPlayerHTML = (videoSrc: string): string => {
     onerror="handleSourceError(this)"
   ></video>
 
+  <!-- IN-STREAM PRE-ROLL SPONSOR HUD (Like StreamFlix / YouTube) -->
+  <div id="prerollOverlay" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.85)); display: flex; flex-direction: column; justify-content: space-between; padding: 14px; z-index: 999; pointer-events: auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div style="background: #E50914; color: #fff; font-size: 11px; font-weight: 800; padding: 4px 8px; border-radius: 4px; letter-spacing: 0.5px;">
+        AD · <span id="prerollTimer">5</span>s
+      </div>
+      <a href="https://asiafilm.org/4/c59f31c3db10b336a8c574304c2e9b41" target="_blank" style="background: rgba(255,255,255,0.18); color: #fff; font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 6px; text-decoration: none; border: 1px solid rgba(255,255,255,0.3);">
+        Visit Sponsor ↗
+      </a>
+    </div>
+    <div style="display: flex; justify-content: space-between; align-items: flex-end;">
+      <div>
+        <div style="color: #fff; font-size: 13px; font-weight: 700; margin-bottom: 2px;">MovieVerse Cloud Sponsor</div>
+        <div style="color: #94a3b8; font-size: 11px;">Fast 1080p stream starts after sponsor preview</div>
+      </div>
+      <button id="skipPrerollBtn" onclick="dismissPreroll()" style="background: rgba(0,0,0,0.6); color: #94a3b8; border: 1px solid rgba(255,255,255,0.2); font-size: 12px; font-weight: 700; padding: 8px 16px; border-radius: 6px; cursor: pointer;">
+        Skip in 5s
+      </button>
+    </div>
+  </div>
+
   <script>
     var v = document.getElementById('videoPlayer');
     window.videoEl = v;
     var hlsInstance = null;
+
+    // ── In-Stream Pre-Roll Controller ─────────────────────────────────────────
+    var prerollLeft = 5;
+    var prerollInterval = setInterval(function() {
+      prerollLeft--;
+      var t = document.getElementById('prerollTimer');
+      var b = document.getElementById('skipPrerollBtn');
+      if (t) t.textContent = Math.max(0, prerollLeft);
+      if (prerollLeft <= 0) {
+        clearInterval(prerollInterval);
+        if (b) {
+          b.style.background = '#E50914';
+          b.style.color = '#ffffff';
+          b.textContent = 'Skip Ad ›';
+          b.style.border = 'none';
+        }
+      } else if (b) {
+        b.textContent = 'Skip in ' + prerollLeft + 's';
+      }
+    }, 1000);
+
+    // Auto-dismiss after 8s if user doesn't interact
+    setTimeout(function() {
+      dismissPreroll();
+    }, 8500);
+
+    function dismissPreroll() {
+      clearInterval(prerollInterval);
+      var o = document.getElementById('prerollOverlay');
+      if (o) o.style.display = 'none';
+      tryPlay();
+    }
 
     // ── Subtitle track setter ──────────────────────────────────────────────
     window.setSubtitleTrack = function(url, label) {

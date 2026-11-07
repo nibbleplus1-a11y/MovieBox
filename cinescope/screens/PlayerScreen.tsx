@@ -357,8 +357,8 @@ export default function PlayerScreen() {
       {/* PRE-DOWNLOAD AD MODAL (Before Download Starts) */}
       <PlayerAdModal
         visible={showDownloadAd}
-        mode="preroll"
-        title={`Downloading: ${pendingDownload?.filename || ''}`}
+        mode="download"
+        title={pendingDownload?.filename || title || ''}
         onComplete={onDownloadAdComplete}
       />
 
