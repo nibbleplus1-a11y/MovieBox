@@ -57,12 +57,21 @@ jobs:
       - name: Build Standalone Release APK
         working-directory: cinescope/android
         run: |
-          ./gradlew :app:assembleRelease --stacktrace --no-daemon 2>&1 | tee ../../gradle_build.log
-          BUILD_EXIT=${PIPESTATUS[0]}
-          if grep -q "BUILD SUCCESSFUL" ../../gradle_build.log; then
-            echo "✅ BUILD SUCCESSFUL"
-          else
-            echo "❌ BUILD FAILED (exit $BUILD_EXIT)"
+          # Retry up to 3 times in case of transient CDN 504 errors on services.gradle.org
+          SUCCESS=0
+          for i in 1 2 3; do
+            echo "Attempt $i: Building Standalone Release APK..."
+            ./gradlew :app:assembleRelease --stacktrace --no-daemon 2>&1 | tee ../../gradle_build.log
+            if grep -q "BUILD SUCCESSFUL" ../../gradle_build.log; then
+              echo "✅ BUILD SUCCESSFUL on attempt $i"
+              SUCCESS=1
+              break
+            fi
+            echo "⚠️ Attempt $i failed. Retrying in 10s..."
+            sleep 10
+          done
+          if [ "$SUCCESS" -ne 1 ]; then
+            echo "❌ BUILD FAILED after 3 attempts"
             echo "=== Last 100 lines of build log ==="
             tail -n 100 ../../gradle_build.log
             exit 1
