@@ -54,6 +54,9 @@ jobs:
           fi
           ls -lh "$KEYSTORE"
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Build Standalone Release APK
         working-directory: cinescope/android
         run: |
