@@ -91,10 +91,10 @@ def get_app_version():
         except Exception:
             pass
     return {
-        "version": "1.2.4",
-        "version_code": 5,
+        "version": "1.2.5",
+        "version_code": 18,
         "download_url": "https://movieverse.click/download/app",
-        "changelog": "New MovieBox-style Downloads manager, offline video playback, queue multiple downloads without ads every time, and in-app auto updates!",
+        "changelog": "Background downloads with notification tray progress, fixed auto-hiding floating bar, instant ad loading & offline video player!",
         "force_update": False,
     }
 

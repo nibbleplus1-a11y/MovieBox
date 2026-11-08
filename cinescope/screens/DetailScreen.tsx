@@ -145,7 +145,14 @@ export default function DetailScreen() {
     }
   }, [id]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  // Defer heavy data load until after initial animation frame
+  // so the slide-in transition stays perfectly smooth
+  useEffect(() => {
+    const handle = requestAnimationFrame(() => {
+      loadData();
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [loadData]);
 
   // Refresh watch progress whenever returning back to this screen
   useFocusEffect(

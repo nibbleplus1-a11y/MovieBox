@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { EdgeInsets } from 'react-native-safe-area-context';
+import type { EdgeInsets } from 'react-native-safe-area-context';
 import { StreamSource, FallbackServer } from '../../services/api';
 import { BottomSheetType, SeasonData, EpisodeData, SubtitleItem } from '../../hooks/usePlayerState';
 

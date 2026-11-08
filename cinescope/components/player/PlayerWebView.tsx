@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { EdgeInsets } from 'react-native-safe-area-context';
+import type { EdgeInsets } from 'react-native-safe-area-context';
 
 interface PlayerWebViewProps {
   streamUrl: string;
@@ -46,22 +46,24 @@ export const buildPlayerHTML = (
       hlsInstance = new Hls({
         enableWorker: false,
         lowLatencyMode: false,
-        maxBufferLength: 60,
-        maxMaxBufferLength: 120,
-        maxBufferSize: 60 * 1000 * 1000,
-        backBufferLength: 30,
-        maxBufferHole: 1.0,
+        maxBufferLength: 20,
+        maxMaxBufferLength: 60,
+        maxBufferSize: 20 * 1000 * 1000,
+        backBufferLength: 15,
+        maxBufferHole: 0.5,
         manifestLoadingMaxRetry: 6,
         levelLoadingMaxRetry: 6,
         fragLoadingMaxRetry: 6,
-        manifestLoadingRetryDelay: 1000,
-        levelLoadingRetryDelay: 1000,
-        fragLoadingRetryDelay: 1000,
+        manifestLoadingRetryDelay: 500,
+        levelLoadingRetryDelay: 500,
+        fragLoadingRetryDelay: 500,
         startLevel: -1,
-        abrEwmaDefaultEstimate: 2000000,
+        abrEwmaDefaultEstimate: 5000000,
         nudgeOffset: 0.3,
         nudgeMaxRetry: 8,
-        highBufferWatchdogPeriod: 3
+        highBufferWatchdogPeriod: 3,
+        progressive: true,
+        testBandwidth: true,
       });
       hlsInstance.loadSource('${videoSrc}');
       hlsInstance.attachMedia(v);
@@ -466,6 +468,10 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
         allowsProtectedMedia
         androidHardwareAccelerationDisabled={false}
         scrollEnabled={false}
+        cacheEnabled={true}
+        cacheMode="LOAD_CACHE_ELSE_NETWORK"
+        setSupportMultipleWindows={false}
+        thirdPartyCookiesEnabled={true}
         onMessage={onMessage}
       />
       {isBuffering && (
@@ -515,7 +521,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   bufferingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.3)',
     alignItems: 'center',
     justifyContent: 'center',

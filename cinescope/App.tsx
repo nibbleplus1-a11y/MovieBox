@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Platform, PermissionsAndroid } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
@@ -63,7 +63,7 @@ function MainTabs() {
 
   return (
     <Tab.Navigator
-      screenOptions={({ route }) => ({
+      screenOptions={({ route }: { route: any }) => ({
         headerShown: false,
         tabBarStyle: {
           backgroundColor: '#0D0D16',
@@ -86,7 +86,7 @@ function MainTabs() {
           letterSpacing: 0.4,
           marginTop: 2,
         },
-        tabBarIcon: ({ focused }) => (
+        tabBarIcon: ({ focused }: { focused: boolean }) => (
           <TabIcon name={route.name} focused={focused} />
         ),
       })}
@@ -134,6 +134,12 @@ export default function App() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   useEffect(() => {
+    // Request notification permission on Android 13+ for download progress notifications
+    if (Platform.OS === 'android' && Platform.Version >= 33) {
+      PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+      ).catch(() => {});
+    }
     // Check for updates on startup
     checkForAppUpdate().then((info) => {
       if (info && info.available) {
@@ -163,6 +169,8 @@ export default function App() {
             options={{
               presentation: 'modal',
               animation: 'slide_from_bottom',
+              gestureEnabled: true,
+              animationDuration: 300,
             }}
           />
           <Stack.Screen
@@ -170,6 +178,8 @@ export default function App() {
             component={PlayerScreen}
             options={{
               animation: 'fade',
+              gestureEnabled: false,
+              animationDuration: 250,
             }}
           />
         </Stack.Navigator>

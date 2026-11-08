@@ -1,6 +1,6 @@
 {
   "name": "movieverse",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "main": "index.ts",
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
@@ -24,6 +24,7 @@
     "react-native-webview": "^14.0.1"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.13",
     "@types/react": "~19.3.0",
     "typescript": "~6.0.3"
   },

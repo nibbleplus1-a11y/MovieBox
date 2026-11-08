@@ -1,5 +1,12 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Animated,
+  Easing,
+} from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import { useDownloads } from '../../services/downloadService';
@@ -8,20 +15,36 @@ interface DownloadFloatingBarProps {
   bottomOffset?: number;
 }
 
-export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({ bottomOffset = 20 }) => {
+export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({
+  bottomOffset = 20,
+}) => {
   const navigation = useNavigation<any>();
-  const { activeTasks, completedTasks } = useDownloads();
-  const [dismissed, setDismissed] = useState(false);
+  const { activeTasks } = useDownloads();
 
-  // If user explicitly dismissed the floating pill or nothing active, don't show
-  if (dismissed || activeTasks.length === 0) {
-    return null;
-  }
+  // Animated opacity for smooth show/hide
+  const opacity = useRef(new Animated.Value(0)).current;
+  const prevCountRef = useRef(0);
+
+  const hasActive = activeTasks.length > 0;
+
+  useEffect(() => {
+    Animated.timing(opacity, {
+      toValue: hasActive ? 1 : 0,
+      duration: hasActive ? 300 : 500,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+    prevCountRef.current = activeTasks.length;
+  }, [hasActive]);
+
+  if (!hasActive) return null;
 
   const count = activeTasks.length;
   const primaryTask = activeTasks[0];
   const avgProgress =
-    count > 0 ? activeTasks.reduce((acc, t) => acc + t.progress, 0) / count : 0;
+    count > 0
+      ? activeTasks.reduce((acc, t) => acc + t.progress, 0) / count
+      : 0;
   const percentText = `${Math.round(avgProgress * 100)}%`;
 
   const handleOpenDownloads = () => {
@@ -35,13 +58,17 @@ export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({ bottom
   };
 
   return (
-    <View style={[styles.floatingContainer, { bottom: bottomOffset }]} pointerEvents="box-none">
+    <Animated.View
+      style={[styles.floatingContainer, { bottom: bottomOffset, opacity }]}
+      pointerEvents="box-none"
+    >
       <View style={styles.barCard}>
         <TouchableOpacity
           style={styles.contentRow}
           onPress={handleOpenDownloads}
           activeOpacity={0.85}
         >
+          {/* Pulsing download icon */}
           <View style={styles.iconBubble}>
             <Ionicons name="cloud-download" size={18} color="#38BDF8" />
           </View>
@@ -50,8 +77,10 @@ export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({ bottom
             <View style={styles.titleRow}>
               <Text style={styles.titleText} numberOfLines={1}>
                 {count > 1
-                  ? `Downloading ${count} items…`
-                  : primaryTask?.title || primaryTask?.filename || 'Downloading…'}
+                  ? `Downloading ${count} files…`
+                  : (primaryTask?.title ||
+                      primaryTask?.filename ||
+                      'Downloading…')}
               </Text>
               <Text style={styles.percentBadge}>{percentText}</Text>
             </View>
@@ -64,6 +93,10 @@ export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({ bottom
                 ]}
               />
             </View>
+
+            {primaryTask?.fileSize ? (
+              <Text style={styles.sizeText}>{primaryTask.fileSize}</Text>
+            ) : null}
           </View>
 
           <View style={styles.viewBadge}>
@@ -71,17 +104,8 @@ export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({ bottom
             <Ionicons name="chevron-forward" size={14} color="#38BDF8" />
           </View>
         </TouchableOpacity>
-
-        {/* Explicit dismiss (X) button so it never gets stuck on screen */}
-        <TouchableOpacity
-          style={styles.closeBtn}
-          onPress={() => setDismissed(true)}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-        >
-          <Ionicons name="close" size={16} color="#94A3B8" />
-        </TouchableOpacity>
       </View>
-    </View>
+    </Animated.View>
   );
 };
 
@@ -95,19 +119,19 @@ const styles = StyleSheet.create({
   },
   barCard: {
     width: '100%',
-    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    backgroundColor: 'rgba(10, 15, 30, 0.97)',
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.35)',
+    borderColor: 'rgba(56, 189, 248, 0.4)',
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.45,
-    shadowRadius: 10,
-    elevation: 12,
+    shadowColor: '#38BDF8',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 14,
   },
   contentRow: {
     flex: 1,
@@ -116,12 +140,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   iconBubble: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: 'rgba(56, 189, 248, 0.15)',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
   },
   infoCol: {
     flex: 1,
@@ -157,6 +183,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#38BDF8',
     borderRadius: 2,
   },
+  sizeText: {
+    color: 'rgba(148, 163, 184, 0.7)',
+    fontSize: 10,
+    marginTop: 3,
+    fontWeight: '500',
+  },
   viewBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -165,14 +197,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+    marginLeft: 6,
   },
   viewText: {
     color: '#38BDF8',
     fontSize: 11,
     fontWeight: '700',
-  },
-  closeBtn: {
-    padding: 6,
-    marginLeft: 6,
   },
 });

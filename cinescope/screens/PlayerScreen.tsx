@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePlayerState } from '../hooks/usePlayerState';
 import { PlayerWebView } from '../components/player/PlayerWebView';
@@ -24,9 +24,12 @@ import { DownloadFloatingBar } from '../components/downloads/DownloadFloatingBar
 const CACHE_KEY = 'movieverse_feed_cache_v2';
 
 export default function PlayerScreen() {
-  const insets = useSafeAreaInsets();
+  const insets    = useSafeAreaInsets();
   const navigation = useNavigation<any>();
+  const route      = useRoute<any>();
   const { width: screenWidth } = useWindowDimensions();
+  // Debounce back-press to prevent accidental double-tap app close
+  const lastBackPressRef = useRef<number>(0);
 
   const [similarMovies, setSimilarMovies] = useState<MovieCardData[]>([]);
   const [showPrerollAd, setShowPrerollAd] = useState<boolean>(false);
@@ -278,6 +281,11 @@ export default function PlayerScreen() {
   // Android hardware back handler: toggle fullscreen or show exit ad
   useEffect(() => {
     const onBackPress = () => {
+      const now = Date.now();
+      // Debounce: ignore rapid successive back presses (< 300ms)
+      if (now - lastBackPressRef.current < 300) return true;
+      lastBackPressRef.current = now;
+
       if (showPostrollAd) {
         onCompletePostroll();
         return true;

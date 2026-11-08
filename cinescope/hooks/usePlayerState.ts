@@ -36,6 +36,8 @@ interface RouteParams {
   episode?: number;
   initialSeek?: number;
   type?: string;
+  isOffline?: boolean;
+  streamUrl?: string; // offline playback: local URI passed directly
 }
 
 /** FIX P4 #22: single shared predicate — no duplicated DASH filter logic */
@@ -54,6 +56,8 @@ export function usePlayerState() {
     episode: initialEpisode = 0,
     initialSeek: routeParamsInitialSeek = 0,
     type: initialType = 'Movie',
+    isOffline = false,
+    streamUrl: offlineStreamUrl = '',
   } = (route.params as RouteParams) || {};
 
   const sanitizeTitleForSearch = (t?: string): string => {
@@ -265,6 +269,27 @@ export function usePlayerState() {
           }));
           formatted.forEach(item => cachedSubsRef.current.set(item.id, item));
           setSubtitlesList(Array.from(cachedSubsRef.current.values()));
+        } else {
+          // ── Auto-search online subs when backend has none ──────────────
+          // Small delay so the stream starts loading first
+          setTimeout(() => {
+            if (loadTokenRef.current !== token) return;
+            const cleanTitle = sanitizeTitleForSearch(title || data?.title || '');
+            if (!cleanTitle) return;
+            api.onlineSubtitles(cleanTitle, undefined, se, ep).then((res) => {
+              if (loadTokenRef.current !== token) return;
+              if (res?.subtitles && res.subtitles.length > 0) {
+                const online: SubtitleItem[] = res.subtitles.map((s) => ({
+                  id: s.id,
+                  language: `${s.language || 'English'} (Auto)`,
+                  url: s.proxy_url.startsWith('http') ? s.proxy_url : api.proxyCaptionUrl(s.proxy_url),
+                  isOnline: true,
+                }));
+                online.forEach(item => cachedSubsRef.current.set(item.id, item));
+                setSubtitlesList(Array.from(cachedSubsRef.current.values()));
+              }
+            }).catch(() => {});
+          }, 2500);
         }
       }).catch(() => {});
     } catch (err: unknown) {
@@ -277,6 +302,15 @@ export function usePlayerState() {
 
   // FIX P2 #8: remove `loadStreams` from deps — it's stable (isSeriesType never changes in session)
   useEffect(() => {
+    // Offline playback: skip API, use local file directly
+    if (isOffline && offlineStreamUrl) {
+      setStreamUrl(offlineStreamUrl);
+      setUseIframe(false);
+      setLoading(false);
+      setIsPlaying(true);
+      return;
+    }
+    if (!initialId) return;
     loadStreams(currentId, currentSeason, currentEpisode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentId, currentSeason, currentEpisode]);

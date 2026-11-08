@@ -37,33 +37,49 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   const [canSkip, setCanSkip] = useState(false);
   const [adLoaded, setAdLoaded] = useState(false);
   const webViewRef = useRef<WebView>(null);
+  // Track whether we've started the countdown yet (wait for ad to load first, up to 2s)
+  const [countdownStarted, setCountdownStarted] = useState(false);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Target ad smartlink based on mode
   const adUrl = mode === 'postroll' ? ADSTERRA_SMARTLINK : MONETAG_SMARTLINK;
 
-  useEffect(() => {
-    if (!visible) return;
-
-    setSecondsLeft(5);
-    setCanSkip(false);
-    setAdLoaded(false);
-
-    const timer = setInterval(() => {
+  const startCountdown = () => {
+    if (countdownRef.current) return; // already started
+    setCountdownStarted(true);
+    countdownRef.current = setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev <= 1) {
-          clearInterval(timer);
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          countdownRef.current = null;
           setCanSkip(true);
           return 0;
         }
-        if (prev <= 2) {
-          setCanSkip(true);
-        }
+        if (prev <= 2) setCanSkip(true);
         return prev - 1;
       });
     }, 1000);
+  };
 
+  useEffect(() => {
+    if (!visible) {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      countdownRef.current = null;
+      return;
+    }
+    setSecondsLeft(5);
+    setCanSkip(false);
+    setAdLoaded(false);
+    setCountdownStarted(false);
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = null;
+
+    // Start countdown after at most 1.5s even if ad didn't load
+    const fallback = setTimeout(() => startCountdown(), 1500);
     return () => {
-      clearInterval(timer);
+      clearTimeout(fallback);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      countdownRef.current = null;
     };
   }, [visible, mode]);
 
@@ -115,9 +131,15 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
           mixedContentMode="always"
           allowsInlineMediaPlayback
           mediaPlaybackRequiresUserAction={false}
-          onLoadEnd={() => setAdLoaded(true)}
-          onError={() => setAdLoaded(true)}
-          onNavigationStateChange={(navState) => {
+          onLoadEnd={() => {
+            setAdLoaded(true);
+            startCountdown();
+          }}
+          onError={() => {
+            setAdLoaded(true);
+            startCountdown();
+          }}
+          onNavigationStateChange={(navState: any) => {
             // If user explicitly clicks out to external offer
             if (
               navState.url &&
@@ -190,7 +212,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
   },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: '#0A0E17',
     justifyContent: 'center',
     alignItems: 'center',

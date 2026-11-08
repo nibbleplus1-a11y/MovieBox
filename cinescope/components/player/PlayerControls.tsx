@@ -8,7 +8,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { EdgeInsets } from 'react-native-safe-area-context';
+import type { EdgeInsets } from 'react-native-safe-area-context';
 import { BottomSheetType } from '../../hooks/usePlayerState';
 
 interface PlayerControlsProps {

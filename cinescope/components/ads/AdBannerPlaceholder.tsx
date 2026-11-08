@@ -53,7 +53,7 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
           mixedContentMode="always"
           onError={() => setWebViewFailed(true)}
           onHttpError={() => setWebViewFailed(true)}
-          onNavigationStateChange={(navState) => {
+          onNavigationStateChange={(navState: any) => {
             // If user clicked link inside ad, open in external browser
             if (navState.url && navState.url !== AD_BANNER_URL && !navState.url.startsWith('about:')) {
               Linking.openURL(navState.url).catch(() => {});

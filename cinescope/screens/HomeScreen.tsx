@@ -75,7 +75,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     // 1. Instant render from local cache (0ms latency)
-    AsyncStorage.getItem(CACHE_KEY).then(raw => {
+    AsyncStorage.getItem(CACHE_KEY).then((raw: string | null) => {
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
