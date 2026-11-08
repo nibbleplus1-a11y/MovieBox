@@ -2859,20 +2859,20 @@ def get_ads_banner_html():
   <script src="{monetag_script}" data-zone="{zone_id}" async data-cfasync="false"></script>
   <script>
     // When Monetag or Adsterra injects dynamic ad overlay, hide fallback text to prevent visual clash
-    try {
-      var obs = new MutationObserver(function() {
+    try {{
+      var obs = new MutationObserver(function() {{
         var dyn = document.querySelectorAll('div[class*="zone-"], div[id*="zone-"], div[class*="inpage"], iframe, div[style*="z-index"]');
-        if (dyn.length > 0) {
+        if (dyn.length > 0) {{
           var card = document.getElementById('adCardLink');
-          if (card) { card.style.background = 'transparent'; card.style.border = 'none'; }
+          if (card) {{ card.style.background = 'transparent'; card.style.border = 'none'; }}
           var left = document.getElementById('adLeftContent');
           if (left) left.style.display = 'none';
           var cta = document.getElementById('adCtaBtn');
           if (cta) cta.style.display = 'none';
-        }
-      });
-      obs.observe(document.body, { childList: true, subtree: true });
-    } catch(e) {}
+        }}
+      }});
+      obs.observe(document.body, {{ childList: true, subtree: true }});
+    }} catch(e) {{}}
   </script>
 </head>
 <body>
