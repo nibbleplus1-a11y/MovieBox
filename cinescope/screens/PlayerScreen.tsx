@@ -5,9 +5,6 @@ import {
   TouchableWithoutFeedback,
   useWindowDimensions,
   Alert,
-  Text,
-  Modal,
-  ActivityIndicator,
   BackHandler,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -40,9 +37,6 @@ export default function PlayerScreen() {
   // Download state
   const [showDownloadAd, setShowDownloadAd] = useState<boolean>(false);
   const [pendingDownload, setPendingDownload] = useState<{ url: string; filename: string } | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<number>(0);
-  const [isDownloading, setIsDownloading] = useState<boolean>(false);
-  const [downloadingFilename, setDownloadingFilename] = useState<string>('');
 
   const {
     title,

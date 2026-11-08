@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Image, ScrollView, TouchableOpacity,
-  StyleSheet, Dimensions, Share, Animated, Linking, Alert, Modal, ActivityIndicator,
+  StyleSheet, Dimensions, Share, Animated, Linking, Alert,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -112,9 +112,6 @@ export default function DetailScreen() {
   // Sponsored Download states
   const [showDownloadAd, setShowDownloadAd]   = useState<boolean>(false);
   const [pendingDownload, setPendingDownload] = useState<{ url: string; filename: string } | null>(null);
-  const [downloadProgress, setDownloadProgress] = useState<number>(0);
-  const [isDownloading, setIsDownloading]     = useState<boolean>(false);
-  const [downloadFilename, setDownloadFilename] = useState<string>('');
 
   const loadData = useCallback(async () => {
     setLoading(true); setError(null);
