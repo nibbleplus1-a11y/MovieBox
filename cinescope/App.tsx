@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Platform } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StatusBar } from 'expo-status-bar';
@@ -10,10 +10,14 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import SplashScreen from './components/SplashScreen';
 import HomeScreen from './screens/HomeScreen';
 import SearchScreen from './screens/SearchScreen';
+import DownloadsScreen from './screens/DownloadsScreen';
 import WatchlistScreen from './screens/WatchlistScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import DetailScreen from './screens/DetailScreen';
 import PlayerScreen from './screens/PlayerScreen';
+import { UpdateModal } from './components/UpdateModal';
+import { checkForAppUpdate, UpdateInfo } from './services/updateService';
+import { useDownloads } from './services/downloadService';
 import { CONFIG } from './config';
 
 const Tab = createBottomTabNavigator();
@@ -32,17 +36,19 @@ const NavTheme = {
   },
 };
 
-
-
-const TAB_ICONS: Record<string, { icon: keyof typeof Ionicons.glyphMap; activeIcon: keyof typeof Ionicons.glyphMap }> = {
+const TAB_ICONS: Record<
+  string,
+  { icon: keyof typeof Ionicons.glyphMap; activeIcon: keyof typeof Ionicons.glyphMap }
+> = {
   Home:      { icon: 'home-outline',      activeIcon: 'home' },
   Search:    { icon: 'search-outline',    activeIcon: 'search' },
+  Downloads: { icon: 'download-outline',  activeIcon: 'download' },
   Watchlist: { icon: 'bookmark-outline',  activeIcon: 'bookmark' },
   Settings:  { icon: 'settings-outline',  activeIcon: 'settings' },
 };
 
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
-  const cfg = TAB_ICONS[name];
+  const cfg = TAB_ICONS[name] || { icon: 'cube-outline', activeIcon: 'cube' };
   return (
     <Ionicons
       name={focused ? cfg.activeIcon : cfg.icon}
@@ -53,6 +59,8 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
 }
 
 function MainTabs() {
+  const { activeCount } = useDownloads();
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -94,6 +102,20 @@ function MainTabs() {
         options={{ tabBarLabel: 'Search' }}
       />
       <Tab.Screen
+        name="Downloads"
+        component={DownloadsScreen}
+        options={{
+          tabBarLabel: 'Downloads',
+          tabBarBadge: activeCount > 0 ? activeCount : undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: '#38BDF8',
+            color: '#0F172A',
+            fontSize: 10,
+            fontWeight: '800',
+          },
+        }}
+      />
+      <Tab.Screen
         name="Watchlist"
         component={WatchlistScreen}
         options={{ tabBarLabel: 'My List' }}
@@ -109,6 +131,16 @@ function MainTabs() {
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+
+  useEffect(() => {
+    // Check for updates on startup
+    checkForAppUpdate().then((info) => {
+      if (info && info.available) {
+        setUpdateInfo(info);
+      }
+    });
+  }, []);
 
   if (showSplash) {
     return (
@@ -141,6 +173,14 @@ export default function App() {
             }}
           />
         </Stack.Navigator>
+
+        {/* In-app update prompt */}
+        {updateInfo && (
+          <UpdateModal
+            updateInfo={updateInfo}
+            onDismiss={() => setUpdateInfo(null)}
+          />
+        )}
       </NavigationContainer>
     </SafeAreaProvider>
   );

@@ -36,7 +36,7 @@ export default function PlayerScreen() {
 
   // Download state
   const [showDownloadAd, setShowDownloadAd] = useState<boolean>(false);
-  const [pendingDownload, setPendingDownload] = useState<{ url: string; filename: string } | null>(null);
+  const [pendingDownload, setPendingDownload] = useState<any | null>(null);
 
   const {
     title,
@@ -170,37 +170,91 @@ export default function PlayerScreen() {
   };
 
   /**
-   * Step 1: User taps download — show pre-download ad first.
+   * Step 1: User taps download — check 3-in-1 ad quota first.
    */
-  const handleDownloadCurrent = () => {
+  const handleDownloadCurrent = async () => {
     if (!activeStream?.url) {
       Alert.alert('Download', 'Stream is preparing. Please try again in a moment.');
       return;
     }
-    const cleanName = (title || streamData?.title || 'Movie').replace(/[^a-zA-Z0-9_\-]/g, '_');
+    const movieTitle = title || streamData?.title || 'Movie';
+    const cleanName = movieTitle.replace(/[^a-zA-Z0-9_\-]/g, '_');
     const epTag = currentSeason > 0 ? `_S${currentSeason}E${currentEpisode}` : '';
     const filename = `${cleanName}${epTag}.mp4`;
+    const episodeTitle = currentSeason > 0 ? `Season ${currentSeason} • Episode ${currentEpisode}` : undefined;
     const dlUrl =
       api.proxyUrl(activeStream.url, activeStream.headers?.Referer) +
       `&download=true&filename=${encodeURIComponent(filename)}`;
 
-    // Save pending download and show ad first
-    setPendingDownload({ url: dlUrl, filename });
-    setShowDownloadAd(true);
+    const downloadParams = {
+      url: dlUrl,
+      filename,
+      title: movieTitle,
+      poster: (route.params as any)?.cover || (route.params as any)?.poster,
+      episodeTitle,
+      season: currentSeason,
+      episode: currentEpisode,
+    };
+
+    // If quota available, download IMMEDIATELY without showing any ad!
+    if (downloadManager.hasQuota()) {
+      await downloadManager.consumeQuota();
+      await downloadManager.startDownload(downloadParams);
+      const remaining = downloadManager.getQuota();
+      Alert.alert(
+        'Download Started 📥',
+        `"${movieTitle}" is downloading in the background.\n(${remaining} ad-free download${remaining === 1 ? '' : 's'} remaining)`,
+        [
+          { text: 'OK' },
+          {
+            text: 'View Downloads',
+            onPress: () => {
+              if (isFullscreen) toggleFullscreen();
+              navigation.navigate('Main', { screen: 'Downloads' });
+            },
+          },
+        ]
+      );
+    } else {
+      // Save pending download and show ad first to unlock 3 downloads
+      setPendingDownload(downloadParams);
+      setShowDownloadAd(true);
+    }
   };
 
   /**
-   * Step 2: Ad dismissed → start actual background non-blocking download.
+   * Step 2: Ad dismissed → grant 3 downloads and start background non-blocking download.
    */
-  const onDownloadAdComplete = () => {
+  const onDownloadAdComplete = async () => {
     setShowDownloadAd(false);
     if (!pendingDownload) return;
-    const { url, filename } = pendingDownload;
+    const item = pendingDownload;
     setPendingDownload(null);
 
-    downloadManager.startDownload(url, filename).catch((err: any) => {
-      Alert.alert('Download Failed', err?.message || 'Could not start download.');
-    });
+    await downloadManager.grantQuota(3);
+    await downloadManager.consumeQuota();
+
+    downloadManager
+      .startDownload(item)
+      .then(() => {
+        Alert.alert(
+          'Unlocked & Downloading! 🎉',
+          `3 downloads unlocked! "${item.title}" is downloading.\nYou have 2 ad-free downloads left!`,
+          [
+            { text: 'OK' },
+            {
+              text: 'View Downloads',
+              onPress: () => {
+                if (isFullscreen) toggleFullscreen();
+                navigation.navigate('Main', { screen: 'Downloads' });
+              },
+            },
+          ]
+        );
+      })
+      .catch((err: any) => {
+        Alert.alert('Download Failed', err?.message || 'Could not start download.');
+      });
   };
 
   const handleBackAction = () => {

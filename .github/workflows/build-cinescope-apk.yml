@@ -117,6 +117,10 @@ jobs:
           cat /tmp/upload_response.txt
           if [ "$HTTP_STATUS" = "200" ]; then
             echo "✅ MovieVerse standalone APK deployed to: ${BASE_URL}/download/app"
+            curl -s -X POST \
+              -H "Content-Type: application/json" \
+              -d '{"version": "1.2.4", "version_code": 17, "download_url": "'"${BASE_URL}"'/download/app", "changelog": "New dedicated Downloads tab, offline video playback, queue multiple downloads with 3-in-1 ad unlock, and in-app auto updates!", "force_update": false}' \
+              "${BASE_URL}/api/admin/set-version?secret=${SECRET}" || true
           else
             echo "⚠️ Upload returned HTTP $HTTP_STATUS — APK still available as GitHub artifact below."
           fi

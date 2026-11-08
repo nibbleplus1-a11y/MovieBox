@@ -80,6 +80,34 @@ def download_apk():
             return FileResponse(apk_path, media_type="application/vnd.android.package-archive", filename="MovieVerse.apk")
     raise HTTPException(status_code=404, detail="MovieVerse APK build in progress or not yet uploaded.")
 
+APP_VERSION_FILE = os.path.join(STATIC_DIR, "app_version.json")
+
+@app.get("/api/app/version")
+def get_app_version():
+    if os.path.exists(APP_VERSION_FILE):
+        try:
+            with open(APP_VERSION_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "version": "1.2.4",
+        "version_code": 5,
+        "download_url": "https://movieverse.click/download/app",
+        "changelog": "New MovieBox-style Downloads manager, offline video playback, queue multiple downloads without ads every time, and in-app auto updates!",
+        "force_update": False,
+    }
+
+@app.post("/api/admin/set-version")
+async def set_app_version(request: Request, secret: Optional[str] = Query(None)):
+    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
+    if not secret or not secrets.compare_digest(secret, expected):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    data = await request.json()
+    with open(APP_VERSION_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    return {"status": "ok", "data": data}
+
 @app.post("/api/admin/upload-apk")
 async def upload_apk(request: Request, secret: Optional[str] = Query(None)):
     expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")

@@ -111,7 +111,7 @@ export default function DetailScreen() {
 
   // Sponsored Download states
   const [showDownloadAd, setShowDownloadAd]   = useState<boolean>(false);
-  const [pendingDownload, setPendingDownload] = useState<{ url: string; filename: string } | null>(null);
+  const [pendingDownload, setPendingDownload] = useState<any | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true); setError(null);
@@ -182,14 +182,44 @@ export default function DetailScreen() {
       const playable = (data?.streams || []).filter(s => s && s.url && !s.url.includes('.mpd'));
       const targetStream = playable.find(s => s.quality === '1080p') || playable[0];
       if (targetStream?.url) {
-        const cleanName = (detail?.title || initTitle || 'Movie').replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const movieTitle = detail?.title || initTitle || 'Movie';
+        const cleanName = movieTitle.replace(/[^a-zA-Z0-9_\-]/g, '_');
         const epTag = season > 0 ? `_S${season}E${ep}` : '';
         const filename = `${cleanName}${epTag}.mp4`;
+        const episodeTitle = season > 0 ? `Season ${season} • Episode ${ep}` : undefined;
         const dlUrl = api.proxyUrl(targetStream.url, targetStream.headers?.Referer) + `&download=true&filename=${encodeURIComponent(filename)}`;
-        
-        // Show sponsored unlock ad FIRST
-        setPendingDownload({ url: dlUrl, filename });
-        setShowDownloadAd(true);
+
+        const downloadParams = {
+          url: dlUrl,
+          filename,
+          title: movieTitle,
+          poster: detail?.cover || initCover,
+          episodeTitle,
+          season,
+          episode: ep,
+        };
+
+        // 3-in-1 Ad Quota: If quota available, download IMMEDIATELY without showing any ad!
+        if (downloadManager.hasQuota()) {
+          await downloadManager.consumeQuota();
+          await downloadManager.startDownload(downloadParams);
+          const remaining = downloadManager.getQuota();
+          Alert.alert(
+            'Download Started 📥',
+            `"${movieTitle}" is downloading in the background.\n(${remaining} ad-free download${remaining === 1 ? '' : 's'} remaining)`,
+            [
+              { text: 'OK' },
+              {
+                text: 'View Downloads',
+                onPress: () => navigation.navigate('Main', { screen: 'Downloads' }),
+              },
+            ]
+          );
+        } else {
+          // No quota: Show sponsor ad to unlock 3 downloads
+          setPendingDownload(downloadParams);
+          setShowDownloadAd(true);
+        }
       } else {
         Alert.alert('Download', 'Direct MP4 stream not available for download right now.');
       }
@@ -198,15 +228,34 @@ export default function DetailScreen() {
     }
   };
 
-  const onDownloadAdComplete = () => {
+  const onDownloadAdComplete = async () => {
     setShowDownloadAd(false);
     if (!pendingDownload) return;
-    const { url, filename } = pendingDownload;
+    const item = pendingDownload;
     setPendingDownload(null);
 
-    downloadManager.startDownload(url, filename).catch((err: any) => {
-      Alert.alert('Download Failed', err?.message || 'Could not start download.');
-    });
+    // Watch 1 sponsor ad -> grants 3 downloads! Current one uses 1 -> 2 remaining!
+    await downloadManager.grantQuota(3);
+    await downloadManager.consumeQuota();
+
+    downloadManager
+      .startDownload(item)
+      .then(() => {
+        Alert.alert(
+          'Unlocked & Downloading! 🎉',
+          `3 high-speed downloads unlocked! "${item.title}" is now downloading.\nYou have 2 ad-free downloads left!`,
+          [
+            { text: 'OK' },
+            {
+              text: 'View Downloads',
+              onPress: () => navigation.navigate('Main', { screen: 'Downloads' }),
+            },
+          ]
+        );
+      })
+      .catch((err: any) => {
+        Alert.alert('Download Failed', err?.message || 'Could not start download.');
+      });
   };
 
   // ── Derived ──────────────────────────────────────────────────────────────────

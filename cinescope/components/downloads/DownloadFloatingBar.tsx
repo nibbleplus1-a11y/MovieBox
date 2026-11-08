@@ -1,100 +1,85 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useNavigation } from '@react-navigation/native';
 import { useDownloads } from '../../services/downloadService';
 
 interface DownloadFloatingBarProps {
   bottomOffset?: number;
 }
 
-export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({ bottomOffset = 16 }) => {
-  const { activeTasks, completedTasks, dismissTask } = useDownloads();
-  const [expanded, setExpanded] = useState(false);
+export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({ bottomOffset = 20 }) => {
+  const navigation = useNavigation<any>();
+  const { activeTasks, completedTasks } = useDownloads();
+  const [dismissed, setDismissed] = useState(false);
 
-  // If no active tasks and no recently completed tasks, render nothing
-  const latestCompleted = completedTasks[0];
-  const isRecentCompleted = latestCompleted && Date.now() - latestCompleted.startedAt < 60000;
-
-  if (activeTasks.length === 0 && !isRecentCompleted) {
+  // If user explicitly dismissed the floating pill or nothing active, don't show
+  if (dismissed || activeTasks.length === 0) {
     return null;
   }
 
-  const primaryTask = activeTasks[0] || latestCompleted;
-  const isComplete = activeTasks.length === 0 && isRecentCompleted;
-  const totalCount = activeTasks.length;
+  const count = activeTasks.length;
+  const primaryTask = activeTasks[0];
   const avgProgress =
-    totalCount > 0
-      ? activeTasks.reduce((acc, t) => acc + t.progress, 0) / totalCount
-      : 1.0;
+    count > 0 ? activeTasks.reduce((acc, t) => acc + t.progress, 0) / count : 0;
   const percentText = `${Math.round(avgProgress * 100)}%`;
+
+  const handleOpenDownloads = () => {
+    try {
+      navigation.navigate('Main', { screen: 'Downloads' });
+    } catch {
+      try {
+        navigation.navigate('Downloads');
+      } catch {}
+    }
+  };
 
   return (
     <View style={[styles.floatingContainer, { bottom: bottomOffset }]} pointerEvents="box-none">
-      <View style={[styles.barCard, isComplete && styles.barCardCompleted]}>
+      <View style={styles.barCard}>
         <TouchableOpacity
           style={styles.contentRow}
-          onPress={() => setExpanded(!expanded)}
+          onPress={handleOpenDownloads}
           activeOpacity={0.85}
         >
-          <View style={[styles.iconBubble, isComplete && styles.iconBubbleCompleted]}>
-            <Ionicons
-              name={isComplete ? 'checkmark-circle' : 'cloud-download'}
-              size={18}
-              color={isComplete ? '#10B981' : '#38BDF8'}
-            />
+          <View style={styles.iconBubble}>
+            <Ionicons name="cloud-download" size={18} color="#38BDF8" />
           </View>
 
           <View style={styles.infoCol}>
             <View style={styles.titleRow}>
               <Text style={styles.titleText} numberOfLines={1}>
-                {isComplete
-                  ? `Saved to MovieVerse: ${primaryTask?.filename}`
-                  : totalCount > 1
-                  ? `Downloading ${totalCount} items… (${percentText})`
-                  : `${primaryTask?.filename || 'Downloading…'} (${percentText})`}
+                {count > 1
+                  ? `Downloading ${count} items…`
+                  : primaryTask?.title || primaryTask?.filename || 'Downloading…'}
               </Text>
-              {!isComplete && (
-                <Text style={styles.percentBadge}>{percentText}</Text>
-              )}
+              <Text style={styles.percentBadge}>{percentText}</Text>
             </View>
 
-            {!isComplete && (
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${Math.round(avgProgress * 100)}%` }]} />
-              </View>
-            )}
+            <View style={styles.progressTrack}>
+              <View
+                style={[
+                  styles.progressFill,
+                  { width: `${Math.round(avgProgress * 100)}%` },
+                ]}
+              />
+            </View>
           </View>
 
-          {isComplete && (
-            <TouchableOpacity
-              style={styles.closeBtn}
-              onPress={() => dismissTask(primaryTask.id)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="close" size={16} color="#94A3B8" />
-            </TouchableOpacity>
-          )}
+          <View style={styles.viewBadge}>
+            <Text style={styles.viewText}>View</Text>
+            <Ionicons name="chevron-forward" size={14} color="#38BDF8" />
+          </View>
         </TouchableOpacity>
 
-        {/* Multi-download expanded drawer */}
-        {expanded && totalCount > 1 && (
-          <View style={styles.expandedDrawer}>
-            {activeTasks.map((task) => (
-              <View key={task.id} style={styles.taskMiniRow}>
-                <Text style={styles.miniFilename} numberOfLines={1}>
-                  {task.filename}
-                </Text>
-                <Text style={styles.miniPercent}>{Math.round(task.progress * 100)}%</Text>
-                <TouchableOpacity
-                  style={styles.miniDismiss}
-                  onPress={() => dismissTask(task.id)}
-                >
-                  <Ionicons name="close-circle-outline" size={16} color="#64748B" />
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        )}
+        {/* Explicit dismiss (X) button so it never gets stuck on screen */}
+        <TouchableOpacity
+          style={styles.closeBtn}
+          onPress={() => setDismissed(true)}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <Ionicons name="close" size={16} color="#94A3B8" />
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -116,17 +101,16 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderWidth: 1,
     borderColor: 'rgba(56, 189, 248, 0.35)',
+    flexDirection: 'row',
+    alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.45,
     shadowRadius: 10,
     elevation: 12,
   },
-  barCardCompleted: {
-    borderColor: 'rgba(16, 185, 129, 0.4)',
-    backgroundColor: 'rgba(6, 78, 59, 0.92)',
-  },
   contentRow: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -138,9 +122,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(56, 189, 248, 0.15)',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  iconBubbleCompleted: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
   },
   infoCol: {
     flex: 1,
@@ -176,36 +157,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#38BDF8',
     borderRadius: 2,
   },
-  closeBtn: {
-    padding: 4,
-    marginLeft: 6,
-  },
-  expandedDrawer: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.1)',
-    gap: 6,
-  },
-  taskMiniRow: {
+  viewBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 2,
+    gap: 2,
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
   },
-  miniFilename: {
-    color: '#CBD5E1',
-    fontSize: 11,
-    flex: 1,
-    marginRight: 6,
-  },
-  miniPercent: {
+  viewText: {
     color: '#38BDF8',
     fontSize: 11,
     fontWeight: '700',
-    marginRight: 8,
   },
-  miniDismiss: {
-    padding: 2,
+  closeBtn: {
+    padding: 6,
+    marginLeft: 6,
   },
 });

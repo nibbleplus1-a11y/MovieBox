@@ -1,32 +1,122 @@
 /**
  * downloadService.ts
- * In-app background download manager using expo-file-system/legacy + expo-media-library.
- * Supports multiple concurrent background downloads with live progress updates.
+ * MovieBox & StreamFlix style background download manager using expo-file-system + expo-media-library.
+ * Features:
+ *  - 3-in-1 Ad Unlock Quota (1 sponsor ad unlocks 3 high-speed downloads)
+ *  - Multi-task queue with concurrent downloads
+ *  - Persistent storage in AsyncStorage (offline videos survive app restarts)
+ *  - Offline file deletion & media library export
  */
 
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import { Alert, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 import { useEffect, useState } from 'react';
+
+const STORAGE_KEY = '@movieverse_downloads_v2';
+const QUOTA_KEY = '@movieverse_download_quota_v1';
+const FREE_DOWNLOADS_PER_AD = 3;
 
 export interface DownloadTask {
   id: string;
   url: string;
   filename: string;
+  title: string;
+  poster?: string;
+  episodeTitle?: string;
+  season?: number;
+  episode?: number;
   progress: number; // 0.0 to 1.0
-  status: 'downloading' | 'completed' | 'error';
+  bytesWritten: number;
+  totalBytes: number;
+  status: 'downloading' | 'completed' | 'error' | 'paused';
   error?: string;
   localUri?: string;
+  fileSize?: string;
   startedAt: number;
+  completedAt?: number;
 }
 
-type DownloadListener = (tasks: DownloadTask[]) => void;
+export interface StartDownloadParams {
+  url: string;
+  filename: string;
+  title?: string;
+  poster?: string;
+  episodeTitle?: string;
+  season?: number;
+  episode?: number;
+}
+
+type DownloadListener = (tasks: DownloadTask[], quota: number) => void;
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1000) {
+    return `${(mb / 1024).toFixed(2)} GB`;
+  }
+  return `${mb.toFixed(1)} MB`;
+}
 
 class DownloadManager {
   private tasks: Map<string, DownloadTask> = new Map();
   private resumables: Map<string, FileSystem.DownloadResumable> = new Map();
   private listeners: Set<DownloadListener> = new Set();
+  private quota: number = 0;
   private permissionGranted: boolean | null = null;
+  private initialized: boolean = false;
+
+  constructor() {
+    this.init();
+  }
+
+  private async init() {
+    try {
+      // Load saved quota
+      const savedQuota = await AsyncStorage.getItem(QUOTA_KEY);
+      if (savedQuota !== null) {
+        this.quota = Math.max(0, parseInt(savedQuota, 10) || 0);
+      } else {
+        // First install bonus: 1 free download!
+        this.quota = 1;
+        await AsyncStorage.setItem(QUOTA_KEY, '1');
+      }
+
+      // Load saved completed downloads
+      const savedData = await AsyncStorage.getItem(STORAGE_KEY);
+      if (savedData) {
+        const list: DownloadTask[] = JSON.parse(savedData);
+        // Verify files still exist locally
+        for (const item of list) {
+          if (item.status === 'completed' && item.localUri) {
+            try {
+              const info = await FileSystem.getInfoAsync(item.localUri);
+              if (info.exists) {
+                this.tasks.set(item.id, item);
+              }
+            } catch {
+              // File missing or inaccessible, skip
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to initialize DownloadManager:', e);
+    } finally {
+      this.initialized = true;
+      this.notify();
+    }
+  }
+
+  private async persistTasks() {
+    try {
+      const completed = Array.from(this.tasks.values()).filter((t) => t.status === 'completed');
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(completed));
+    } catch (e) {
+      console.warn('Failed to persist downloads:', e);
+    }
+  }
 
   public async requestPermission(): Promise<boolean> {
     if (this.permissionGranted === true) return true;
@@ -41,7 +131,7 @@ class DownloadManager {
 
   public subscribe(listener: DownloadListener): () => void {
     this.listeners.add(listener);
-    listener(this.getAllTasks());
+    listener(this.getAllTasks(), this.quota);
     return () => {
       this.listeners.delete(listener);
     };
@@ -49,9 +139,10 @@ class DownloadManager {
 
   private notify() {
     const list = this.getAllTasks();
+    const q = this.quota;
     this.listeners.forEach((fn) => {
       try {
-        fn(list);
+        fn(list, q);
       } catch {}
     });
   }
@@ -64,31 +155,78 @@ class DownloadManager {
     return this.getAllTasks().filter((t) => t.status === 'downloading');
   }
 
-  public async startDownload(url: string, filename: string): Promise<string> {
+  public getCompletedTasks(): DownloadTask[] {
+    return this.getAllTasks().filter((t) => t.status === 'completed');
+  }
+
+  // ── Ad Quota System (3-in-1 Unlock) ──────────────────────────────────────────
+
+  public getQuota(): number {
+    return this.quota;
+  }
+
+  public hasQuota(): boolean {
+    return this.quota > 0;
+  }
+
+  /**
+   * Watch 1 sponsor ad -> unlock 3 high-speed downloads!
+   */
+  public async grantQuota(count: number = FREE_DOWNLOADS_PER_AD): Promise<number> {
+    this.quota = (this.quota || 0) + count;
+    await AsyncStorage.setItem(QUOTA_KEY, String(this.quota));
+    this.notify();
+    return this.quota;
+  }
+
+  public async consumeQuota(): Promise<boolean> {
+    if (this.quota > 0) {
+      this.quota -= 1;
+      await AsyncStorage.setItem(QUOTA_KEY, String(this.quota));
+      this.notify();
+      return true;
+    }
+    return false;
+  }
+
+  // ── Download Operations ──────────────────────────────────────────────────────
+
+  public async startDownload(params: StartDownloadParams): Promise<string> {
     const permitted = await this.requestPermission();
     if (!permitted) {
       Alert.alert(
         'Permission Required',
-        'Storage permission is needed to save downloads to your device. Please grant it in Settings.'
+        'Storage permission is needed to save offline downloads to your device.'
       );
       throw new Error('Permission denied');
     }
 
-    // Generate unique ID for this download
-    const taskId = `${filename}_${Date.now()}`;
+    const { url, filename, title = 'Movie / Episode', poster, episodeTitle, season, episode } = params;
 
-    // App directory destination
-    const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+    // Generate unique ID and isolated file path to prevent collision
+    const timestamp = Date.now();
     const safeFilename = filename.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-    const localUri = baseDir.endsWith('/') ? `${baseDir}${safeFilename}` : `${baseDir}/${safeFilename}`;
+    const taskId = `mv_${timestamp}_${Math.floor(Math.random() * 1000)}`;
+
+    const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+    const destination = baseDir.endsWith('/')
+      ? `${baseDir}${timestamp}_${safeFilename}`
+      : `${baseDir}/${timestamp}_${safeFilename}`;
 
     const task: DownloadTask = {
       id: taskId,
       url,
       filename: safeFilename,
+      title,
+      poster,
+      episodeTitle,
+      season,
+      episode,
       progress: 0,
+      bytesWritten: 0,
+      totalBytes: 0,
       status: 'downloading',
-      startedAt: Date.now(),
+      startedAt: timestamp,
     };
 
     this.tasks.set(taskId, task);
@@ -97,67 +235,79 @@ class DownloadManager {
     try {
       const downloadResumable = FileSystem.createDownloadResumable(
         url,
-        localUri,
+        destination,
         {},
         (downloadProgress) => {
-          const currentTask = this.tasks.get(taskId);
-          if (!currentTask || currentTask.status !== 'downloading') return;
+          const current = this.tasks.get(taskId);
+          if (!current || current.status !== 'downloading') return;
 
-          const progress =
-            downloadProgress.totalBytesExpectedToWrite > 0
-              ? downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite
-              : 0;
+          const total = downloadProgress.totalBytesExpectedToWrite;
+          const written = downloadProgress.totalBytesWritten;
+          current.bytesWritten = written;
+          current.totalBytes = total;
 
-          currentTask.progress = Math.min(0.99, Math.max(0, progress));
+          if (total > 0) {
+            current.progress = Math.min(0.99, Math.max(0, written / total));
+            current.fileSize = `${formatBytes(written)} / ${formatBytes(total)}`;
+          } else {
+            current.fileSize = formatBytes(written);
+          }
           this.notify();
         }
       );
 
       this.resumables.set(taskId, downloadResumable);
 
-      // Run download in background asynchronously
+      // Execute background async download
       downloadResumable
         .downloadAsync()
         .then(async (result) => {
           this.resumables.delete(taskId);
-          const currentTask = this.tasks.get(taskId);
-          if (!currentTask) return;
+          const current = this.tasks.get(taskId);
+          if (!current) return;
 
           if (!result || !result.uri) {
-            currentTask.status = 'error';
-            currentTask.error = 'Download failed: no output file';
+            current.status = 'error';
+            current.error = 'Download failed: no output file';
             this.notify();
             return;
           }
 
-          currentTask.localUri = result.uri;
-          currentTask.progress = 1.0;
-          currentTask.status = 'completed';
-          this.notify();
+          current.localUri = result.uri;
+          current.progress = 1.0;
+          current.status = 'completed';
+          current.completedAt = Date.now();
 
-          // Save to device gallery/media library in MovieVerse folder
+          // Get exact file size on disk
+          try {
+            const info = await FileSystem.getInfoAsync(result.uri);
+            if (info.exists && info.size) {
+              current.fileSize = formatBytes(info.size);
+            }
+          } catch {}
+
+          this.notify();
+          await this.persistTasks();
+
+          // Also export to system gallery MovieVerse album so user can view in file manager
           try {
             const asset = await MediaLibrary.createAssetAsync(result.uri);
-            try {
-              const album = await MediaLibrary.getAlbumAsync('MovieVerse');
-              if (album) {
-                await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
-              } else {
-                await MediaLibrary.createAlbumAsync('MovieVerse', asset, false);
-              }
-            } catch {
-              // Scoped storage handles asset in default location
+            const album = await MediaLibrary.getAlbumAsync('MovieVerse');
+            if (album) {
+              await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+            } else {
+              await MediaLibrary.createAlbumAsync('MovieVerse', asset, false);
             }
-          } catch (mediaErr) {
-            console.warn('MediaLibrary save note:', mediaErr);
+          } catch {
+            // Scoped storage handles file locally
           }
         })
         .catch((err: unknown) => {
           this.resumables.delete(taskId);
-          const currentTask = this.tasks.get(taskId);
-          if (!currentTask) return;
-          currentTask.status = 'error';
-          currentTask.error = err instanceof Error ? err.message : 'Download failed';
+          const current = this.tasks.get(taskId);
+          if (!current) return;
+          current.status = 'error';
+          current.error = err instanceof Error ? err.message : 'Download failed';
           this.notify();
         });
 
@@ -178,8 +328,24 @@ class DownloadManager {
       } catch {}
       this.resumables.delete(taskId);
     }
+    const current = this.tasks.get(taskId);
+    if (current && current.localUri) {
+      FileSystem.deleteAsync(current.localUri, { idempotent: true }).catch(() => {});
+    }
     this.tasks.delete(taskId);
     this.notify();
+  }
+
+  public async deleteDownload(taskId: string): Promise<void> {
+    const task = this.tasks.get(taskId);
+    if (task?.localUri) {
+      try {
+        await FileSystem.deleteAsync(task.localUri, { idempotent: true });
+      } catch {}
+    }
+    this.tasks.delete(taskId);
+    this.notify();
+    await this.persistTasks();
   }
 
   public dismissTask(taskId: string) {
@@ -191,14 +357,16 @@ class DownloadManager {
 export const downloadManager = new DownloadManager();
 
 /**
- * React Hook for watching active downloads in real-time
+ * React Hook for accessing active downloads, completed offline videos, and quota
  */
 export function useDownloads() {
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
+  const [quota, setQuota] = useState<number>(0);
 
   useEffect(() => {
-    const unsubscribe = downloadManager.subscribe((allTasks) => {
+    const unsubscribe = downloadManager.subscribe((allTasks, currentQuota) => {
       setTasks([...allTasks]);
+      setQuota(currentQuota);
     });
     return unsubscribe;
   }, []);
@@ -211,22 +379,35 @@ export function useDownloads() {
     activeTasks,
     completedTasks,
     activeCount: activeTasks.length,
-    startDownload: (url: string, filename: string) => downloadManager.startDownload(url, filename),
+    completedCount: completedTasks.length,
+    quota,
+    hasQuota: quota > 0,
+    startDownload: (params: StartDownloadParams) => downloadManager.startDownload(params),
     cancelDownload: (id: string) => downloadManager.cancelDownload(id),
+    deleteDownload: (id: string) => downloadManager.deleteDownload(id),
     dismissTask: (id: string) => downloadManager.dismissTask(id),
+    grantQuota: (count?: number) => downloadManager.grantQuota(count),
+    consumeQuota: () => downloadManager.consumeQuota(),
   };
 }
 
-/** Legacy wrapper to ensure backwards compatibility */
+/** Legacy backwards-compatible wrapper */
 export async function downloadStream(opts: {
   url: string;
   filename: string;
+  title?: string;
+  poster?: string;
   onProgress?: (progress: number) => void;
   onComplete?: (localUri: string) => void;
   onError?: (err: string) => void;
 }): Promise<void> {
   try {
-    const taskId = await downloadManager.startDownload(opts.url, opts.filename);
+    const taskId = await downloadManager.startDownload({
+      url: opts.url,
+      filename: opts.filename,
+      title: opts.title,
+      poster: opts.poster,
+    });
     const unsub = downloadManager.subscribe((tasks) => {
       const task = tasks.find((t) => t.id === taskId);
       if (task) {

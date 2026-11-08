@@ -7,6 +7,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { CONFIG } from '../config';
+import { checkForAppUpdate, UpdateInfo } from '../services/updateService';
+import { UpdateModal } from '../components/UpdateModal';
 
 interface SettingsRow {
   icon: keyof typeof Ionicons.glyphMap;
@@ -31,6 +33,7 @@ export default function SettingsScreen() {
   const [highQuality, setHighQuality] = useState(true);
   const [subtitles, setSubtitles] = useState(false);
   const [notifications, setNotifications] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   const openLink = (url: string) => Linking.openURL(url);
 
@@ -125,12 +128,29 @@ export default function SettingsScreen() {
             Alert.alert('Rate MovieVerse', 'Thanks for using MovieVerse! Share it with friends and family.', [{ text: 'OK' }]),
         },
         {
+          icon: 'cloud-download-outline',
+          label: 'Check for Updates',
+          subtitle: 'Scan for new MovieVerse releases',
+          action: async () => {
+            const info = await checkForAppUpdate();
+            if (info && info.available) {
+              setUpdateInfo(info);
+            } else {
+              Alert.alert('Up to Date! 🎉', `MovieVerse v${CONFIG.APP_VERSION} is the latest version.`, [{ text: 'OK' }]);
+            }
+          },
+        },
+        {
           icon: 'information-circle-outline',
           label: 'App Version',
           subtitle: 'MovieVerse Mobile Edition',
-          value: '2.5.0',
+          value: `v${CONFIG.APP_VERSION} (${CONFIG.APP_BUILD})`,
           action: () =>
-            Alert.alert('MovieVerse', 'Version 2.5.0\nBuilt with React Native & Expo\n\nYour premium cinema streaming platform.', [{ text: 'OK' }]),
+            Alert.alert(
+              'MovieVerse',
+              `Version ${CONFIG.APP_VERSION} (Build ${CONFIG.APP_BUILD})\nBuilt with React Native & Expo\n\nYour premium cinema streaming platform.`,
+              [{ text: 'OK' }]
+            ),
         },
       ],
     },
@@ -232,8 +252,16 @@ export default function SettingsScreen() {
         </View>
 
         {/* Version info */}
-        <Text style={styles.versionFooter}>MovieVerse v2.1.0 • Built with ❤️ for cinephiles</Text>
+        <Text style={styles.versionFooter}>MovieVerse v{CONFIG.APP_VERSION} • Built with ❤️ for cinephiles</Text>
       </ScrollView>
+
+      {/* In-app update modal */}
+      {updateInfo && (
+        <UpdateModal
+          updateInfo={updateInfo}
+          onDismiss={() => setUpdateInfo(null)}
+        />
+      )}
     </View>
   );
 }

@@ -30,6 +30,8 @@ export const CONFIG = {
   // App info
   APP_NAME: 'MovieVerse',
   APP_TAGLINE: '1080P CINEMA & STREAM HUB',
+  APP_VERSION: '1.2.4',
+  APP_BUILD: 17,
 
   // ═══════════════════════════════════════════════════════════════
   // AdMob IDs — REPLACE with real IDs after AdMob approval
