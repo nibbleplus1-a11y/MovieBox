@@ -2147,8 +2147,11 @@ async def get_captions(subject_id: str, se: int = 0, ep: int = 0, stream_id: Opt
 def search_online_subtitles(title: str = Query(..., min_length=1), year: Optional[str] = None, imdb_id: Optional[str] = None, se: int = 0, ep: int = 0, lang: Optional[str] = None):
     headers = {"User-Agent": "TemporaryUserAgent"}
     
-    # Strip dub annotations like [Hindi], (Dubbed) from title for accurate subtitle matching
+    # Strip dub annotations like [Hindi], (Dubbed), "Hindi dubbed", etc. from title for accurate subtitle matching
     clean_title = re.sub(r'[\[\(].*?[\]\)]', '', title).strip()
+    clean_title = re.sub(r'\b(?:hindi|tamil|telugu|kannada|malayalam|bengali|marathi|punjabi|urdu|korean|japanese|spanish|french|german|italian|chinese|russian|arabic|portuguese|english|dual audio|multi audio)\s*(?:dub|dubbed|audio)?\b', '', clean_title, flags=re.I).strip()
+    clean_title = re.sub(r'\b(?:dubbed|dub|subbed|sub)\b', '', clean_title, flags=re.I).strip()
+    clean_title = re.sub(r'\s+', ' ', clean_title).strip()
     
     # Auto-resolve exact IMDb ID using Title + Year if not provided
     if not imdb_id and clean_title:

@@ -11,8 +11,8 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { api, DetailData } from '../services/api';
 import { WatchlistService } from '../services/watchlist';
 import { WatchProgressService, WatchProgressItem } from '../services/watchProgress';
-import { AdBannerPlaceholder } from '../components/ads/AdBannerPlaceholder';
-import { downloadStream } from '../services/downloadService';
+import { downloadManager } from '../services/downloadService';
+import { DownloadFloatingBar } from '../components/downloads/DownloadFloatingBar';
 import { PlayerAdModal } from '../components/ads/PlayerAdModal';
 
 const { width } = Dimensions.get('window');
@@ -207,28 +207,8 @@ export default function DetailScreen() {
     const { url, filename } = pendingDownload;
     setPendingDownload(null);
 
-    setIsDownloading(true);
-    setDownloadFilename(filename);
-    setDownloadProgress(0);
-
-    downloadStream({
-      url,
-      filename,
-      onProgress: (p) => setDownloadProgress(p),
-      onComplete: (localUri) => {
-        setIsDownloading(false);
-        setDownloadProgress(0);
-        Alert.alert(
-          '✅ Download Complete',
-          `"${filename}" has been saved to your device in the MovieVerse folder.`,
-          [{ text: 'OK' }],
-        );
-      },
-      onError: (err) => {
-        setIsDownloading(false);
-        setDownloadProgress(0);
-        Alert.alert('Download Failed', err || 'Could not download the file. Please try again.');
-      },
+    downloadManager.startDownload(url, filename).catch((err: any) => {
+      Alert.alert('Download Failed', err?.message || 'Could not start download.');
     });
   };
 
@@ -535,25 +515,8 @@ export default function DetailScreen() {
         onClose={() => setShowDownloadAd(false)}
       />
 
-      {/* IN-APP DOWNLOAD PROGRESS OVERLAY */}
-      {isDownloading && (
-        <Modal transparent animationType="fade" visible>
-          <View style={S.dlOverlay}>
-            <View style={S.dlCard}>
-              <ActivityIndicator size="large" color="#E50914" style={{ marginBottom: 12 }} />
-              <Text style={S.dlTitle}>Downloading in MovieVerse…</Text>
-              <Text style={S.dlFilename} numberOfLines={2}>
-                {downloadFilename}
-              </Text>
-              <View style={S.dlBarBg}>
-                <View style={[S.dlBarFill, { width: `${Math.round(downloadProgress * 100)}%` }]} />
-              </View>
-              <Text style={S.dlPercent}>{Math.round(downloadProgress * 100)}%</Text>
-              <Text style={S.dlHint}>File is saving directly to your device storage.</Text>
-            </View>
-          </View>
-        </Modal>
-      )}
+      {/* NON-BLOCKING BACKGROUND DOWNLOAD FLOATING INDICATOR */}
+      <DownloadFloatingBar bottomOffset={insets.bottom + 16} />
     </View>
   );
 }

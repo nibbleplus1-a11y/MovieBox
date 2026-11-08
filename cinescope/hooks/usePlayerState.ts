@@ -56,19 +56,27 @@ export function usePlayerState() {
     type: initialType = 'Movie',
   } = (route.params as RouteParams) || {};
 
-  const cleanLanguageTag = (t?: string) => {
+  const sanitizeTitleForSearch = (t?: string): string => {
     if (!t) return '';
     return t
-      .replace(/\s*\[(?:English|Hindi|Tamil|Telugu|Korean|Japanese|Spanish|French|German|Italian|Chinese|Russian|Arabic|Portuguese|Original|Dubbed|Subbed)[^\]]*\]/gi, '')
-      .replace(/\s*\((?:English|Hindi|Tamil|Telugu|Korean|Japanese|Spanish|French|German|Italian|Chinese|Russian|Arabic|Portuguese|Dubbed|Subbed)[^\)]*\)/gi, '')
+      .replace(/\[.*?\]/g, '')
+      .replace(/\(.*?\)/g, '')
+      .replace(/\b(?:hindi|tamil|telugu|kannada|malayalam|bengali|marathi|punjabi|urdu|korean|japanese|spanish|french|german|italian|chinese|russian|arabic|portuguese|english|dual audio|multi audio)\s*(?:dub|dubbed|audio)?\b/gi, '')
+      .replace(/\b(?:dubbed|dub|subbed|sub)\b/gi, '')
+      .replace(/\s+/g, ' ')
       .trim();
+  };
+
+  const cleanLanguageTag = (t?: string) => {
+    if (!t) return '';
+    return sanitizeTitleForSearch(t);
   };
 
   const isSeriesType = initialType === 'Series' || initialType === 'TV Series';
 
   const [playerTitle, setPlayerTitle]           = useState<string>(() => {
     const raw = title || '';
-    const clean = cleanLanguageTag(raw);
+    const clean = sanitizeTitleForSearch(raw);
     return initialDub && !initialDub.toLowerCase().includes('original')
       ? `${clean} [${initialDub}]`
       : clean || raw;
@@ -103,6 +111,7 @@ export function usePlayerState() {
   const [subtitlesList, setSubtitlesList]     = useState<SubtitleItem[]>([]);
   const [activeSubtitle, setActiveSubtitle]   = useState<SubtitleItem | null>(null);
   const [isSearchingOnlineSubs, setIsSearchingOnlineSubs] = useState<boolean>(false);
+  const cachedSubsRef                         = useRef<Map<string, SubtitleItem>>(new Map());
   /** FIX P1 #4: measured width from onLayout — replaces (screenWidth - magic_number) */
   const [trackWidth, setTrackWidth]           = useState<number>(300);
 
@@ -242,8 +251,9 @@ export function usePlayerState() {
         } catch {}
       }
 
-      // Load official subtitles in background
-      api.captions(subjectId, se, ep).then((capData) => {
+      // Load official subtitles using initialId or subjectId (official subs are tied to root ID)
+      const targetCaptionId = initialId || subjectId;
+      api.captions(targetCaptionId, se, ep).then((capData) => {
         if (loadTokenRef.current !== token) return;
         if (capData?.captions && capData.captions.length > 0) {
           const formatted: SubtitleItem[] = capData.captions.map((c) => ({
@@ -253,7 +263,8 @@ export function usePlayerState() {
             code: c.code,
             isOnline: false,
           }));
-          setSubtitlesList(formatted);
+          formatted.forEach(item => cachedSubsRef.current.set(item.id, item));
+          setSubtitlesList(Array.from(cachedSubsRef.current.values()));
         }
       }).catch(() => {});
     } catch (err: unknown) {
@@ -375,7 +386,7 @@ export function usePlayerState() {
   const searchOnlineSubs = useCallback(async () => {
     setIsSearchingOnlineSubs(true);
     try {
-      const cleanTitle = (title || streamData?.title || '').replace(/\[.*?\]|\(.*?\)/g, '').trim();
+      const cleanTitle = sanitizeTitleForSearch(title || streamData?.title || '');
       const res = await api.onlineSubtitles(cleanTitle, undefined, currentSeason, currentEpisode);
       if (res?.subtitles && res.subtitles.length > 0) {
         const formatted: SubtitleItem[] = res.subtitles.map((s) => ({
@@ -384,11 +395,8 @@ export function usePlayerState() {
           url: s.proxy_url.startsWith('http') ? s.proxy_url : api.proxyCaptionUrl(s.proxy_url),
           isOnline: true,
         }));
-        setSubtitlesList((prev) => {
-          const seen = new Set(prev.map((p) => p.id));
-          const additions = formatted.filter((f) => !seen.has(f.id));
-          return [...prev, ...additions];
-        });
+        formatted.forEach(item => cachedSubsRef.current.set(item.id, item));
+        setSubtitlesList(Array.from(cachedSubsRef.current.values()));
       }
     } catch (e) {
       console.warn('Online subs error:', e);

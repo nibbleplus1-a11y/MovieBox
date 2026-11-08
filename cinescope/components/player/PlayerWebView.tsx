@@ -16,6 +16,9 @@ interface PlayerWebViewProps {
   epLabel?: string | null;
   seasonsCount: number;
   webViewRef: React.RefObject<any>;
+  currentTime?: number;
+  activeSubtitleUrl?: string;
+  activeSubtitleLang?: string;
   onRetry: () => void;
   onBack: () => void;
   onToggleFullscreen: () => void;
@@ -23,12 +26,16 @@ interface PlayerWebViewProps {
   onMessage: (event: { nativeEvent: { data: string } }) => void;
 }
 
-export const buildPlayerHTML = (videoSrc: string): string => {
+export const buildPlayerHTML = (
+  videoSrc: string,
+  initialSeekTime: number = 0,
+  activeSubtitleUrl?: string,
+  activeSubtitleLang?: string
+): string => {
   const isHls = videoSrc.includes('.m3u8');
+  const safeSeek = Math.max(0, Math.floor(initialSeekTime || 0));
 
   // HLS.js script tag — only injected for HLS streams.
-  // We escape the closing </script> inside the template literal with a backslash
-  // to prevent the HTML parser from terminating the outer script block early.
   const hlsScriptTag = isHls
     ? `<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"><\/script>`
     : '';
@@ -59,6 +66,7 @@ export const buildPlayerHTML = (videoSrc: string): string => {
       hlsInstance.loadSource('${videoSrc}');
       hlsInstance.attachMedia(v);
       hlsInstance.on(Hls.Events.MANIFEST_PARSED, function() {
+        performSeek();
         post({ type: 'canplay' });
         tryPlay();
       });
@@ -90,6 +98,9 @@ export const buildPlayerHTML = (videoSrc: string): string => {
     tryPlay();`;
 
   const videoSrcAttr = isHls ? '' : `src="${videoSrc}"`;
+  const subTrackTag = activeSubtitleUrl
+    ? `<track id="playerSubTrack" kind="subtitles" label="${activeSubtitleLang || 'Subtitles'}" srclang="en" src="${activeSubtitleUrl}" default />`
+    : '';
 
   return `<!DOCTYPE html>
 <html>
@@ -139,14 +150,36 @@ export const buildPlayerHTML = (videoSrc: string): string => {
     webkit-playsinline
     x5-playsinline="true"
     preload="auto"
+    crossorigin="anonymous"
     onerror="handleSourceError(this)"
-  ></video>
+  >${subTrackTag}</video>
 
   <script>
     var v = document.getElementById('videoPlayer');
     window.videoEl = v;
     var hlsInstance = null;
+    var targetSeekTime = ${safeSeek};
+    var didInitialSeek = targetSeekTime > 0 ? false : true;
 
+    function performSeek() {
+      if (!didInitialSeek && targetSeekTime > 0) {
+        try {
+          if (v.duration && v.duration > 1) {
+            v.currentTime = Math.min(targetSeekTime, Math.max(0, v.duration - 1));
+          } else if (v.readyState >= 1) {
+            v.currentTime = targetSeekTime;
+          }
+        } catch(e) {}
+      }
+    }
+
+    function checkSeekDone() {
+      if (!didInitialSeek && targetSeekTime > 0) {
+        if (Math.abs(v.currentTime - targetSeekTime) <= 2.5 || v.currentTime >= targetSeekTime - 1) {
+          didInitialSeek = true;
+        }
+      }
+    }
 
     window.setSubtitleTrack = function(url, label) {
       try {
@@ -167,6 +200,7 @@ export const buildPlayerHTML = (videoSrc: string): string => {
         track.src = url;
         track.default = true;
         v.appendChild(track);
+
         function adjustCues() {
           try {
             var t = track.track || (v.textTracks && v.textTracks[0]);
@@ -179,13 +213,16 @@ export const buildPlayerHTML = (videoSrc: string): string => {
             }
           } catch(e) {}
         }
+
         track.addEventListener('load', function() {
           if (v.textTracks && v.textTracks.length > 0) {
             v.textTracks[0].mode = 'showing';
             adjustCues();
           }
         });
+
         if (track.track) {
+          track.track.mode = 'showing';
           track.track.oncuechange = function() {
             try {
               if (this.activeCues) {
@@ -197,14 +234,17 @@ export const buildPlayerHTML = (videoSrc: string): string => {
             } catch(e) {}
           };
         }
-        if (v.textTracks && v.textTracks.length > 0) {
-          v.textTracks[0].mode = 'showing';
-          adjustCues();
-        }
       } catch (e) {
         console.error('Subtitle error:', e);
       }
     };
+
+    // Auto-enable initial subtitle if loaded
+    if ('${activeSubtitleUrl || ''}') {
+      setTimeout(function() {
+        window.setSubtitleTrack('${activeSubtitleUrl || ''}', '${activeSubtitleLang || 'Subtitles'}');
+      }, 100);
+    }
 
     function post(obj) {
       if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
@@ -218,6 +258,7 @@ export const buildPlayerHTML = (videoSrc: string): string => {
     }
 
     function tryPlay() {
+      performSeek();
       var p = v.play();
       if (p !== undefined && p.catch) {
         p.catch(function(err) {
@@ -232,9 +273,7 @@ export const buildPlayerHTML = (videoSrc: string): string => {
       }
     }
 
-    // ── Safe playback recovery watchdog ──────────────────────────────────
-    // Does NOT alter currentTime (which cancels the browser Range request and clears buffer).
-    // Gently re-triggers play() only if decoder froze unexpectedly while having enough data.
+    // Playback recovery watchdog
     var lastStuckTime = -1;
     var stuckDuration = 0;
     setInterval(function() {
@@ -255,25 +294,54 @@ export const buildPlayerHTML = (videoSrc: string): string => {
     }, 3000);
 
     v.addEventListener('loadedmetadata', function() {
-      post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
+      performSeek();
+      if (didInitialSeek || targetSeekTime <= 0) {
+        post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
+      }
       tryPlay();
     });
-    v.addEventListener('loadeddata', function() { post({ type: 'canplay' }); tryPlay(); });
+
+    v.addEventListener('loadeddata', function() {
+      performSeek();
+      post({ type: 'canplay' });
+      tryPlay();
+    });
+
+    v.addEventListener('canplay', function() {
+      performSeek();
+      post({ type: 'canplay' });
+      tryPlay();
+    });
+
+    v.addEventListener('canplaythrough', function() {
+      performSeek();
+      post({ type: 'canplay' });
+      tryPlay();
+    });
+
     v.addEventListener('timeupdate', function() {
+      checkSeekDone();
+      // Suppress premature 0:00 reports when seeking to resume position
+      if (!didInitialSeek && targetSeekTime > 0 && v.currentTime < 1.0) {
+        performSeek();
+        return;
+      }
       post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
     });
-    v.addEventListener('playing', function() { post({ type: 'playing' }); });
+
+    v.addEventListener('playing', function() {
+      checkSeekDone();
+      post({ type: 'playing' });
+    });
     v.addEventListener('pause', function() { post({ type: 'pause' }); });
     v.addEventListener('waiting', function() { post({ type: 'waiting' }); });
-    v.addEventListener('canplay', function() { post({ type: 'canplay' }); tryPlay(); });
-    v.addEventListener('canplaythrough', function() { post({ type: 'canplay' }); tryPlay(); });
     v.addEventListener('ended', function() { post({ type: 'ended' }); });
     v.addEventListener('error', function() {
       var err = v.error ? ('Code ' + v.error.code + ': ' + (v.error.message || 'Playback error')) : 'Video error';
       post({ type: 'error', error: err });
     });
 
-    // ── HLS.js or native fallback ──────────────────────────────────────────
+    // HLS.js or native fallback
     ${hlsInit}
   <\/script>
 </body>
@@ -292,6 +360,9 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
   epLabel,
   seasonsCount,
   webViewRef,
+  currentTime,
+  activeSubtitleUrl,
+  activeSubtitleLang,
   onRetry,
   onBack,
   onToggleFullscreen,
@@ -376,7 +447,12 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
         ref={webViewRef}
         key={streamUrl}
         source={{
-          html: buildPlayerHTML(streamUrl),
+          html: buildPlayerHTML(
+            streamUrl,
+            currentTime || 0,
+            activeSubtitleUrl,
+            activeSubtitleLang
+          ),
           baseUrl: 'https://movieverse.click/',
         }}
         originWhitelist={['*']}
@@ -402,31 +478,49 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
 };
 
 const styles = StyleSheet.create({
-  webview: { flex: 1, backgroundColor: '#000' },
+  webview: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
   centerBox: {
-    ...StyleSheet.absoluteFill,
+    flex: 1,
     backgroundColor: '#000',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
+    padding: 24,
   },
-  loadingText: { color: '#8e95a5', fontSize: 13, fontWeight: '500' },
+  loadingText: {
+    color: '#94a3b8',
+    marginTop: 12,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  errorText: {
+    color: '#f87171',
+    marginTop: 12,
+    fontSize: 14,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  retryBtn: {
+    marginTop: 16,
+    backgroundColor: '#e50914',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
   bufferingOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.3)',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 5,
   },
-  errorText: { color: '#fca5a5', fontSize: 13, textAlign: 'center', paddingHorizontal: 20 },
-  retryBtn: {
-    backgroundColor: '#e50914',
-    borderRadius: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 9,
-    marginTop: 6,
-  },
-  retryText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   iframeTopBar: {
     position: 'absolute',
     top: 0,
@@ -434,33 +528,51 @@ const styles = StyleSheet.create({
     right: 0,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 12,
-    paddingBottom: 12,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    gap: 10,
-    zIndex: 20,
+    paddingBottom: 8,
+    backgroundColor: 'rgba(7, 8, 11, 0.85)',
+    zIndex: 10,
   },
-  iframeInfoBox: { flex: 1, gap: 2 },
-  iframeServerText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  iframeEpLabel: { color: '#94a3b8', fontSize: 11 },
-  iframeTopRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   iconCircleBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  toolChip: {
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+  iframeInfoBox: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  iframeServerText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  iframeEpLabel: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  iframeTopRight: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
-  toolChipText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  toolChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  toolChipText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
 });

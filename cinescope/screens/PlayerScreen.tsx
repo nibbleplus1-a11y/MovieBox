@@ -21,7 +21,8 @@ import { PlayerBottomSheet } from '../components/player/PlayerBottomSheet';
 import { PlayerDashboard } from '../components/player/PlayerDashboard';
 import { PlayerAdModal } from '../components/ads/PlayerAdModal';
 import { api, MovieCard as MovieCardData } from '../services/api';
-import { downloadStream } from '../services/downloadService';
+import { downloadManager } from '../services/downloadService';
+import { DownloadFloatingBar } from '../components/downloads/DownloadFloatingBar';
 
 const CACHE_KEY = 'movieverse_feed_cache_v2';
 
@@ -160,12 +161,10 @@ export default function PlayerScreen() {
     sendVideoCommand('if(window.videoEl){ window.videoEl.muted = false; window.videoEl.play(); }');
   };
 
-  // Reset preroll gate when user switches movie/episode
+  // Reset preroll gate ONLY when user switches episode (not audio/dub)
   useEffect(() => {
     setPrerollShown(false);
-  }, [currentId, currentSeason, currentEpisode]);
-
-
+  }, [currentSeason, currentEpisode]);
 
   const onSelectMovie = (m: MovieCardData) => {
     navigation.replace('Player', {
@@ -197,7 +196,7 @@ export default function PlayerScreen() {
   };
 
   /**
-   * Step 2: Ad dismissed → start actual download.
+   * Step 2: Ad dismissed → start actual background non-blocking download.
    */
   const onDownloadAdComplete = () => {
     setShowDownloadAd(false);
@@ -205,29 +204,17 @@ export default function PlayerScreen() {
     const { url, filename } = pendingDownload;
     setPendingDownload(null);
 
-    setIsDownloading(true);
-    setDownloadingFilename(filename);
-    setDownloadProgress(0);
-
-    downloadStream({
-      url,
-      filename,
-      onProgress: (p) => setDownloadProgress(p),
-      onComplete: (localUri) => {
-        setIsDownloading(false);
-        setDownloadProgress(0);
-        Alert.alert(
-          '✅ Download Complete',
-          `"${filename}" has been saved to your device in the MovieVerse folder.`,
-          [{ text: 'OK' }],
-        );
-      },
-      onError: (err) => {
-        setIsDownloading(false);
-        setDownloadProgress(0);
-        Alert.alert('Download Failed', err || 'Could not download the file. Please try again.');
-      },
+    downloadManager.startDownload(url, filename).catch((err: any) => {
+      Alert.alert('Download Failed', err?.message || 'Could not start download.');
     });
+  };
+
+  const handleBackAction = () => {
+    if (isFullscreen) {
+      toggleFullscreen();
+      return;
+    }
+    triggerExitWithAd();
   };
 
   const triggerExitWithAd = () => {
@@ -240,7 +227,7 @@ export default function PlayerScreen() {
     handleBack();
   };
 
-  // Android hardware back handler: intercept to show exit ad first
+  // Android hardware back handler: toggle fullscreen or show exit ad
   useEffect(() => {
     const onBackPress = () => {
       if (showPostrollAd) {
@@ -255,13 +242,21 @@ export default function PlayerScreen() {
         setShowDownloadAd(false);
         return true;
       }
+      if (bottomSheet !== 'none') {
+        setBottomSheet('none');
+        return true;
+      }
+      if (isFullscreen) {
+        toggleFullscreen();
+        return true;
+      }
       triggerExitWithAd();
       return true;
     };
 
     const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => sub.remove();
-  }, [showPostrollAd, showPrerollAd, showDownloadAd]);
+  }, [showPostrollAd, showPrerollAd, showDownloadAd, isFullscreen, bottomSheet]);
 
   const playerContainerStyle = isFullscreen
     ? styles.playerContainerFullscreen
@@ -285,8 +280,11 @@ export default function PlayerScreen() {
           epLabel={epLabel}
           seasonsCount={seasonsData.length}
           webViewRef={webViewRef}
+          currentTime={currentTime}
+          activeSubtitleUrl={activeSubtitle?.url}
+          activeSubtitleLang={activeSubtitle?.language}
           onRetry={() => loadStreams(currentId, currentSeason, currentEpisode)}
-          onBack={triggerExitWithAd}
+          onBack={handleBackAction}
           onToggleFullscreen={toggleFullscreen}
           onOpenBottomSheet={(type) => {
             setBottomSheet(type);
@@ -327,7 +325,7 @@ export default function PlayerScreen() {
             onSeekRelative={seekRelative}
             onSeekAbsolute={seekAbsolute}
             onToggleFullscreen={toggleFullscreen}
-            onBack={triggerExitWithAd}
+            onBack={handleBackAction}
             onOpenBottomSheet={(type) => {
               setBottomSheet(type);
               resetControlsTimer();
@@ -420,25 +418,8 @@ export default function PlayerScreen() {
         onClose={onCompletePostroll}
       />
 
-      {/* IN-APP DOWNLOAD PROGRESS OVERLAY */}
-      {isDownloading && (
-        <Modal transparent animationType="fade" visible>
-          <View style={styles.dlOverlay}>
-            <View style={styles.dlCard}>
-              <ActivityIndicator size="large" color="#E50914" style={{ marginBottom: 12 }} />
-              <Text style={styles.dlTitle}>Downloading…</Text>
-              <Text style={styles.dlFilename} numberOfLines={2}>
-                {downloadingFilename}
-              </Text>
-              <View style={styles.dlBarBg}>
-                <View style={[styles.dlBarFill, { width: `${Math.round(downloadProgress * 100)}%` }]} />
-              </View>
-              <Text style={styles.dlPercent}>{Math.round(downloadProgress * 100)}%</Text>
-              <Text style={styles.dlHint}>File will be saved to the MovieVerse folder on your device.</Text>
-            </View>
-          </View>
-        </Modal>
-      )}
+      {/* NON-BLOCKING BACKGROUND DOWNLOAD FLOATING INDICATOR */}
+      <DownloadFloatingBar bottomOffset={isFullscreen ? 24 : insets.bottom + 16} />
     </View>
   );
 }
