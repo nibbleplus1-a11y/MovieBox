@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useDownloads, DownloadTask } from '../services/downloadService';
-import { MonetagInterstitialAd } from '../components/ads/MonetagInterstitialAd';
+import { PlayerAdModal } from '../components/ads/PlayerAdModal';
 
 interface DownloadsScreenProps {
   navigation: any;
@@ -273,12 +273,12 @@ export default function DownloadsScreen({ navigation }: DownloadsScreenProps) {
 
       {/* Monetag Sponsor Ad for +3 Download Quota */}
       {showRewardAd && (
-        <MonetagInterstitialAd
+        <PlayerAdModal
           visible={showRewardAd}
-          onDismiss={() => setShowRewardAd(false)}
-          onAdComplete={handleRewardAdComplete}
+          mode="download"
           title="Unlock 3 High-Speed Downloads"
-          subtitle="Watch a quick sponsor ad to get 3 ad-free downloads!"
+          onClose={() => setShowRewardAd(false)}
+          onComplete={handleRewardAdComplete}
         />
       )}
     </View>
