@@ -91,10 +91,10 @@ def get_app_version():
         except Exception:
             pass
     return {
-        "version": "1.2.5",
-        "version_code": 18,
+        "version": "1.2.6",
+        "version_code": 19,
         "download_url": "https://movieverse.click/download/app",
-        "changelog": "Background downloads with notification tray progress, fixed auto-hiding floating bar, instant ad loading & offline video player!",
+        "changelog": "Instant poster loading fix, 350+ expanded movie catalog, dismissible download bar with fullscreen auto-hide, TV season state retention & smooth 60fps scrolling!",
         "force_update": False,
     }
 
@@ -1170,45 +1170,51 @@ class MovieBoxEngine:
             except Exception:
                 pass
 
-        # Parallel backfill for sparse shelves using ThreadPoolExecutor
+        # Parallel backfill for rich shelves using ThreadPoolExecutor
         sparse_tasks = []
-        if len(feed["bollywood"]) < 6:
-            for kw in ["Kalki", "Jawan", "Animal", "Fighter", "Stree 2"]:
+        if len(feed["bollywood"]) < 30:
+            for kw in ["Kalki", "Jawan", "Animal", "Fighter", "Stree 2", "Pathaan", "Dunki", "Shaitaan", "Tiger 3", "Brahmastra", "War", "Dangal", "PK", "Bajrangi Bhaijaan", "Kabir Singh", "Sanju"]:
                 sparse_tasks.append(("bollywood", kw))
-        if len(feed["south_indian"]) < 6:
-            for kw in ["Pushpa", "Salaar", "Devara", "Leo", "KGF"]:
+        if len(feed["south_indian"]) < 30:
+            for kw in ["Pushpa", "Salaar", "Devara", "Leo", "KGF", "RRR", "Baahubali", "Vikram", "Kantara", "Jailer", "Master", "HanuMan", "Dasara", "Varisu"]:
                 sparse_tasks.append(("south_indian", kw))
-        if len(feed["series"]) < 10:
-            for kw in ["Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys", "Peaky Blinders", "Succession", "The Last of Us", "Severance", "House of the Dragon", "Fallout"]:
+        if len(feed["cinema"]) < 25:
+            for kw in ["Inside Out 2", "Deadpool & Wolverine", "Dune", "Furiosa", "Kingdom of the Planet of the Apes", "Twisters", "Alien Romulus", "Beetlejuice", "Venom", "Moana 2", "Wicked", "Gladiator 2"]:
+                sparse_tasks.append(("cinema", kw))
+        if len(feed["hollywood"]) < 30:
+            for kw in ["Avengers", "Batman", "Spider-Man", "Oppenheimer", "Deadpool", "Gladiator", "Dune", "Avatar", "John Wick", "Mission Impossible", "Fast and Furious"]:
+                sparse_tasks.append(("hollywood", kw))
+        if len(feed["series"]) < 30:
+            for kw in ["Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys", "Peaky Blinders", "Succession", "The Last of Us", "Severance", "House of the Dragon", "Fallout", "Squid Game", "Loki", "Wednesday", "Reacher", "The Witcher", "Money Heist"]:
                 sparse_tasks.append(("series", kw))
-        if len(feed["asian_drama"]) < 6:
-            for kw in ["Queen of Tears", "Squid Game", "Crash Landing on You", "All of Us Are Dead"]:
+        if len(feed["asian_drama"]) < 25:
+            for kw in ["Queen of Tears", "Squid Game", "Crash Landing on You", "All of Us Are Dead", "The Glory", "Goblin", "Vincenzo", "Descendants of the Sun", "Alchemy of Souls", "Business Proposal", "Itaewon Class"]:
                 sparse_tasks.append(("asian_drama", kw))
-        if len(feed["anime"]) < 20:
-            for kw in ["Attack on Titan", "Demon Slayer", "Jujutsu Kaisen", "One Piece", "Naruto", "Dragon Ball", "Bleach", "My Hero Academia", "Chainsaw Man", "Solo Leveling", "Vinland Saga", "Black Clover", "Spy x Family", "Hunter x Hunter", "Fullmetal Alchemist"]:
+        if len(feed["anime"]) < 35:
+            for kw in ["Attack on Titan", "Demon Slayer", "Jujutsu Kaisen", "One Piece", "Naruto", "Dragon Ball", "Bleach", "My Hero Academia", "Chainsaw Man", "Solo Leveling", "Vinland Saga", "Black Clover", "Spy x Family", "Hunter x Hunter", "Fullmetal Alchemist", "Death Note", "Tokyo Ghoul"]:
                 sparse_tasks.append(("anime", kw))
-        # Always backfill anime_movies since upstream anime list only returns TV series
-        if len(feed["anime_movies"]) < 10:
-            for kw in ["Spirited Away", "Your Name", "Princess Mononoke", "Howl's Moving Castle", "My Neighbor Totoro", "The Boy and the Heron", "Ghost in the Shell", "Weathering With You", "Nausicaa of the Valley"]:
+        # Backfill anime_movies
+        if len(feed["anime_movies"]) < 25:
+            for kw in ["Spirited Away", "Your Name", "Princess Mononoke", "Howl's Moving Castle", "My Neighbor Totoro", "The Boy and the Heron", "Ghost in the Shell", "Weathering With You", "Suzume", "A Silent Voice"]:
                 sparse_tasks.append(("anime_movies", kw))
-        # Backfill anime_classic with landmark anime titles
-        if len(feed["anime_classic"]) < 8:
-            for kw in ["Akira 1988", "Ghost in the Shell 1995", "Grave of the Fireflies", "Cowboy Bebop", "Neon Genesis Evangelion", "Dragon Ball Z", "Sailor Moon", "Fullmetal Alchemist Brotherhood", "Death Note", "Code Geass"]:
+        # Backfill anime_classic
+        if len(feed["anime_classic"]) < 20:
+            for kw in ["Akira 1988", "Ghost in the Shell 1995", "Grave of the Fireflies", "Cowboy Bebop", "Neon Genesis Evangelion", "Dragon Ball Z", "Sailor Moon", "Fullmetal Alchemist Brotherhood", "Death Note", "Code Geass", "Trigun", "Yu Yu Hakusho"]:
                 sparse_tasks.append(("anime_classic", kw))
         # Backfill cartoons shelf
-        if len(feed["cartoons"]) < 8:
-            for kw in ["Tom and Jerry", "Looney Tunes", "Scooby-Doo", "The Simpsons", "SpongeBob SquarePants", "Adventure Time", "Gravity Falls", "Teen Titans", "Spider-Man Animated", "Batman The Animated Series"]:
+        if len(feed["cartoons"]) < 20:
+            for kw in ["Tom and Jerry", "Looney Tunes", "Scooby-Doo", "The Simpsons", "SpongeBob SquarePants", "Adventure Time", "Gravity Falls", "Teen Titans", "Spider-Man Animated", "Batman The Animated Series", "Rick and Morty", "Ben 10"]:
                 sparse_tasks.append(("cartoons", kw))
 
         if sparse_tasks:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             def _fetch_kw(category, kw):
                 try:
-                    return category, self.search(kw, per_page=2)
+                    return category, self.search(kw, per_page=6)
                 except Exception:
                     return category, []
 
-            with ThreadPoolExecutor(max_workers=8) as executor:
+            with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(_fetch_kw, cat, kw) for cat, kw in sparse_tasks]
                 for fut in as_completed(futures):
                     try:
@@ -1219,7 +1225,7 @@ class MovieBoxEngine:
                                 continue
                             base = _base_title(it.get("title") or "")
                             already_in = any(_base_title(x.get("title") or "") == base or x["subject_id"] == sid for x in feed[cat])
-                            if not already_in and len(feed[cat]) < 15:
+                            if not already_in and len(feed[cat]) < 36:
                                 feed[cat].append(it)
                                 # Backfill anime sub-shelves too
                                 if cat == "anime":
@@ -1278,8 +1284,8 @@ class MovieBoxEngine:
                 return 0.0
 
         top_rated_sorted = sorted([x for x in all_collected if _parse_rating(x.get("rating")) >= 6.5], key=lambda x: _parse_rating(x.get("rating")), reverse=True)
-        feed["top_rated"] = top_rated_sorted[:24]
-        feed["new_releases"] = [x for x in all_collected if str(x.get("year", "")) in ("2026", "2025")][:24]
+        feed["top_rated"] = top_rated_sorted[:30]
+        feed["new_releases"] = [x for x in all_collected if str(x.get("year", "")) in ("2026", "2025")][:30]
         # Genre shelves: deduplicate across genre sections so each title appears in only one genre shelf
         seen_genre = set()
         action_items, scifi_items, comedy_items, horror_items = [], [], [], []
@@ -1296,10 +1302,16 @@ class MovieBoxEngine:
                 comedy_items.append(x); seen_genre.add(sid)
             elif any(gk in g for gk in ["horror", "mystery", "crime"]):
                 horror_items.append(x); seen_genre.add(sid)
-        feed["action"] = action_items[:24]
-        feed["scifi"] = scifi_items[:24]
-        feed["comedy"] = comedy_items[:24]
-        feed["horror"] = horror_items[:24]
+        feed["action"] = action_items[:30]
+        feed["scifi"] = scifi_items[:30]
+        feed["comedy"] = comedy_items[:30]
+        feed["horror"] = horror_items[:30]
+
+        # Normalize all covers to /api/image if served from pbcdn to guarantee 100% Android render
+        for s_key in feed:
+            for item in feed[s_key]:
+                if item.get("cover"):
+                    item["cover"] = normalize_cover(item["cover"])
 
         total_items = sum(len(v) for v in feed.values())
         if total_items >= 20:
@@ -1620,6 +1632,66 @@ async def proxy_online_caption(url: str = Query(...)):
     content = clean_to_webvtt(content)
     return Response(content=content, media_type="text/vtt; charset=utf-8", headers={"Access-Control-Allow-Origin": "*"})
 
+def normalize_cover(cover: Optional[str]) -> Optional[str]:
+    """Force images from pbcdn.aoneroom.com (which lack proper image MIME types) through /api/image proxy"""
+    if not cover or not isinstance(cover, str):
+        return cover
+    if "pbcdn.aoneroom.com" in cover:
+        return f"/api/image?url={urllib.parse.quote(cover, safe='')}"
+    return cover
+
+@app.get("/api/image")
+@app.get("/api/proxy/image")
+async def proxy_image(url: str = Query(...)):
+    """High-speed image proxy that forces image/jpeg and caches covers to prevent Android Fresco MIME decoder failures."""
+    if not url or not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Invalid image URL")
+
+    cache_key = f"img:{hashlib.md5(url.encode()).hexdigest()}"
+    cached_img = app_cache.get(cache_key)
+    if cached_img:
+        return Response(
+            content=cached_img["data"],
+            media_type=cached_img.get("media_type", "image/jpeg"),
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "public, max-age=2592000, immutable",
+            }
+        )
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://movieboxhd.net/",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            r = await client.get(url, headers=headers)
+            if r.status_code != 200:
+                raise HTTPException(status_code=r.status_code, detail="Failed to fetch image")
+
+            raw_bytes = r.content
+            media_type = "image/jpeg"
+            if raw_bytes.startswith(b"\x89PNG"):
+                media_type = "image/png"
+            elif raw_bytes.startswith(b"RIFF") and b"WEBP" in raw_bytes[:16]:
+                media_type = "image/webp"
+            elif raw_bytes.startswith(b"GIF8"):
+                media_type = "image/gif"
+
+            if len(raw_bytes) < 2 * 1024 * 1024:
+                app_cache.set(cache_key, {"data": raw_bytes, "media_type": media_type}, ttl=259200)
+
+            return Response(
+                content=raw_bytes,
+                media_type=media_type,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "public, max-age=2592000, immutable",
+                }
+            )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Image proxy error: {str(e)}")
+
 @app.get("/search")
 def search(q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20):
     if is_adult_query(q):
@@ -1627,6 +1699,9 @@ def search(q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20)
     safe_per_page = min(max(1, int(per_page or 20)), 20)
     try:
         results = engine.search(q, page=page, per_page=safe_per_page)
+        for r in results:
+            if r.get("cover"):
+                r["cover"] = normalize_cover(r["cover"])
         return {"query": q, "page": page, "results": results}
     except Exception:
         return {"query": q, "page": page, "results": []}
@@ -1711,6 +1786,10 @@ def get_detail(subject_id: str):
             _bg_executor.submit(_bg_cs_check)
 
     res["coming_soon"] = coming_soon
+    if res.get("cover"):
+        res["cover"] = normalize_cover(res["cover"])
+    if res.get("backdrop"):
+        res["backdrop"] = normalize_cover(res["backdrop"])
     return res
 
 @app.get("/episodes/{subject_id}")

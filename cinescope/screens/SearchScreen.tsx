@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { CONFIG } from '../config';
-import { api, SearchResult } from '../services/api';
+import { api, SearchResult, resolvePoster } from '../services/api';
 
 const TRENDING_SEARCHES = [
   'Inception', 'Breaking Bad', 'The Batman', 'Oppenheimer',
@@ -172,7 +172,7 @@ export default function SearchScreen() {
                 activeOpacity={0.78}
               >
                 <Image
-                  source={{ uri: item.cover || 'https://via.placeholder.com/70x100/10131C/333' }}
+                  source={{ uri: resolvePoster(item.cover) }}
                   style={styles.thumb}
                   resizeMode="cover"
                 />

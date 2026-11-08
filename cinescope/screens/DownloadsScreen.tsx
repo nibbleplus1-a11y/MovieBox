@@ -15,6 +15,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useDownloads, DownloadTask } from '../services/downloadService';
 import { PlayerAdModal } from '../components/ads/PlayerAdModal';
+import { resolvePoster } from '../services/api';
 
 interface DownloadsScreenProps {
   navigation: any;
@@ -88,7 +89,7 @@ export default function DownloadsScreen({ navigation }: DownloadsScreenProps) {
     return (
       <View style={S.activeCard}>
         {item.poster ? (
-          <Image source={{ uri: item.poster }} style={S.activePoster} />
+          <Image source={{ uri: resolvePoster(item.poster) }} style={S.activePoster} />
         ) : (
           <View style={[S.activePoster, S.posterPlaceholder]}>
             <Ionicons name="film-outline" size={20} color="#64748B" />
@@ -136,7 +137,7 @@ export default function DownloadsScreen({ navigation }: DownloadsScreenProps) {
           activeOpacity={0.8}
         >
           {item.poster ? (
-            <Image source={{ uri: item.poster }} style={S.completedPoster} />
+            <Image source={{ uri: resolvePoster(item.poster) }} style={S.completedPoster} />
           ) : (
             <View style={[S.completedPoster, S.posterPlaceholder]}>
               <Ionicons name="film-outline" size={28} color="#64748B" />

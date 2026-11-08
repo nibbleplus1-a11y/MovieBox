@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -21,23 +21,33 @@ export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({
   const navigation = useNavigation<any>();
   const { activeTasks } = useDownloads();
 
-  // Animated opacity for smooth show/hide
+  const [isDismissed, setIsDismissed] = useState(false);
   const opacity = useRef(new Animated.Value(0)).current;
   const prevCountRef = useRef(0);
 
   const hasActive = activeTasks.length > 0;
 
   useEffect(() => {
+    if (activeTasks.length === 0) {
+      setIsDismissed(false);
+    } else if (activeTasks.length > prevCountRef.current) {
+      // A new download was started by the user — bring floating bar back
+      setIsDismissed(false);
+    }
+    prevCountRef.current = activeTasks.length;
+  }, [activeTasks.length]);
+
+  useEffect(() => {
+    const shouldShow = hasActive && !isDismissed;
     Animated.timing(opacity, {
-      toValue: hasActive ? 1 : 0,
-      duration: hasActive ? 300 : 500,
+      toValue: shouldShow ? 1 : 0,
+      duration: shouldShow ? 300 : 400,
       easing: Easing.out(Easing.quad),
       useNativeDriver: true,
     }).start();
-    prevCountRef.current = activeTasks.length;
-  }, [hasActive]);
+  }, [hasActive, isDismissed]);
 
-  if (!hasActive) return null;
+  if (!hasActive || isDismissed) return null;
 
   const count = activeTasks.length;
   const primaryTask = activeTasks[0];
@@ -103,6 +113,16 @@ export const DownloadFloatingBar: React.FC<DownloadFloatingBarProps> = ({
             <Text style={styles.viewText}>View</Text>
             <Ionicons name="chevron-forward" size={14} color="#38BDF8" />
           </View>
+        </TouchableOpacity>
+
+        {/* Dismiss Button - Hides the bar without stopping or affecting download */}
+        <TouchableOpacity
+          style={styles.closeBtn}
+          onPress={() => setIsDismissed(true)}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="close" size={17} color="#94A3B8" />
         </TouchableOpacity>
       </View>
     </Animated.View>
@@ -203,5 +223,13 @@ const styles = StyleSheet.create({
     color: '#38BDF8',
     fontSize: 11,
     fontWeight: '700',
+  },
+  closeBtn: {
+    padding: 6,
+    marginLeft: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

@@ -20,13 +20,13 @@ import java.util.concurrent.Executors
 /**
  * MovieVerse Background Download Service
  *
- * A proper Android Foreground Service that:
- * 1. Keeps downloading EVEN when the app is closed / swiped away
- * 2. Shows download progress in the status-bar notification tray
- * 3. Saves files to public Downloads/movieverse folder (accessible in Files app)
- * 4. Supports multiple parallel downloads
- * 5. Sends a React-Native-compatible broadcast on progress/complete so the
- *    JS layer can update its UI when the app is back in foreground.
+ * A robust Android Foreground Service that:
+ * 1. Continues downloading reliably even when the app is closed / swiped away
+ * 2. Emits direct in-process events to DownloadBridge + explicit package broadcasts
+ * 3. Automatic resume & retry on network disconnects using HTTP Range headers
+ * 4. Shows download progress in the status-bar notification tray
+ * 5. Saves files to public Downloads/movieverse folder
+ * 6. Supports multiple parallel downloads
  */
 class DownloadService : Service() {
 
@@ -161,6 +161,7 @@ class DownloadService : Service() {
         activeJobs[taskId] = job
 
         showProgressNotification(job, 0)
+        DownloadBridge.updateProgress(taskId, 0L, 0L)
 
         executor.submit {
             runDownload(job)
@@ -175,116 +176,174 @@ class DownloadService : Service() {
         checkStopSelf()
     }
 
-    // ── Core Download Logic ───────────────────────────────────────────────────
+    // ── Core Download Logic (With HTTP Range Resume & Automatic Retry) ────────
 
     private fun runDownload(job: DownloadJob) {
-        var conn: HttpURLConnection? = null
-        var outputStream: OutputStream? = null
         var destUri: Uri? = null
+        var totalBytes = -1L
+        var writtenBytes = 0L
+        var maxRetries = 4
+        var attempt = 0
+        var isSuccess = false
 
-        try {
-            conn = URL(job.url).openConnection() as HttpURLConnection
-            conn.connectTimeout = 20_000
-            conn.readTimeout    = 60_000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android)")
-            conn.connect()
+        val safeFilename = sanitizeFilename(job.filename)
 
-            if (conn.responseCode !in 200..299) {
-                throw IOException("Server returned ${conn.responseCode}")
-            }
+        while (attempt < maxRetries && !job.cancelled && !isSuccess) {
+            attempt++
+            var conn: HttpURLConnection? = null
+            var outputStream: OutputStream? = null
 
-            val totalBytes = conn.contentLengthLong
-            var writtenBytes = 0L
+            try {
+                conn = URL(job.url).openConnection() as HttpURLConnection
+                conn.connectTimeout = 25_000
+                conn.readTimeout    = 60_000
+                conn.instanceFollowRedirects = true
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
+                conn.setRequestProperty("Accept", "*/*")
 
-            // ── Save to public Downloads/movieverse ──────────────────────────
-            val safeFilename = sanitizeFilename(job.filename)
-            val pair = openOutputFile(safeFilename)
-            destUri = pair.first
-            outputStream = pair.second
+                // If resuming, send HTTP Range header
+                if (writtenBytes > 0) {
+                    conn.setRequestProperty("Range", "bytes=$writtenBytes-")
+                    Log.i(TAG, "Resuming download at byte $writtenBytes (attempt $attempt)")
+                }
 
-            val buffer = ByteArray(128 * 1024) // 128 KB chunks
-            val input  = BufferedInputStream(conn.inputStream, 256 * 1024)
+                conn.connect()
+                val code = conn.responseCode
 
-            var lastNotifUpdate = System.currentTimeMillis()
+                // 200 = Full file, 206 = Partial content (resumed), 416 = Range satisfied / already complete
+                if (code == 416 && writtenBytes > 0) {
+                    isSuccess = true
+                    break
+                }
+                if (code !in 200..299) {
+                    throw IOException("HTTP error $code from upstream server")
+                }
 
-            while (true) {
+                // If starting fresh or server doesn't support range
+                if (code == 200) {
+                    totalBytes = conn.contentLengthLong
+                    writtenBytes = 0L
+                    val pair = openOutputFile(safeFilename, append = false)
+                    destUri = pair.first
+                    outputStream = pair.second
+                } else if (code == 206) {
+                    // Resumed
+                    val contentRange = conn.getHeaderField("Content-Range")
+                    if (contentRange != null && contentRange.contains("/")) {
+                        val totalStr = contentRange.substringAfterLast("/")
+                        totalBytes = totalStr.toLongOrNull() ?: totalBytes
+                    }
+                    val pair = openOutputFile(safeFilename, append = true, existingUri = destUri)
+                    destUri = pair.first
+                    outputStream = pair.second
+                } else {
+                    val pair = openOutputFile(safeFilename, append = writtenBytes > 0, existingUri = destUri)
+                    destUri = pair.first
+                    outputStream = pair.second
+                }
+
+                val buffer = ByteArray(128 * 1024) // 128 KB buffer
+                val input  = BufferedInputStream(conn.inputStream, 256 * 1024)
+                var lastNotifUpdate = System.currentTimeMillis()
+
+                while (true) {
+                    if (job.cancelled) {
+                        cleanupFile(destUri)
+                        return
+                    }
+                    val n = input.read(buffer)
+                    if (n == -1) {
+                        isSuccess = true
+                        break
+                    }
+                    outputStream.write(buffer, 0, n)
+                    writtenBytes += n
+
+                    val pct = if (totalBytes > 0) ((writtenBytes * 100) / totalBytes).toInt() else -1
+
+                    // Update UI and notification every ~800ms
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotifUpdate > 800) {
+                        lastNotifUpdate = now
+                        job.progress = pct.coerceIn(0, 99)
+                        updateProgressNotification(job, job.progress, writtenBytes, totalBytes)
+                        broadcastProgress(job.taskId, writtenBytes, totalBytes)
+                    }
+                }
+
+                outputStream.flush()
+
+            } catch (e: Exception) {
+                Log.w(TAG, "Download attempt $attempt failed for ${job.taskId}: ${e.message}")
                 if (job.cancelled) {
                     cleanupFile(destUri)
                     return
                 }
-                val n = input.read(buffer)
-                if (n == -1) break
-                outputStream.write(buffer, 0, n)
-                writtenBytes += n
-
-                val pct = if (totalBytes > 0) ((writtenBytes * 100) / totalBytes).toInt() else -1
-
-                // throttle notification updates to ~1 per second
-                val now = System.currentTimeMillis()
-                if (now - lastNotifUpdate > 900) {
-                    lastNotifUpdate = now
-                    job.progress = pct.coerceIn(0, 99)
-                    updateProgressNotification(job, job.progress, writtenBytes, totalBytes)
-                    broadcastProgress(job.taskId, writtenBytes, totalBytes)
+                if (attempt < maxRetries) {
+                    try { Thread.sleep(2500L * attempt) } catch (_: Exception) {}
                 }
+            } finally {
+                try { outputStream?.close() } catch (_: Exception) {}
+                try { conn?.disconnect() } catch (_: Exception) {}
             }
+        }
 
-            outputStream.flush()
-
-            // ── Notify media scanner ──────────────────────────────────────────
+        if (isSuccess && !job.cancelled) {
+            if (destUri != null) {
+                markMediaStoreComplete(destUri)
+            }
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && destUri != null) {
                 sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, destUri))
             }
-
-            Log.i(TAG, "Download complete: ${job.filename}")
+            Log.i(TAG, "Download complete: ${job.filename} ($writtenBytes bytes)")
             broadcastComplete(job.taskId, destUri?.toString() ?: "")
             showCompleteNotification(job, destUri)
-
-        } catch (e: Exception) {
-            if (!job.cancelled) {
-                Log.e(TAG, "Download error for ${job.taskId}: ${e.message}")
-                broadcastError(job.taskId, e.message ?: "Download failed")
-                showErrorNotification(job)
-                cleanupFile(destUri)
-            }
-        } finally {
-            try { outputStream?.close() } catch (_: Exception) {}
-            try { conn?.disconnect() } catch (_: Exception) {}
-            activeJobs.remove(job.taskId)
-            checkStopSelf()
+        } else if (!job.cancelled) {
+            Log.e(TAG, "Download permanently failed for ${job.taskId} after $attempt attempts")
+            broadcastError(job.taskId, "Download interrupted. Please check network.")
+            showErrorNotification(job)
+            cleanupFile(destUri)
         }
+
+        activeJobs.remove(job.taskId)
+        checkStopSelf()
     }
 
-    // ── File Output ───────────────────────────────────────────────────────────
+    // ── File Output (Scoped MediaStore / Direct File) ──────────────────────────
 
-    /**
-     * Open an output stream to Downloads/movieverse/<filename>.
-     * On Android Q+ uses MediaStore; below Q uses direct File I/O.
-     */
-    private fun openOutputFile(filename: String): Pair<Uri?, OutputStream> {
+    private fun openOutputFile(
+        filename: String,
+        append: Boolean = false,
+        existingUri: Uri? = null
+    ): Pair<Uri?, OutputStream> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val resolver = contentResolver
-            val values = android.content.ContentValues().apply {
-                put(android.provider.MediaStore.Downloads.DISPLAY_NAME, filename)
-                put(android.provider.MediaStore.Downloads.MIME_TYPE, "video/mp4")
-                put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/movieverse")
-                put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+            val uri: Uri
+            if (append && existingUri != null) {
+                uri = existingUri
+            } else {
+                val values = ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, filename)
+                    put(android.provider.MediaStore.Downloads.MIME_TYPE, "video/mp4")
+                    put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/movieverse")
+                    put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+                }
+                uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IOException("MediaStore insert returned null")
             }
-            val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                ?: throw IOException("MediaStore insert returned null")
-            val os  = resolver.openOutputStream(uri)
+            val mode = if (append) "wa" else "w"
+            val os  = resolver.openOutputStream(uri, mode)
                 ?: throw IOException("Cannot open output stream for $uri")
-            // Mark as not pending once done — done in broadcastComplete
             Pair(uri, os)
         } else {
             @Suppress("DEPRECATION")
             val dir = File(
-                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
                 "movieverse"
             )
             if (!dir.exists()) dir.mkdirs()
             val file = File(dir, filename)
-            Pair(Uri.fromFile(file), FileOutputStream(file))
+            Pair(Uri.fromFile(file), FileOutputStream(file, append))
         }
     }
 
@@ -300,12 +359,10 @@ class DownloadService : Service() {
         } catch (_: Exception) {}
     }
 
-    // ── MediaStore Pending Flag ───────────────────────────────────────────────
-
     private fun markMediaStoreComplete(uri: Uri) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
-                val values = android.content.ContentValues().apply {
+                val values = ContentValues().apply {
                     put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
                 }
                 contentResolver.update(uri, values, null, null)
@@ -325,9 +382,10 @@ class DownloadService : Service() {
     private fun updateProgressNotification(job: DownloadJob, pct: Int, written: Long, total: Long) {
         val n = buildProgressNotif(job, pct, written, total)
         notifManager?.notify(notifIdForTask(job.taskId), n)
-        // Also update the foreground summary
+
         val summary = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("MovieVerse — Downloading ${activeJobs.size} file(s)")
+            .setContentText(formatMb(written) + (if (total > 0) " / " + formatMb(total) else ""))
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .setSilent(true)
@@ -335,47 +393,55 @@ class DownloadService : Service() {
         notifManager?.notify(FOREGROUND_ID, summary)
     }
 
-    private fun buildProgressNotif(job: DownloadJob, pct: Int, written: Long, total: Long): android.app.Notification {
-        val sizeText = if (total > 0) " • ${formatMb(written)} / ${formatMb(total)}" else ""
-        val cancelIntent = PendingIntent.getService(
-            this, notifIdForTask(job.taskId),
-            Intent(this, DownloadService::class.java).apply {
-                action = ACTION_CANCEL
-                putExtra(EXTRA_TASK_ID, job.taskId)
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    private fun buildProgressNotif(job: DownloadJob, pct: Int, written: Long, total: Long): Notification {
+        val cancelIntent = Intent(this, DownloadService::class.java).apply {
+            action = ACTION_CANCEL
+            putExtra(EXTRA_TASK_ID, job.taskId)
+        }
+        val cancelPending = PendingIntent.getService(
+            this,
+            notifIdForTask(job.taskId),
+            cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
+
+        val subtext = if (total > 0) {
+            "Downloading • ${formatMb(written)} / ${formatMb(total)}"
+        } else if (written > 0) {
+            "Downloading • ${formatMb(written)}"
+        } else {
+            "Downloading…"
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(job.title)
-            .setContentText("Downloading$sizeText")
-            .setSubText("$pct%")
+            .setContentText(subtext)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setProgress(100, pct.coerceIn(0, 100), pct <= 0 && total <= 0)
+            .setProgress(100, pct.coerceIn(0, 100), pct < 0)
             .setOngoing(true)
             .setSilent(true)
-            .addAction(android.R.drawable.ic_delete, "Cancel", cancelIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPending)
             .build()
     }
 
-    private fun showCompleteNotification(job: DownloadJob, uri: Uri?) {
-        // Mark MediaStore as not-pending
-        uri?.let { markMediaStoreComplete(it) }
-
-        val openIntent = if (uri != null) {
-            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+    private fun showCompleteNotification(job: DownloadJob, destUri: Uri?) {
+        val openIntent = destUri?.let { uri ->
+            Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, "video/mp4")
-                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }.let {
+                PendingIntent.getActivity(
+                    this,
+                    notifIdForTask(job.taskId),
+                    it,
+                    PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+                )
             }
-            PendingIntent.getActivity(
-                this, notifIdForTask(job.taskId),
-                viewIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-        } else null
+        }
 
         val n = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Download complete")
-            .setContentText(job.title)
+            .setContentTitle("Download Complete 🎉")
+            .setContentText("${job.title} is ready to watch offline.")
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setAutoCancel(true)
             .apply { if (openIntent != null) setContentIntent(openIntent) }
@@ -398,10 +464,15 @@ class DownloadService : Service() {
         notifManager?.cancel(notifIdForTask(taskId))
     }
 
-    // ── Broadcasts → JS ───────────────────────────────────────────────────────
+    // ── Broadcasts & Direct Bridge Events → JS ───────────────────────────────
 
     private fun broadcastProgress(taskId: String, written: Long, total: Long) {
+        // 1. Direct in-process bridge (guaranteed, zero latency)
+        DownloadBridge.updateProgress(taskId, written, total)
+
+        // 2. Explicit broadcast with package name as fallback
         sendBroadcast(Intent(BROADCAST_PROGRESS).apply {
+            setPackage(packageName)
             putExtra("task_id", taskId)
             putExtra("written", written)
             putExtra("total", total)
@@ -409,14 +480,18 @@ class DownloadService : Service() {
     }
 
     private fun broadcastComplete(taskId: String, localUri: String) {
+        DownloadBridge.complete(taskId, localUri)
         sendBroadcast(Intent(BROADCAST_COMPLETE).apply {
+            setPackage(packageName)
             putExtra("task_id", taskId)
             putExtra("local_uri", localUri)
         })
     }
 
     private fun broadcastError(taskId: String, error: String) {
+        DownloadBridge.error(taskId, error)
         sendBroadcast(Intent(BROADCAST_ERROR).apply {
+            setPackage(packageName)
             putExtra("task_id", taskId)
             putExtra("error", error)
         })
@@ -431,7 +506,7 @@ class DownloadService : Service() {
                     notifManager?.cancel(FOREGROUND_ID)
                     stopSelf()
                 }
-            }, 2000)
+            }, 2500)
         }
     }
 

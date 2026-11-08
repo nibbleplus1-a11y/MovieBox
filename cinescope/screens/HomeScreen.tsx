@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, Image,
   TouchableOpacity, StyleSheet, Dimensions, ActivityIndicator,
-  RefreshControl,
+  RefreshControl, FlatList, Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,7 +11,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
-import { api, MovieCard as MovieCardData, Feed } from '../services/api';
+import { api, MovieCard as MovieCardData, Feed, resolvePoster } from '../services/api';
 import { WatchProgressService, WatchProgressItem } from '../services/watchProgress';
 import { AdBannerPlaceholder } from '../components/ads/AdBannerPlaceholder';
 
@@ -22,6 +22,81 @@ const CATEGORIES = ['All', 'Movies', 'TV Series', 'Anime', 'Trending'] as const;
 type Category = typeof CATEGORIES[number];
 
 const CACHE_KEY = 'cinescope_feed_cache_v1';
+
+const formatRating = (val?: string | number) => {
+  if (!val || val === 'N/A') return null;
+  const num = typeof val === 'number' ? val : parseFloat(val);
+  return isNaN(num) ? null : num.toFixed(1);
+};
+
+const ShelfCard = React.memo(({ item, onPress }: { item: MovieCardData; onPress: (item: MovieCardData) => void }) => {
+  const itemRating = formatRating(item.rating || item.imdb_rating);
+  return (
+    <TouchableOpacity
+      style={styles.shelfCard}
+      onPress={() => onPress(item)}
+      activeOpacity={0.78}
+    >
+      <View style={styles.posterWrapper}>
+        <Image
+          source={{ uri: resolvePoster(item.cover) }}
+          style={styles.shelfPoster}
+          resizeMode="cover"
+        />
+        {itemRating ? (
+          <View style={styles.ratingBadge}>
+            <Ionicons name="star" size={9} color="#eab308" style={{ marginRight: 3 }} />
+            <Text style={styles.ratingBadgeText}>{itemRating}</Text>
+          </View>
+        ) : null}
+        <View style={styles.qualityTag}>
+          <Text style={styles.qualityTagText}>1080p</Text>
+        </View>
+      </View>
+      <Text style={styles.shelfTitle} numberOfLines={2}>
+        {item.title}
+      </Text>
+    </TouchableOpacity>
+  );
+});
+
+const ShelfSection = React.memo(({
+  section,
+  onPressItem,
+}: {
+  section: { id: string; title: string; icon: string; data: MovieCardData[] };
+  onPressItem: (item: MovieCardData) => void;
+}) => {
+  const renderItem = useCallback(
+    ({ item }: { item: MovieCardData }) => <ShelfCard item={item} onPress={onPressItem} />,
+    [onPressItem]
+  );
+  const keyExtractor = useCallback((item: MovieCardData) => item.subject_id, []);
+
+  return (
+    <View style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          <Ionicons name={section.icon as any} size={16} color="#E50914" />
+          <Text style={styles.sectionTitle}>{section.title}</Text>
+        </View>
+        <Text style={styles.sectionCount}>{section.data.length} Titles</Text>
+      </View>
+      <FlatList
+        horizontal
+        data={section.data}
+        renderItem={renderItem}
+        keyExtractor={keyExtractor}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.shelf}
+        initialNumToRender={4}
+        maxToRenderPerBatch={6}
+        windowSize={3}
+        removeClippedSubviews={Platform.OS === 'android'}
+      />
+    </View>
+  );
+});
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -119,8 +194,14 @@ export default function HomeScreen() {
 
   const allSections = useMemo(() => [
     { id: 'trending', title: 'Trending Now', icon: 'trending-up-outline', category: 'Trending', data: feed?.trending || [] },
+    { id: 'top_rated', title: '⭐ Highest Rated', icon: 'star-outline', category: 'Trending', data: (feed as any)?.top_rated || [] },
+    { id: 'new_releases', title: '🆕 Brand New Releases', icon: 'sparkles-outline', category: 'Trending', data: (feed as any)?.new_releases || [] },
     { id: 'cinema', title: 'In Cinema', icon: 'film-outline', category: 'Movies', data: feed?.cinema || [] },
     { id: 'hollywood', title: 'Hollywood Blockbusters', icon: 'sparkles-outline', category: 'Movies', data: feed?.hollywood || [] },
+    { id: 'action', title: '💥 Action & Thrillers', icon: 'flash-outline', category: 'Movies', data: (feed as any)?.action || [] },
+    { id: 'scifi', title: '🚀 Sci-Fi & Mind-Benders', icon: 'planet-outline', category: 'Movies', data: (feed as any)?.scifi || [] },
+    { id: 'comedy', title: '😂 Comedy & Romance', icon: 'happy-outline', category: 'Movies', data: (feed as any)?.comedy || [] },
+    { id: 'horror', title: '👻 Horror & Mystery', icon: 'skull-outline', category: 'Movies', data: (feed as any)?.horror || [] },
     { id: 'series', title: 'Top TV Series', icon: 'tv-outline', category: 'TV Series', data: feed?.series || [] },
     { id: 'anime', title: 'Popular Anime', icon: 'color-wand-outline', category: 'Anime', data: feed?.anime || [] },
     { id: 'anime_series', title: '🔥 Top Anime Series', icon: 'tv-outline', category: 'Anime', data: (feed as any)?.anime_series || [] },
@@ -135,20 +216,14 @@ export default function HomeScreen() {
   const filteredSections = useMemo(() => {
     return allSections.filter(s => {
       if (!s.data || s.data.length === 0) return false;
-      if (selectedCategory === 'All') return !['anime_series', 'anime_movies', 'anime_classic', 'cartoons'].includes(s.id); // show combined anime in All
-      if (selectedCategory === 'Trending') return s.id === 'trending';
-      if (selectedCategory === 'Movies') return ['cinema', 'hollywood', 'bollywood', 'south_indian'].includes(s.id);
+      if (selectedCategory === 'All') return !['anime_series', 'anime_movies', 'anime_classic', 'cartoons'].includes(s.id);
+      if (selectedCategory === 'Trending') return ['trending', 'top_rated', 'new_releases'].includes(s.id);
+      if (selectedCategory === 'Movies') return ['cinema', 'hollywood', 'action', 'scifi', 'comedy', 'horror', 'bollywood', 'south_indian'].includes(s.id);
       if (selectedCategory === 'TV Series') return ['series', 'asian_drama'].includes(s.id);
-      if (selectedCategory === 'Anime') return ['anime_series', 'anime_movies', 'anime_classic', 'cartoons'].includes(s.id); // properly split in Anime tab
+      if (selectedCategory === 'Anime') return ['anime_series', 'anime_movies', 'anime_classic', 'cartoons'].includes(s.id);
       return true;
     });
   }, [allSections, selectedCategory]);
-
-  const formatRating = (val?: string | number) => {
-    if (!val || val === 'N/A') return null;
-    const num = typeof val === 'number' ? val : parseFloat(val);
-    return isNaN(num) ? null : num.toFixed(1);
-  };
 
   if (loading) {
     return (
@@ -242,7 +317,7 @@ export default function HomeScreen() {
               onPress={() => openDetail(hero)}
             >
               <Image
-                source={{ uri: hero.cover }}
+                source={{ uri: resolvePoster(hero.cover) }}
                 style={styles.heroImage}
                 resizeMode="cover"
               />
@@ -358,7 +433,7 @@ export default function HomeScreen() {
                   >
                     <View style={styles.posterWrapper}>
                       <Image
-                        source={{ uri: item.cover || 'https://via.placeholder.com/300x450?text=No+Poster' }}
+                        source={{ uri: resolvePoster(item.cover) }}
                         style={styles.shelfPoster}
                         resizeMode="cover"
                       />
@@ -387,55 +462,10 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* Dynamic Content Shelves */}
+        {/* Dynamic Content Shelves (Memoized FlatList per shelf) */}
         {filteredSections.map((section, idx) => (
           <React.Fragment key={section.id}>
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-                  <Ionicons name={section.icon as any} size={16} color="#E50914" />
-                  <Text style={styles.sectionTitle}>{section.title}</Text>
-                </View>
-                <Text style={styles.sectionCount}>{section.data.length} Titles</Text>
-              </View>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.shelf}
-              >
-                {section.data.map((item: any) => {
-                  const itemRating = formatRating(item.rating || item.imdb_rating);
-                  return (
-                    <TouchableOpacity
-                      key={item.subject_id}
-                      style={styles.shelfCard}
-                      onPress={() => openDetail(item)}
-                      activeOpacity={0.78}
-                    >
-                      <View style={styles.posterWrapper}>
-                        <Image
-                          source={{ uri: item.cover }}
-                          style={styles.shelfPoster}
-                          resizeMode="cover"
-                        />
-                        {itemRating ? (
-                          <View style={styles.ratingBadge}>
-                            <Ionicons name="star" size={9} color="#eab308" style={{ marginRight: 3 }} />
-                            <Text style={styles.ratingBadgeText}>{itemRating}</Text>
-                          </View>
-                        ) : null}
-                        <View style={styles.qualityTag}>
-                          <Text style={styles.qualityTagText}>1080p</Text>
-                        </View>
-                      </View>
-                      <Text style={styles.shelfTitle} numberOfLines={2}>
-                        {item.title}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
+            <ShelfSection section={section} onPressItem={openDetail} />
 
             {/* In-Feed Native Ad Banner Slot between shelves */}
             {idx === 1 && (

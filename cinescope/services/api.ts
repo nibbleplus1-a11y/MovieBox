@@ -23,6 +23,16 @@ export interface Feed {
   series?: MovieCard[];
   anime?: MovieCard[];
   asian_drama?: MovieCard[];
+  top_rated?: MovieCard[];
+  new_releases?: MovieCard[];
+  action?: MovieCard[];
+  scifi?: MovieCard[];
+  comedy?: MovieCard[];
+  horror?: MovieCard[];
+  anime_series?: MovieCard[];
+  anime_movies?: MovieCard[];
+  anime_classic?: MovieCard[];
+  cartoons?: MovieCard[];
 }
 
 export interface StreamSource {
@@ -120,5 +130,21 @@ export const api = {
     }
     return `${BASE}${captionUrl}`;
   },
+
+  resolvePoster: (url?: string) => resolvePoster(url),
 };
+
+export function resolvePoster(url?: string): string {
+  if (!url || typeof url !== 'string' || !url.trim()) {
+    return 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&q=80';
+  }
+  const clean = url.trim();
+  if (clean.startsWith('/api/image')) {
+    return `${BASE}${clean}`;
+  }
+  if (clean.includes('pbcdn.aoneroom.com') || clean.includes('aoneroom.com')) {
+    return `${BASE}/api/image?url=${encodeURIComponent(clean)}`;
+  }
+  return clean;
+}
 

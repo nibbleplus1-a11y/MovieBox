@@ -63,6 +63,7 @@ function MainTabs() {
 
   return (
     <Tab.Navigator
+      backBehavior="history"
       screenOptions={({ route }: { route: any }) => ({
         headerShown: false,
         tabBarStyle: {

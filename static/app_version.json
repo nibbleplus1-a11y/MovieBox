@@ -1,0 +1,7 @@
+{
+  "version": "1.2.6",
+  "version_code": 19,
+  "download_url": "https://movieverse.click/download/app",
+  "changelog": "Instant poster loading fix, 350+ expanded movie catalog, dismissible download bar with fullscreen auto-hide, TV season state retention & smooth 60fps scrolling!",
+  "force_update": false
+}

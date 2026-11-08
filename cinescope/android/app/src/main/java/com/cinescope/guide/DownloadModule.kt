@@ -10,20 +10,38 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 
 /**
  * React Native Module that bridges the JS layer with DownloadService.
- *
- * JS API (accessed via NativeModules.MovieVerseDownloader):
- *   startDownload(taskId, url, filename, title)
- *   cancelDownload(taskId)
- *   Events emitted:
- *     "MVDownloadProgress" → { taskId, written, total }
- *     "MVDownloadComplete" → { taskId, localUri }
- *     "MVDownloadError"    → { taskId, error }
+ * Uses both direct in-process DownloadBridge and Android BroadcastReceiver
+ * for 100% reliable event delivery on all Android versions.
  */
 class DownloadModule(private val reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
     companion object {
         const val MODULE_NAME = "MovieVerseDownloader"
+    }
+
+    private val bridgeListener = object : DownloadBridge.Listener {
+        override fun onProgress(taskId: String, written: Long, total: Long) {
+            emit("MVDownloadProgress", Arguments.createMap().apply {
+                putString("taskId", taskId)
+                putDouble("written", written.toDouble())
+                putDouble("total", total.toDouble())
+            })
+        }
+
+        override fun onComplete(taskId: String, localUri: String) {
+            emit("MVDownloadComplete", Arguments.createMap().apply {
+                putString("taskId", taskId)
+                putString("localUri", localUri)
+            })
+        }
+
+        override fun onError(taskId: String, error: String) {
+            emit("MVDownloadError", Arguments.createMap().apply {
+                putString("taskId", taskId)
+                putString("error", error)
+            })
+        }
     }
 
     private val broadcastReceiver = object : BroadcastReceiver() {
@@ -63,6 +81,10 @@ class DownloadModule(private val reactContext: ReactApplicationContext) :
 
     override fun initialize() {
         super.initialize()
+        // Register direct in-process listener (guaranteed delivery)
+        DownloadBridge.listener = bridgeListener
+
+        // Also register system broadcast receiver as fallback
         val filter = IntentFilter().apply {
             addAction(DownloadService.BROADCAST_PROGRESS)
             addAction(DownloadService.BROADCAST_COMPLETE)
@@ -76,6 +98,7 @@ class DownloadModule(private val reactContext: ReactApplicationContext) :
     }
 
     override fun invalidate() {
+        DownloadBridge.listener = null
         try { reactContext.unregisterReceiver(broadcastReceiver) } catch (_: Exception) {}
         super.invalidate()
     }
@@ -88,6 +111,24 @@ class DownloadModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun cancelDownload(taskId: String) {
         DownloadService.cancelDownload(reactContext, taskId)
+    }
+
+    @ReactMethod
+    fun getActiveSnapshots(promise: Promise) {
+        try {
+            val map = Arguments.createMap()
+            DownloadBridge.getAllSnapshots().forEach { (k, v) ->
+                map.putMap(k, Arguments.createMap().apply {
+                    putString("taskId", v.taskId)
+                    putDouble("written", v.written.toDouble())
+                    putDouble("total", v.total.toDouble())
+                    putInt("progress", v.progress)
+                })
+            }
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.resolve(Arguments.createMap())
+        }
     }
 
     @ReactMethod

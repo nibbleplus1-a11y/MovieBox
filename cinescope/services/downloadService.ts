@@ -61,6 +61,7 @@ function formatBytes(bytes: number): string {
 const NativeDownloader = NativeModules.MovieVerseDownloader as {
   startDownload(taskId: string, url: string, filename: string, title: string): void;
   cancelDownload(taskId: string): void;
+  getActiveSnapshots?: () => Promise<Record<string, { taskId: string; written: number; total: number; progress: number }>>;
 } | undefined;
 
 const useNativeService = Platform.OS === 'android' && !!NativeDownloader;
@@ -92,8 +93,7 @@ class DownloadManager {
       if (savedData) {
         const list: DownloadTask[] = JSON.parse(savedData);
         for (const item of list) {
-          if (item.status === 'completed' && item.localUri) {
-            // For native-saved files, we just trust the saved localUri
+          if (item.status === 'completed' || item.status === 'downloading') {
             this.tasks.set(item.id, item);
           }
         }
@@ -111,8 +111,22 @@ class DownloadManager {
 
         this.nativeSubs.push(
           this.emitter.addListener('MVDownloadProgress', (e: any) => {
-            const task = this.tasks.get(e.taskId);
-            if (!task || task.status !== 'downloading') return;
+            let task = this.tasks.get(e.taskId);
+            if (!task) {
+              task = {
+                id: e.taskId,
+                url: '',
+                filename: 'download.mp4',
+                title: 'Downloading…',
+                progress: 0,
+                bytesWritten: e.written,
+                totalBytes: e.total,
+                status: 'downloading',
+                startedAt: Date.now(),
+              };
+              this.tasks.set(e.taskId, task);
+            }
+            task.status = 'downloading';
             task.bytesWritten = e.written;
             task.totalBytes   = e.total;
             if (e.total > 0) {
@@ -126,23 +140,43 @@ class DownloadManager {
 
           this.emitter.addListener('MVDownloadComplete', async (e: any) => {
             const task = this.tasks.get(e.taskId);
-            if (!task) return;
-            task.status      = 'completed';
-            task.progress    = 1.0;
-            task.localUri    = e.localUri;
-            task.completedAt = Date.now();
+            if (task) {
+              task.status      = 'completed';
+              task.progress    = 1.0;
+              task.localUri    = e.localUri;
+              task.completedAt = Date.now();
+            }
             this.notify();
             await this.persistTasks();
           }),
 
           this.emitter.addListener('MVDownloadError', (e: any) => {
             const task = this.tasks.get(e.taskId);
-            if (!task) return;
-            task.status = 'error';
-            task.error  = e.error;
+            if (task) {
+              task.status = 'error';
+              task.error  = e.error;
+            }
             this.notify();
           }),
         );
+
+        // Fetch live snapshots from native service if any downloads are ongoing
+        if (typeof NativeDownloader.getActiveSnapshots === 'function') {
+          NativeDownloader.getActiveSnapshots().then((snapshots) => {
+            if (snapshots && Object.keys(snapshots).length > 0) {
+              for (const [id, snap] of Object.entries(snapshots)) {
+                let task = this.tasks.get(id);
+                if (task) {
+                  task.bytesWritten = snap.written;
+                  task.totalBytes = snap.total;
+                  task.progress = snap.total > 0 ? Math.min(0.99, snap.written / snap.total) : (snap.progress / 100);
+                  task.fileSize = snap.total > 0 ? `${formatBytes(snap.written)} / ${formatBytes(snap.total)}` : formatBytes(snap.written);
+                }
+              }
+              this.notify();
+            }
+          }).catch(() => {});
+        }
       } catch (err) {
         console.warn('Failed to attach native download event listeners:', err);
       }
@@ -151,8 +185,8 @@ class DownloadManager {
 
   private async persistTasks() {
     try {
-      const completed = Array.from(this.tasks.values()).filter((t) => t.status === 'completed');
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(completed));
+      const persistable = Array.from(this.tasks.values()).filter((t) => t.status === 'completed' || t.status === 'downloading');
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(persistable));
     } catch (e) {
       console.warn('Failed to persist downloads:', e);
     }

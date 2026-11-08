@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { api, DetailData } from '../services/api';
+import { api, DetailData, resolvePoster } from '../services/api';
 import { WatchlistService } from '../services/watchlist';
 import { WatchProgressService, WatchProgressItem } from '../services/watchProgress';
 import { downloadManager } from '../services/downloadService';
@@ -17,6 +17,9 @@ import { PlayerAdModal } from '../components/ads/PlayerAdModal';
 
 const { width } = Dimensions.get('window');
 const BACKDROP_H = 340;
+
+// Module-level persistent cache: keeps user on their selected season when switching tabs or reopening show
+const lastSelectedSeasonCache = new Map<string, number>();
 
 // ── Duration formatter ────────────────────────────────────────────────────────
 function formatDuration(raw: any): string | null {
@@ -105,7 +108,7 @@ export default function DetailScreen() {
   const [inWatchlist, setInWatchlist]         = useState(false);
   const [savedProgress, setSavedProgress]     = useState<WatchProgressItem | null>(null);
   const [seasonsData, setSeasonsData]         = useState<any[]>([]);
-  const [selectedSeason, setSelectedSeason]   = useState(1);
+  const [selectedSeason, setSelectedSeason]   = useState(() => lastSelectedSeasonCache.get(id) ?? 1);
   const [synopsisExpanded, setSynopsisExpanded] = useState(false);
   const fadeIn = useRef(new Animated.Value(0)).current;
 
@@ -130,10 +133,17 @@ export default function DetailScreen() {
         const ep = await api.episodes(id).catch(() => ({ seasons: [] }));
         if (ep?.seasons?.length) {
           setSeasonsData(ep.seasons);
-          if (progress && progress.season > 0) {
-            setSelectedSeason(progress.season);
+          const cachedSeason = lastSelectedSeasonCache.get(id);
+          if (cachedSeason && ep.seasons.some((s: any) => s.season === cachedSeason)) {
+            setSelectedSeason(cachedSeason);
+          } else if (progress && progress.season > 0) {
+            const restored = progress.season;
+            setSelectedSeason(restored);
+            lastSelectedSeasonCache.set(id, restored);
           } else {
-            setSelectedSeason(ep.seasons[0].season || 1);
+            const first = ep.seasons[0].season || 1;
+            setSelectedSeason(first);
+            lastSelectedSeasonCache.set(id, first);
           }
         }
       }
@@ -161,7 +171,10 @@ export default function DetailScreen() {
       WatchProgressService.get(id).then((p) => {
         if (isMounted && p) {
           setSavedProgress(p);
-          if (p.season > 0) setSelectedSeason(p.season);
+          if (p.season > 0) {
+            setSelectedSeason(p.season);
+            lastSelectedSeasonCache.set(id, p.season);
+          }
         }
       });
       return () => { isMounted = false; };
@@ -267,7 +280,7 @@ export default function DetailScreen() {
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const d            = detail;
-  const cover        = d?.cover || initCover;
+  const cover        = resolvePoster(d?.cover || initCover);
   const title        = d?.title || initTitle;
   const rawRating    = (d as any)?.imdb_rating ?? (d as any)?.rating;
   const rating       = (() => { const n = parseFloat(String(rawRating || '')); return isNaN(n) ? null : n.toFixed(1); })();
@@ -485,7 +498,7 @@ export default function DetailScreen() {
               {seasonsData.length > 1 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginBottom: 12 }}>
                   {seasonsData.map(s => (
-                    <TouchableOpacity key={s.season} style={[S.seasonTab, selectedSeason === s.season && S.seasonTabActive]} onPress={() => setSelectedSeason(s.season)}>
+                    <TouchableOpacity key={s.season} style={[S.seasonTab, selectedSeason === s.season && S.seasonTabActive]} onPress={() => { setSelectedSeason(s.season); lastSelectedSeasonCache.set(id, s.season); }}>
                       <Text style={[S.seasonTabTxt, selectedSeason === s.season && S.seasonTabTxtActive]}>Season {s.season}</Text>
                       {s.episode_count > 0 && <Text style={[S.epCount, selectedSeason === s.season && { color: 'rgba(255,255,255,0.7)' }]}>{s.episode_count} eps</Text>}
                     </TouchableOpacity>

@@ -9,6 +9,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { CONFIG } from '../config';
 import { WatchlistService, WatchlistItem } from '../services/watchlist';
+import { resolvePoster } from '../services/api';
 
 const { width } = Dimensions.get('window');
 const CARD_W = (width - 48) / 2;
@@ -95,7 +96,7 @@ export default function WatchlistScreen() {
       activeOpacity={0.8}
     >
       <Image
-        source={{ uri: item.cover || 'https://via.placeholder.com/180x265/10131C/333' }}
+        source={{ uri: resolvePoster(item.cover) }}
         style={styles.gridPoster}
         resizeMode="cover"
       />
@@ -133,7 +134,7 @@ export default function WatchlistScreen() {
       activeOpacity={0.78}
     >
       <Image
-        source={{ uri: item.cover || 'https://via.placeholder.com/70x100/10131C/333' }}
+        source={{ uri: resolvePoster(item.cover) }}
         style={styles.listThumb}
         resizeMode="cover"
       />

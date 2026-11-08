@@ -474,8 +474,8 @@ export default function PlayerScreen() {
         onClose={onCompletePostroll}
       />
 
-      {/* NON-BLOCKING BACKGROUND DOWNLOAD FLOATING INDICATOR */}
-      <DownloadFloatingBar bottomOffset={isFullscreen ? 24 : insets.bottom + 16} />
+      {/* NON-BLOCKING BACKGROUND DOWNLOAD FLOATING INDICATOR (Hidden in Fullscreen) */}
+      {!isFullscreen && <DownloadFloatingBar bottomOffset={insets.bottom + 16} />}
     </View>
   );
 }
