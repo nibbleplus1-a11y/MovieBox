@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Platform, PermissionsAndroid } from 'react-native';
+import { Platform, PermissionsAndroid, AppState } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
@@ -142,18 +142,42 @@ export default function App() {
       ).catch(() => {});
     }
     // Check for updates on startup
+    const runUpdateCheck = () => {
+      checkForAppUpdate().then((info) => {
+        if (info && info.available) {
+          setUpdateInfo(info);
+        }
+      });
+    };
+
+    runUpdateCheck();
+
+    // Also check when app comes back to foreground
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        runUpdateCheck();
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, []);
+
+  const handleSplashFinish = () => {
+    setShowSplash(false);
     checkForAppUpdate().then((info) => {
       if (info && info.available) {
         setUpdateInfo(info);
       }
     });
-  }, []);
+  };
 
   if (showSplash) {
     return (
       <SafeAreaProvider>
         <StatusBar style="light" />
-        <SplashScreen onFinish={() => setShowSplash(false)} />
+        <SplashScreen onFinish={handleSplashFinish} />
       </SafeAreaProvider>
     );
   }

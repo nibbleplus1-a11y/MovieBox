@@ -510,8 +510,13 @@ class DownloadService : Service() {
         }
     }
 
-    private fun sanitizeFilename(name: String): String =
-        name.replace(Regex("[^a-zA-Z0-9._\\-]"), "_").take(200)
+    private fun sanitizeFilename(name: String): String {
+        var clean = name.replace(Regex("[^a-zA-Z0-9._\\-]"), "_").take(195)
+        if (!clean.lowercase().endsWith(".mp4")) {
+            clean += ".mp4"
+        }
+        return clean
+    }
 
     private fun formatMb(bytes: Long): String {
         if (bytes <= 0) return "0 MB"

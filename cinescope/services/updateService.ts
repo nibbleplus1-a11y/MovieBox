@@ -112,7 +112,7 @@ export async function downloadAndInstallApk(
     try {
       await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
         data: contentUri,
-        flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+        flags: 268435457, // FLAG_ACTIVITY_NEW_TASK | FLAG_GRANT_READ_URI_PERMISSION
         type: 'application/vnd.android.package-archive',
       });
     } catch (intentErr) {

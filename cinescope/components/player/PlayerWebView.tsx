@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useRef } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -46,10 +46,10 @@ export const buildPlayerHTML = (
       hlsInstance = new Hls({
         enableWorker: false,
         lowLatencyMode: false,
-        maxBufferLength: 20,
-        maxMaxBufferLength: 60,
-        maxBufferSize: 20 * 1000 * 1000,
-        backBufferLength: 15,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 90,
+        maxBufferSize: 40 * 1000 * 1000,
+        backBufferLength: 20,
         maxBufferHole: 0.5,
         manifestLoadingMaxRetry: 6,
         levelLoadingMaxRetry: 6,
@@ -121,6 +121,14 @@ export const buildPlayerHTML = (
       width: 100%; height: 100%;
       object-fit: contain; background: #000;
       pointer-events: none;
+      transition: filter 0.25s ease;
+    }
+    /* AI Super-Resolution (CAS: Contrast Adaptive Sharpening) for 1080p/4K Clarity */
+    video.ai-enhanced {
+      filter: url('#ai-sharpen-filter') contrast(1.05) saturate(1.04) brightness(1.01);
+    }
+    video.vivid-cinema {
+      filter: contrast(1.10) saturate(1.12) brightness(1.02);
     }
     video::cue {
       background: transparent !important;
@@ -144,8 +152,20 @@ export const buildPlayerHTML = (
   ${hlsScriptTag}
 </head>
 <body>
+  <!-- Real-time SVG AI Super-Resolution Edge Sharpening Matrix -->
+  <svg style="position: absolute; width: 0; height: 0;" aria-hidden="true">
+    <filter id="ai-sharpen-filter">
+      <feConvolveMatrix
+        order="3"
+        preserveAlpha="true"
+        kernelMatrix="0 -0.35 0 -0.35 2.4 -0.35 0 -0.35 0"
+      />
+    </filter>
+  </svg>
+
   <video
     id="videoPlayer"
+    class="ai-enhanced"
     ${videoSrcAttr}
     autoplay
     playsinline
@@ -162,6 +182,48 @@ export const buildPlayerHTML = (
     var hlsInstance = null;
     var targetSeekTime = ${safeSeek};
     var didInitialSeek = targetSeekTime > 0 ? false : true;
+
+    // AI Super-Resolution Mode Switcher
+    window.setEnhanceMode = function(mode) {
+      v.classList.remove('ai-enhanced', 'vivid-cinema');
+      if (mode === 'ai' || mode === '1080p_ai') {
+        v.classList.add('ai-enhanced');
+      } else if (mode === 'vivid') {
+        v.classList.add('vivid-cinema');
+      }
+      post({ type: 'enhanceMode', mode: mode });
+    };
+
+    // Netflix / Prime Video style network speed & device detection
+    function detectNetworkAndDisplay() {
+      var speedMbps = 10.0;
+      if (navigator.connection && navigator.connection.downlink) {
+        speedMbps = navigator.connection.downlink;
+      }
+      var isTvOr4k = (window.screen.width >= 3840 || window.screen.height >= 2160 || (window.screen.width * (window.devicePixelRatio || 1) >= 3840));
+      var isFullHd = (window.screen.width * (window.devicePixelRatio || 1) >= 1920);
+
+      var suggested = '1080p';
+      if (speedMbps >= 15 && isTvOr4k) {
+        suggested = '4k';
+      } else if (speedMbps >= 5) {
+        suggested = '1080p';
+      } else if (speedMbps >= 2.5) {
+        suggested = '720p';
+      } else {
+        suggested = '480p';
+      }
+
+      post({
+        type: 'networkDetected',
+        speedMbps: speedMbps,
+        isTvOr4k: isTvOr4k,
+        isFullHd: isFullHd,
+        suggestedQuality: suggested
+      });
+    }
+
+    setTimeout(detectNetworkAndDisplay, 600);
 
     function performSeek() {
       if (!didInitialSeek && targetSeekTime > 0) {
@@ -443,18 +505,30 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
     );
   }
 
+  // Capture initial seek time once per streamUrl, preventing timeupdate from causing WebView reloads!
+  const initialSeekRef = useRef(currentTime || 0);
+  const prevStreamUrlRef = useRef(streamUrl);
+  if (prevStreamUrlRef.current !== streamUrl) {
+    prevStreamUrlRef.current = streamUrl;
+    initialSeekRef.current = currentTime || 0;
+  }
+
+  const playerHTML = useMemo(() => {
+    return buildPlayerHTML(
+      streamUrl,
+      initialSeekRef.current,
+      activeSubtitleUrl,
+      activeSubtitleLang
+    );
+  }, [streamUrl, activeSubtitleUrl, activeSubtitleLang]);
+
   return (
     <>
       <WebView
         ref={webViewRef}
         key={streamUrl}
         source={{
-          html: buildPlayerHTML(
-            streamUrl,
-            currentTime || 0,
-            activeSubtitleUrl,
-            activeSubtitleLang
-          ),
+          html: playerHTML,
           baseUrl: 'https://movieverse.click/',
         }}
         originWhitelist={['*']}

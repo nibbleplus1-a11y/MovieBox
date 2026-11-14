@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
 
@@ -61,6 +61,43 @@ if os.path.exists(STATIC_DIR):
 @app.get("/")
 def read_root():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def serve_robots():
+    return """User-agent: *
+Allow: /
+Disallow: /api/admin/
+Disallow: /api/proxy/
+
+Sitemap: https://movieverse.click/sitemap.xml
+"""
+
+@app.get("/sitemap.xml")
+def serve_sitemap():
+    urls = [
+        ("https://movieverse.click/", "1.0", "daily"),
+        ("https://movieverse.click/download/app", "0.9", "weekly"),
+    ]
+    try:
+        curated = engine.get_curated_feed()
+        seen_ids = set()
+        for cat in ["trending", "cinema", "hollywood", "series", "anime", "bollywood"]:
+            for it in curated.get(cat, [])[:30]:
+                sid = it.get("subject_id")
+                if sid and sid not in seen_ids:
+                    seen_ids.add(sid)
+                    urls.append((f"https://movieverse.click/?id={sid}", "0.8", "weekly"))
+    except Exception:
+        pass
+
+    xml_lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+    ]
+    for loc, priority, changefreq in urls:
+        xml_lines.append(f'  <url><loc>{loc}</loc><changefreq>{changefreq}</changefreq><priority>{priority}</priority></url>')
+    xml_lines.append('</urlset>')
+    return Response(content="\n".join(xml_lines), media_type="application/xml")
 
 @app.get("/sw.js")
 def serve_sw():
@@ -1640,6 +1677,16 @@ def normalize_cover(cover: Optional[str]) -> Optional[str]:
         return f"/api/image?url={urllib.parse.quote(cover, safe='')}"
     return cover
 
+_IMAGE_PROXY_CLIENT: Optional[httpx.AsyncClient] = None
+
+def get_image_proxy_client() -> httpx.AsyncClient:
+    global _IMAGE_PROXY_CLIENT
+    if _IMAGE_PROXY_CLIENT is None or _IMAGE_PROXY_CLIENT.is_closed:
+        timeout = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=10.0)
+        limits = httpx.Limits(max_keepalive_connections=200, max_connections=400, keepalive_expiry=120.0)
+        _IMAGE_PROXY_CLIENT = httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True)
+    return _IMAGE_PROXY_CLIENT
+
 @app.get("/api/image")
 @app.get("/api/proxy/image")
 async def proxy_image(url: str = Query(...)):
@@ -1664,31 +1711,31 @@ async def proxy_image(url: str = Query(...)):
         "Referer": "https://movieboxhd.net/",
     }
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code != 200:
-                raise HTTPException(status_code=r.status_code, detail="Failed to fetch image")
+        client = get_image_proxy_client()
+        r = await client.get(url, headers=headers)
+        if r.status_code != 200:
+            raise HTTPException(status_code=r.status_code, detail="Failed to fetch image")
 
-            raw_bytes = r.content
-            media_type = "image/jpeg"
-            if raw_bytes.startswith(b"\x89PNG"):
-                media_type = "image/png"
-            elif raw_bytes.startswith(b"RIFF") and b"WEBP" in raw_bytes[:16]:
-                media_type = "image/webp"
-            elif raw_bytes.startswith(b"GIF8"):
-                media_type = "image/gif"
+        raw_bytes = r.content
+        media_type = "image/jpeg"
+        if raw_bytes.startswith(b"\x89PNG"):
+            media_type = "image/png"
+        elif raw_bytes.startswith(b"RIFF") and b"WEBP" in raw_bytes[:16]:
+            media_type = "image/webp"
+        elif raw_bytes.startswith(b"GIF8"):
+            media_type = "image/gif"
 
-            if len(raw_bytes) < 2 * 1024 * 1024:
-                app_cache.set(cache_key, {"data": raw_bytes, "media_type": media_type}, ttl=259200)
+        if len(raw_bytes) < 2 * 1024 * 1024:
+            app_cache.set(cache_key, {"data": raw_bytes, "media_type": media_type}, ttl=259200)
 
-            return Response(
-                content=raw_bytes,
-                media_type=media_type,
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Cache-Control": "public, max-age=2592000, immutable",
-                }
-            )
+        return Response(
+            content=raw_bytes,
+            media_type=media_type,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "public, max-age=2592000, immutable",
+            }
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Image proxy error: {str(e)}")
 

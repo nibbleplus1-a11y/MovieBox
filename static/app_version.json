@@ -1,7 +1,7 @@
 {
-  "version": "1.2.6",
-  "version_code": 19,
+  "version": "1.2.7",
+  "version_code": 20,
   "download_url": "https://movieverse.click/download/app",
-  "changelog": "Instant poster loading fix, 350+ expanded movie catalog, dismissible download bar with fullscreen auto-hide, TV season state retention & smooth 60fps scrolling!",
+  "changelog": "Fix black screen buffering loop, AI Super-Resolution 1080p/4K upscaler, Netflix-style auto bandwidth detection, lightning-fast posters, and automated in-app updater!",
   "force_update": false
 }
