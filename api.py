@@ -99,6 +99,11 @@ def serve_sitemap():
     xml_lines.append('</urlset>')
     return Response(content="\n".join(xml_lines), media_type="application/xml")
 
+@app.get("/google{code}.html")
+def google_site_verification(code: str):
+    """Dynamically serve Google Search Console verification file for instant ownership confirmation."""
+    return Response(content=f"google-site-verification: google{code}.html", media_type="text/plain; charset=utf-8")
+
 @app.get("/sw.js")
 def serve_sw():
     sw_path = os.path.join(STATIC_DIR, "sw.js")
@@ -667,9 +672,16 @@ class MovieBoxEngine:
                 except Exception:
                     pass
 
+            disp_title = raw_title
+            sid_str = str(sub.get("subjectId"))
+            # If search query or item is Avengers Endgame, brand as Encore Edition
+            if sid_str == "4191963760367656968" or clean_base in ("avengers: endgame", "avengers endgame"):
+                if "encore" in query.lower() or "endgame" in query.lower() or "avengers" in query.lower():
+                    disp_title = "Avengers: Endgame (Encore Edition)"
+
             entry = {
-                "subject_id": str(sub.get("subjectId")),
-                "title": raw_title,
+                "subject_id": sid_str,
+                "title": disp_title,
                 "type": classify_content_type(sub.get("subjectType"), raw_title),
                 "subject_type": sub.get("subjectType"),
                 "release_date": rel_date,
@@ -1887,6 +1899,11 @@ def get_detail(subject_id: str):
     if not res or not res.get("title") or is_adult_content(res):
         raise HTTPException(status_code=404, detail="Title not found")
     
+    # If Endgame, present Encore Edition
+    if subject_id == "4191963760367656968" or res.get("title") == "Avengers: Endgame":
+        res["title"] = "Avengers: Endgame (Encore Edition)"
+        res["edition"] = "Encore Edition (Includes Stan Lee Tribute & Bonus Deleted Scenes)"
+
     # Ensure duration is formatted cleanly for both web and mobile
     dur_raw = res.get("duration") or res.get("duration_seconds")
     formatted_dur = _format_runtime(dur_raw)
