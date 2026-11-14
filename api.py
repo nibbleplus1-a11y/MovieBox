@@ -73,6 +73,7 @@ Sitemap: https://movieverse.click/sitemap.xml
 """
 
 @app.get("/sitemap.xml")
+@app.get("/Sitemap.xml")
 def serve_sitemap():
     urls = [
         ("https://movieverse.click/", "1.0", "daily"),
