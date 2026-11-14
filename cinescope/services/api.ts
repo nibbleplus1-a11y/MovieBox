@@ -138,11 +138,43 @@ export function resolvePoster(url?: string): string {
   if (!url || typeof url !== 'string' || !url.trim()) {
     return 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&q=80';
   }
-  const clean = url.trim();
-  if (clean.startsWith('/api/image')) {
+
+  let clean = url.trim();
+
+  // Unwrap any nested /api/image?url= or /api/proxy/image?url= chain
+  // so we always get back the raw canonical image URL before rewrapping.
+  for (let i = 0; i < 5; i++) {
+    const proxyPrefixes = [
+      `${BASE}/api/image?url=`,
+      `${BASE}/api/proxy/image?url=`,
+      '/api/image?url=',
+      '/api/proxy/image?url=',
+    ];
+    let unwrapped = false;
+    for (const prefix of proxyPrefixes) {
+      if (clean.startsWith(prefix)) {
+        try {
+          const inner = clean.slice(prefix.length);
+          // inner may contain extra query params after the url value — isolate url portion
+          const rawUrl = decodeURIComponent(inner.split('&')[0]);
+          clean = rawUrl;
+          unwrapped = true;
+          break;
+        } catch {
+          // malformed – stop unwrapping
+          break;
+        }
+      }
+    }
+    if (!unwrapped) break;
+  }
+
+  // Now route the clean raw URL appropriately
+  if (clean.startsWith('/api/image') || clean.startsWith('/api/proxy/image')) {
+    // Leftover relative proxy path — just prefix BASE (should be rare after unwrap)
     return `${BASE}${clean}`;
   }
-  if (clean.includes('pbcdn.aoneroom.com') || clean.includes('aoneroom.com')) {
+  if (clean.includes('pbcdn.aoneroom.com') || clean.includes('pbcdnw.aoneroom.com') || clean.includes('aoneroom.com')) {
     return `${BASE}/api/image?url=${encodeURIComponent(clean)}`;
   }
   return clean;

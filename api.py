@@ -457,6 +457,54 @@ def is_adult_query(query: str) -> bool:
         return False
     return bool(_ADULT_REGEX.search(q))
 
+# Patterns for known fake/fan-made sequels that shouldn't be shown as real movies
+_FAKE_SEQUEL_PATTERNS = re.compile(
+    r'\bsalaar\s*[23]\b|\bsalar\s*[23]\b|\bkgf\s*[34]\b|\bpushpa\s*3\b'
+    r'|\brrr\s*2\b|\bjawan\s*2\b|\bpathaan\s*2\b|\bdangal\s*2\b'
+    r'|\bavengers\s*:\s*secret\s*wars\b|\bavengers\s*:\s*the\s*kang\b',
+    re.IGNORECASE
+)
+
+def _is_ugc_fake_upload(sub: dict) -> bool:
+    """
+    Detect fan-made fake sequel uploads and YouTube rips masquerading as real movies.
+    These are user-generated content (UGC) with video URLs from /Search-Youtube/ or ugc-video.com.
+    Returns True if the item should be excluded from results.
+    """
+    if not sub or not isinstance(sub, dict):
+        return False
+
+    title = (sub.get("title") or "").strip()
+    post_title = (sub.get("postTitle") or "").lower()
+
+    # Reject known fake sequel title patterns
+    if _FAKE_SEQUEL_PATTERNS.search(title):
+        return True
+
+    # Reject if post title reveals it's a trailer or YouTube rip
+    if post_title.startswith("trailer-") or "youtube-" in post_title:
+        return True
+
+    # Inspect resource detectors for Search-Youtube URLs or ugc-video.com source
+    for rd in (sub.get("resourceDetectors") or []):
+        if not isinstance(rd, dict):
+            continue
+        r_src = (rd.get("source") or "").lower()
+        r_link = (rd.get("resourceLink") or "").lower()
+        r_dl = (rd.get("downloadUrl") or "").lower()
+        if "ugc-video" in r_src or "youtube-" in r_link or "search-youtube" in r_dl:
+            return True
+
+    # Reject movies with 0 duration, no staff list, no description — usually stubs or trailers
+    if (sub.get("subjectType") == 1  # movie type
+            and int(sub.get("durationSeconds") or 0) == 0
+            and not sub.get("duration")
+            and not sub.get("staffList")
+            and not sub.get("description")):
+        return True
+
+    return False
+
 def classify_content_type(subject_type: Optional[int], title: Optional[str] = None, upstream_type: Optional[str] = None) -> str:
     """
     Intelligently classify content as 'Movie' or 'TV Series'.
@@ -587,6 +635,10 @@ class MovieBoxEngine:
 
             raw_title = sub.get("title") or ""
             if not raw_title:
+                continue
+
+            # --- Filter fake/unreleased UGC uploads (e.g. Salaar 2, salar 3 fan-made YouTube rips) ---
+            if _is_ugc_fake_upload(sub):
                 continue
 
             # Strip language/dub bracket tags like [Hindi], (English), [Tamil]
@@ -1007,7 +1059,8 @@ class MovieBoxEngine:
             s.get("size_mb", 0)
         ), reverse=True)
         if streams:
-            app_cache.set(cache_key, streams, ttl=180)
+            # Cache for 10 minutes (CDN signed URLs are valid ~15-30 minutes)
+            app_cache.set(cache_key, streams, ttl=600)
         return streams
 
     def get_curated_feed(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -1219,7 +1272,7 @@ class MovieBoxEngine:
             for kw in ["Inside Out 2", "Deadpool & Wolverine", "Dune", "Furiosa", "Kingdom of the Planet of the Apes", "Twisters", "Alien Romulus", "Beetlejuice", "Venom", "Moana 2", "Wicked", "Gladiator 2"]:
                 sparse_tasks.append(("cinema", kw))
         if len(feed["hollywood"]) < 30:
-            for kw in ["Avengers", "Batman", "Spider-Man", "Oppenheimer", "Deadpool", "Gladiator", "Dune", "Avatar", "John Wick", "Mission Impossible", "Fast and Furious"]:
+            for kw in ["Avengers: Endgame", "Avengers: Infinity War", "Avengers", "Batman", "Spider-Man", "Oppenheimer", "Deadpool", "Gladiator", "Dune", "Avatar", "John Wick", "Mission Impossible", "Fast and Furious", "Black Panther", "Iron Man", "Captain America", "Thor"]:
                 sparse_tasks.append(("hollywood", kw))
         if len(feed["series"]) < 30:
             for kw in ["Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys", "Peaky Blinders", "Succession", "The Last of Us", "Severance", "House of the Dragon", "Fallout", "Squid Game", "Loki", "Wednesday", "Reacher", "The Witcher", "Money Heist"]:
@@ -1247,18 +1300,21 @@ class MovieBoxEngine:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             def _fetch_kw(category, kw):
                 try:
-                    return category, self.search(kw, per_page=6)
+                    return category, kw, self.search(kw, per_page=8)
                 except Exception:
-                    return category, []
+                    return category, kw, []
 
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(_fetch_kw, cat, kw) for cat, kw in sparse_tasks]
                 for fut in as_completed(futures):
                     try:
-                        cat, items = fut.result()
+                        cat, kw, items = fut.result()
                         for it in items:
                             sid = it.get("subject_id")
                             if not sid:
+                                continue
+                            # Skip coming_soon entries (unreleased titles) in feed shelves
+                            if it.get("coming_soon"):
                                 continue
                             base = _base_title(it.get("title") or "")
                             already_in = any(_base_title(x.get("title") or "") == base or x["subject_id"] == sid for x in feed[cat])
@@ -1669,13 +1725,43 @@ async def proxy_online_caption(url: str = Query(...)):
     content = clean_to_webvtt(content)
     return Response(content=content, media_type="text/vtt; charset=utf-8", headers={"Access-Control-Allow-Origin": "*"})
 
+def _unwrap_proxy_url(cover: str) -> str:
+    """Recursively unwrap nested /api/image?url= or /api/proxy/image?url= to get the real raw image URL."""
+    for _ in range(5):  # max 5 unwrap iterations
+        if cover.startswith("/api/image?url=") or cover.startswith("/api/proxy/image?url="):
+            # Extract the url= query param value
+            try:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(cover if cover.startswith("http") else f"http://x{cover}")
+                url_param = parse_qs(parsed.query).get("url", [None])[0]
+                if url_param:
+                    cover = urllib.parse.unquote(url_param)
+                    continue
+            except Exception:
+                break
+        elif "movieverse.click/api/image?url=" in cover or "movieverse.click/api/proxy/image?url=" in cover:
+            try:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(cover)
+                url_param = parse_qs(parsed.query).get("url", [None])[0]
+                if url_param:
+                    cover = urllib.parse.unquote(url_param)
+                    continue
+            except Exception:
+                break
+        break
+    return cover
+
 def normalize_cover(cover: Optional[str]) -> Optional[str]:
-    """Force images from pbcdn.aoneroom.com (which lack proper image MIME types) through /api/image proxy"""
+    """Force images from pbcdn.aoneroom.com through /api/image proxy. Unwraps any existing nesting first."""
     if not cover or not isinstance(cover, str):
         return cover
-    if "pbcdn.aoneroom.com" in cover:
-        return f"/api/image?url={urllib.parse.quote(cover, safe='')}"
-    return cover
+    # First unwrap any existing nested proxy URL to get back the raw image URL
+    real_cover = _unwrap_proxy_url(cover)
+    # Only wrap if the real URL points to a known CDN that needs proxying
+    if real_cover.startswith("http") and ("pbcdn.aoneroom.com" in real_cover or "pbcdnw.aoneroom.com" in real_cover):
+        return f"/api/image?url={urllib.parse.quote(real_cover, safe='')}"
+    return real_cover
 
 _IMAGE_PROXY_CLIENT: Optional[httpx.AsyncClient] = None
 
