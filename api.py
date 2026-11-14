@@ -101,8 +101,13 @@ def serve_sitemap():
 
 @app.get("/google{code}.html")
 def google_site_verification(code: str):
-    """Dynamically serve Google Search Console verification file for instant ownership confirmation."""
-    return Response(content=f"google-site-verification: google{code}.html", media_type="text/plain; charset=utf-8")
+    """Serve specific Google verification file if it exists, otherwise return 404 for Google anti-hack checks."""
+    file_path = os.path.join(STATIC_DIR, f"google{code}.html")
+    if os.path.exists(file_path):
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        return Response(content=content, media_type="text/plain; charset=utf-8")
+    raise HTTPException(status_code=404, detail="Verification file not found")
 
 @app.get("/sw.js")
 def serve_sw():
