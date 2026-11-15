@@ -9,6 +9,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { CONFIG } from '../config';
 import { checkForAppUpdate, UpdateInfo } from '../services/updateService';
 import { UpdateModal } from '../components/UpdateModal';
+import { useTVDetect } from '../hooks/useTVDetect';
 
 interface SettingsRow {
   icon: keyof typeof Ionicons.glyphMap;
@@ -34,6 +35,7 @@ export default function SettingsScreen() {
   const [subtitles, setSubtitles] = useState(false);
   const [notifications, setNotifications] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const { isTVDevice, setTVMode, clearTVOverride, debugSignals } = useTVDetect();
 
   const openLink = (url: string) => Linking.openURL(url);
 
@@ -67,6 +69,49 @@ export default function SettingsScreen() {
           toggleValue: subtitles,
           onToggle: setSubtitles,
           action: () => {},
+        },
+      ],
+    },
+    {
+      title: 'DEVICE MODE',
+      rows: [
+        {
+          icon: 'tv-outline',
+          label: 'Android TV / Box Mode',
+          subtitle: isTVDevice
+            ? 'TV layout active — sidebar navigation enabled'
+            : 'Phone layout active — tap to switch to TV mode',
+          isToggle: true,
+          toggleValue: isTVDevice,
+          onToggle: (val) => setTVMode(val),
+          action: () => {},
+        },
+        {
+          icon: 'refresh-outline',
+          label: 'Auto-Detect Device Type',
+          subtitle: 'Clear manual override and let the app detect automatically',
+          action: () => {
+            const info = debugSignals() as any;
+            Alert.alert(
+              '📺 TV Detection Signals',
+              [
+                `Platform.isTV: ${info.Platform_isTV ? '✅ YES' : '❌ NO'}`,
+                `Screen ratio (${info.aspect_ratio}:1): ${info.screen_ratio ? '✅ TV-like' : '❌ Not TV'}`,
+                `Low DPI (${info.pixel_ratio}x): ${info.low_density ? '✅ TV-like' : '❌ Phone/tablet'}`,
+                `Screen: ${info.screen_width}×${info.screen_height}`,
+                ``,
+                `Auto-detected: ${info.auto_result ? '📺 TV / Box' : '📱 Phone / Tablet'}`,
+                `Current mode: ${info.final_result ? '📺 TV' : '📱 Phone'}`,
+              ].join('\n'),
+              [
+                { text: 'Keep Current', style: 'cancel' },
+                {
+                  text: 'Reset to Auto',
+                  onPress: () => clearTVOverride(),
+                },
+              ]
+            );
+          },
         },
       ],
     },
@@ -132,7 +177,7 @@ export default function SettingsScreen() {
           label: 'Check for Updates',
           subtitle: 'Scan for new MovieVerse releases',
           action: async () => {
-            const info = await checkForAppUpdate();
+            const info = await checkForAppUpdate(true);
             if (info && info.available) {
               setUpdateInfo(info);
             } else {

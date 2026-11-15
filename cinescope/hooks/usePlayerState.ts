@@ -28,7 +28,7 @@ export interface SubtitleItem {
 }
 
 interface RouteParams {
-  id: string;
+  id?: string;
   title?: string;
   cover?: string;
   initialDub?: string;
@@ -38,6 +38,8 @@ interface RouteParams {
   type?: string;
   isOffline?: boolean;
   streamUrl?: string; // offline playback: local URI passed directly
+  subtitleUrl?: string; // offline subtitle URI
+  subtitleLang?: string;
 }
 
 /** FIX P4 #22: single shared predicate — no duplicated DASH filter logic */
@@ -58,7 +60,10 @@ export function usePlayerState() {
     type: initialType = 'Movie',
     isOffline = false,
     streamUrl: offlineStreamUrl = '',
-  } = (route.params as RouteParams) || {};
+    subtitleUrl: offlineSubtitleUrl = '',
+    subtitleLang: offlineSubtitleLang = '',
+    detailPath = '',
+  } = (route.params as any) || {};
 
   const sanitizeTitleForSearch = (t?: string): string => {
     if (!t) return '';
@@ -85,9 +90,10 @@ export function usePlayerState() {
       ? `${clean} [${initialDub}]`
       : clean || raw;
   });
-  const [currentId, setCurrentId]               = useState<string>(initialId);
+  const [currentId, setCurrentId]               = useState<string>(initialId || '');
   const [currentSeason, setCurrentSeason]       = useState<number>(initialSeason);
   const [currentEpisode, setCurrentEpisode]     = useState<number>(initialEpisode);
+  const [streamReferer, setStreamReferer]       = useState<string>('https://movieboxonline.net/');
   const [streamData, setStreamData]             = useState<StreamData | null>(null);
   const [activeStream, setActiveStream]         = useState<StreamSource | null>(null);
   const [selectedServer, setSelectedServer]     = useState<string>('direct');
@@ -218,19 +224,23 @@ export function usePlayerState() {
     setIsPlaying(false); // FIX P2 #12: reset while loading
 
     try {
-      const data = await api.streams(subjectId, se, ep);
+      const data = await api.streams(subjectId, se, ep, detailPath);
       if (loadTokenRef.current !== token) return; // stale — discard
       setStreamData(data);
 
       const playable = (data.streams || []).filter(isPlayableStream);
       if (playable.length > 0) {
-        // Fast-start on mobile: prefer 720p or 480p for smooth, instant start, fallback to 1080p
-        const best = playable.find(s => s.quality === '720p') || playable.find(s => s.quality === '480p') || playable.find(s => s.quality === '1080p') || playable[0];
+        // High quality first (1080p -> 720p -> 480p)
+        const best = playable[0];
         setActiveStream(best);
         setSelectedServer('direct');
         setUseIframe(false);
         setIframeServerName('');
-        setStreamUrl(api.proxyUrl(best.url, best.headers?.Referer));
+        const rawRef = best.headers?.Referer || 'https://movieboxonline.net/';
+        const ref = rawRef.includes('aoneroom.com') ? 'https://movieboxonline.net/' : rawRef;
+        setStreamReferer(ref);
+        // Play directly from ultra-fast CDN edge (starts in < 500ms instead of 40s VPS proxy bottleneck!)
+        setStreamUrl(best.url);
         setIsPlaying(true);
       } else if (data.fallback_servers && data.fallback_servers.length > 0) {
         // FIX P2 #7: DASH-only streams auto-fallback to first iframe server
@@ -305,9 +315,20 @@ export function usePlayerState() {
     // Offline playback: skip API, use local file directly
     if (isOffline && offlineStreamUrl) {
       setStreamUrl(offlineStreamUrl);
+      setStreamReferer(''); // Offline: no remote referer
       setUseIframe(false);
       setLoading(false);
       setIsPlaying(true);
+      if (offlineSubtitleUrl) {
+        const offlineSub: SubtitleItem = {
+          id: 'offline_sub',
+          language: offlineSubtitleLang || 'English',
+          url: offlineSubtitleUrl,
+          isOnline: false,
+        };
+        setActiveSubtitle(offlineSub);
+        setSubtitlesList([offlineSub]);
+      }
       return;
     }
     if (!initialId) return;
@@ -358,7 +379,9 @@ export function usePlayerState() {
     setActiveStream(stream);
     setSelectedServer('direct');
     setUseIframe(false);
-    setStreamUrl(api.proxyUrl(stream.url, stream.headers?.Referer));
+    const ref = stream.headers?.Referer || 'https://movieboxonline.net/';
+    setStreamReferer(ref);
+    setStreamUrl(stream.url);
     setBottomSheet('none');
     resetControlsTimer();
   };
@@ -383,7 +406,9 @@ export function usePlayerState() {
         setSelectedServer('direct');
         setUseIframe(false);
         setIframeServerName('');
-        setStreamUrl(api.proxyUrl(activeStream.url, activeStream.headers?.Referer));
+        const ref = activeStream.headers?.Referer || 'https://movieboxonline.net/';
+        setStreamReferer(ref);
+        setStreamUrl(activeStream.url);
       }
     } else {
       const srv = streamData?.fallback_servers?.find(s => s.id === serverId);
@@ -539,19 +564,24 @@ export function usePlayerState() {
             }
             break;
           }
+          case 'cdn_fallback':
+            if (activeStream && !streamUrl.includes('/api/proxy/stream')) {
+              console.log('Direct CDN error, failing over to VPS proxy stream');
+              const rawRef = activeStream.headers?.Referer || 'https://movieboxonline.net/';
+              const ref = rawRef.includes('aoneroom.com') ? 'https://movieboxonline.net/' : rawRef;
+              setStreamUrl(api.proxyUrl(activeStream.url, ref));
+            }
+            break;
           case 'error':
             console.warn('Video error from player:', msg.error);
             setIsBuffering(false);
-            if (streamData?.fallback_servers && streamData.fallback_servers.length > 0 && selectedServer === 'direct') {
-              console.log('Failing over to fallback cloud server on playback error');
-              const srv = streamData.fallback_servers[0];
-              setSelectedServer(srv.id);
-              setIframeServerName(srv.name || srv.id);
-              setStreamUrl(srv.url);
-              setUseIframe(true);
-              setIsPlaying(true);
+            if (activeStream && !streamUrl.includes('/api/proxy/stream')) {
+              console.log('Direct CDN error, failing over to VPS proxy stream');
+              const rawRef = activeStream.headers?.Referer || 'https://movieboxonline.net/';
+              const ref = rawRef.includes('aoneroom.com') ? 'https://movieboxonline.net/' : rawRef;
+              setStreamUrl(api.proxyUrl(activeStream.url, ref));
             } else {
-              setError(msg.error || 'Playback stalled. Please switch server or quality.');
+              setError(msg.error || 'Playback stalled. Please tap retry or change quality.');
             }
             break;
           default:
@@ -571,9 +601,10 @@ export function usePlayerState() {
     title: (playerTitle || title) as string | undefined,
     cover: cover as string | undefined,
     isSeriesType,
+    isOffline,
     currentId, currentSeason, currentEpisode,
     streamData, activeStream, selectedServer,
-    streamUrl, useIframe, iframeServerName,
+    streamUrl, streamReferer, useIframe, iframeServerName,
     loading, error,
     isPlaying, currentTime, duration, isBuffering,
     playbackSpeed, selectedDubName, hasEnded,

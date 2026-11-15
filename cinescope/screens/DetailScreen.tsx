@@ -100,7 +100,8 @@ export default function DetailScreen() {
   const insets     = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const route      = useRoute<any>();
-  const { id, title: initTitle, cover: initCover } = route.params || {};
+  const { id: rawId, subjectId, title: initTitle, cover: initCover, autoPlay } = route.params || {};
+  const id = rawId || subjectId;
 
   const [detail, setDetail]                   = useState<DetailData | null>(null);
   const [loading, setLoading]                 = useState(true);
@@ -128,20 +129,32 @@ export default function DetailScreen() {
       setInWatchlist(Boolean(wl));
       setSavedProgress(progress);
 
+      // Pre-warm stream in background so tapping "Play Now" starts instantly (< 100ms)
+      if (d && !d.coming_soon) {
+        api.streams(id, progress?.season || 0, progress?.episode || 0, d.detail_path).catch(() => {});
+      }
+
       const hasSeriesType = d?.type === 'Series' || d?.type === 'TV Series';
       if (hasSeriesType || (progress && progress.season > 0)) {
-        const ep = await api.episodes(id).catch(() => ({ seasons: [] }));
-        if (ep?.seasons?.length) {
-          setSeasonsData(ep.seasons);
+        // Reuse seasons already returned by detail endpoint if available, avoiding extra blocking network call
+        const directSeasons = (d as any)?.seasons;
+        let seasonsList = directSeasons && directSeasons.length > 0 ? directSeasons : null;
+        if (!seasonsList) {
+          const ep = await api.episodes(id).catch(() => ({ seasons: [] }));
+          seasonsList = ep?.seasons || [];
+        }
+
+        if (seasonsList && seasonsList.length > 0) {
+          setSeasonsData(seasonsList);
           const cachedSeason = lastSelectedSeasonCache.get(id);
-          if (cachedSeason && ep.seasons.some((s: any) => s.season === cachedSeason)) {
+          if (cachedSeason && seasonsList.some((s: any) => s.season === cachedSeason)) {
             setSelectedSeason(cachedSeason);
           } else if (progress && progress.season > 0) {
             const restored = progress.season;
             setSelectedSeason(restored);
             lastSelectedSeasonCache.set(id, restored);
           } else {
-            const first = ep.seasons[0].season || 1;
+            const first = seasonsList[0].season || 1;
             setSelectedSeason(first);
             lastSelectedSeasonCache.set(id, first);
           }
@@ -194,11 +207,12 @@ export default function DetailScreen() {
     navigation.navigate('Player', {
       id: dubId || id, title: detail?.title || initTitle, cover: detail?.cover || initCover,
       initialDub: dubName, season, episode: ep, initialSeek: seekTime, type: isSeries ? 'TV Series' : (detail?.type || 'Movie'),
+      detailPath: detail?.detail_path,
     });
 
   const handleDownload = async (season = 0, ep = 0) => {
     try {
-      const data = await api.streams(id, season, ep);
+      const data = await api.streams(id, season, ep, detail?.detail_path);
       const playable = (data?.streams || []).filter(s => s && s.url && !s.url.includes('.mpd'));
       const targetStream = playable.find(s => s.quality === '1080p') || playable[0];
       if (targetStream?.url) {

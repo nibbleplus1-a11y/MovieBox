@@ -7,9 +7,10 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Linking,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { UpdateInfo, downloadAndInstallApk } from '../services/updateService';
+import { UpdateInfo, downloadAndInstallApk, dismissUpdate, DownloadProgress } from '../services/updateService';
 
 interface UpdateModalProps {
   updateInfo: UpdateInfo | null;
@@ -18,17 +19,35 @@ interface UpdateModalProps {
 
 export const UpdateModal: React.FC<UpdateModalProps> = ({ updateInfo, onDismiss }) => {
   const [downloading, setDownloading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [progressInfo, setProgressInfo] = useState<DownloadProgress>({
+    ratio: 0.01,
+    loadedMb: 0.1,
+    totalMb: 84.4,
+    percent: 1,
+  });
 
   if (!updateInfo || !updateInfo.available) return null;
+
+  const handleDismiss = () => {
+    if (updateInfo?.version) {
+      dismissUpdate(updateInfo.version);
+    }
+    onDismiss();
+  };
+
+  const handleBrowserDownload = () => {
+    if (updateInfo.downloadUrl) {
+      Linking.openURL(updateInfo.downloadUrl).catch(() => {});
+    }
+  };
 
   const handleUpdate = async () => {
     try {
       setDownloading(true);
-      setProgress(0.05);
+      setProgressInfo({ ratio: 0.02, loadedMb: 0.5, totalMb: 84.4, percent: 2 });
 
-      await downloadAndInstallApk(updateInfo.downloadUrl, (ratio) => {
-        setProgress(ratio);
+      await downloadAndInstallApk(updateInfo.downloadUrl, (p) => {
+        setProgressInfo(p);
       });
 
       // Done or launched installer
@@ -36,11 +55,18 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ updateInfo, onDismiss 
       onDismiss();
     } catch (e: any) {
       setDownloading(false);
-      Alert.alert('Update Failed', 'Could not complete update. Please try again.');
+      Alert.alert(
+        'In-App Download Error',
+        'Could not complete in-app download. Would you like to download directly via your browser?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Download via Browser', onPress: handleBrowserDownload },
+        ]
+      );
     }
   };
 
-  const percent = Math.round(progress * 100);
+  const percent = progressInfo.percent;
 
   return (
     <Modal
@@ -48,7 +74,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ updateInfo, onDismiss 
       transparent={true}
       animationType="fade"
       onRequestClose={() => {
-        if (!updateInfo.forceUpdate && !downloading) onDismiss();
+        if (!updateInfo.forceUpdate && !downloading) handleDismiss();
       }}
     >
       <View style={S.overlay}>
@@ -71,34 +97,55 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ updateInfo, onDismiss 
           {downloading ? (
             <View style={S.progressContainer}>
               <View style={S.progressTrack}>
-                <View style={[S.progressFill, { width: `${percent}%` }]} />
+                <View style={[S.progressFill, { width: `${Math.max(2, percent)}%` }]} />
               </View>
               <View style={S.progressMeta}>
                 <ActivityIndicator size="small" color="#FF2E55" />
                 <Text style={S.progressText}>
-                  Downloading update… {percent}%
+                  {progressInfo.loadedMb > 0
+                    ? `Downloading: ${progressInfo.loadedMb} / ${progressInfo.totalMb} MB (${percent}%)`
+                    : `Connecting to high-speed CDN… (${percent}%)`}
                 </Text>
               </View>
+              <TouchableOpacity
+                style={S.directFallbackBtn}
+                onPress={handleBrowserDownload}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="open-outline" size={14} color="#94A3B8" />
+                <Text style={S.directFallbackText}>Or switch to High-Speed Browser Download</Text>
+              </TouchableOpacity>
             </View>
           ) : (
-            <View style={S.btnRow}>
-              {!updateInfo.forceUpdate && (
+            <View style={{ width: '100%', gap: 10 }}>
+              <View style={S.btnRow}>
+                {!updateInfo.forceUpdate && (
+                  <TouchableOpacity
+                    style={S.laterBtn}
+                    onPress={handleDismiss}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={S.laterBtnText}>Later</Text>
+                  </TouchableOpacity>
+                )}
+
                 <TouchableOpacity
-                  style={S.laterBtn}
-                  onPress={onDismiss}
-                  activeOpacity={0.7}
+                  style={[S.updateBtn, updateInfo.forceUpdate && { flex: 1 }]}
+                  onPress={handleUpdate}
+                  activeOpacity={0.85}
                 >
-                  <Text style={S.laterBtnText}>Later</Text>
+                  <Ionicons name="cloud-download-outline" size={18} color="#FFF" />
+                  <Text style={S.updateBtnText}>Update Now</Text>
                 </TouchableOpacity>
-              )}
+              </View>
 
               <TouchableOpacity
-                style={[S.updateBtn, updateInfo.forceUpdate && { flex: 1 }]}
-                onPress={handleUpdate}
-                activeOpacity={0.85}
+                style={S.browserAltBtn}
+                onPress={handleBrowserDownload}
+                activeOpacity={0.75}
               >
-                <Ionicons name="cloud-download-outline" size={18} color="#FFF" />
-                <Text style={S.updateBtnText}>Update Now</Text>
+                <Ionicons name="globe-outline" size={15} color="#94A3B8" />
+                <Text style={S.browserAltText}>Direct Browser Download (High-Speed APK)</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -237,5 +284,34 @@ const S = StyleSheet.create({
     color: '#FFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  directFallbackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  directFallbackText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    textDecorationLine: 'underline',
+  },
+  browserAltBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  browserAltText: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

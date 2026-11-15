@@ -132,60 +132,102 @@ const API_ENDPOINTS = [
 ];
 
 // ─── 💰 AD MONETIZATION ENGINE (Monetag + Adsterra + Frequency Capping) ────────
+// Ads are optimized to:
+// 1. Never block stream loading — movie buffers in parallel during the preroll
+// 2. Frequency-capped to max once every 15 minutes (localStorage)
+// 3. Always skippable after 5 seconds — user is never trapped
 const AdEngine = {
-    config: {
-        enabled: true,
-        test_mode: true,
-        monetag: {
-            enabled: true,
-            zone_id: '',
-            direct_link: '',
-            preroll_enabled: true,
-            preroll_duration_seconds: 5,
-            preroll_cooldown_seconds: 60,
-            exit_interstitial_enabled: true,
-            exit_cooldown_seconds: 15
-        },
-        adsterra: {
-            enabled: true,
-            social_bar_enabled: true,
-            social_bar_script_url: '',
-            native_banner_enabled: true
-        }
-    },
+    // ── Config ──────────────────────────────────────────────────────────────
+    AD_COOLDOWN_MS: 15 * 60 * 1000,   // 15 minutes between ads
+    PREROLL_DURATION: 5,               // seconds before skip enabled
+    INTERSTITIAL_COOLDOWN_MS: 30 * 60 * 1000, // 30 min between exit ads
+
     prerollTimer: null,
-    prerollSecondsLeft: 5,
+    prerollSecondsLeft: 0,
     playbackStartTime: 0,
     onPrerollCompleteCallback: null,
 
+    // ── Frequency cap helpers ───────────────────────────────────────────────
+    _getLastTime(key) {
+        try { return parseInt(localStorage.getItem(key) || '0', 10); } catch { return 0; }
+    },
+    _setLastTime(key) {
+        try { localStorage.setItem(key, String(Date.now())); } catch {}
+    },
+
+    // ── Init (called once on page load) ────────────────────────────────────
     async init() {
-        try {
-            const res = await fetch('/api/ads/config');
-            if (res.ok) {
-                this.config = await res.json();
-            }
-        } catch (e) {
-            console.warn('AdEngine: Could not fetch config, using local defaults', e);
-        }
-
-        // Initialize Adsterra Social Bar if enabled
-        if (this.config.enabled && this.config.adsterra && this.config.adsterra.social_bar_enabled) {
-            setTimeout(() => this.showSocialBar(), 3500);
-        }
-
-        // Initialize In-Feed Native Banner if enabled
-        if (this.config.enabled && this.config.adsterra && this.config.adsterra.native_banner_enabled) {
-            const banner = document.getElementById('inFeedAdBanner');
-            if (banner) banner.style.display = 'block';
-        }
+        // Nothing to do — engine is stateless and lazy
     },
 
+    // ── Preroll ─────────────────────────────────────────────────────────────
     canShowPreroll() {
-        return false;
+        const last = this._getLastTime('mv_last_preroll');
+        return (Date.now() - last) >= this.AD_COOLDOWN_MS;
     },
 
+    /**
+     * Shows a 5-second skippable preroll overlay, then calls onComplete.
+     * IMPORTANT: onComplete is ALWAYS called — either immediately (if capped)
+     * or after the user skips / countdown expires. The stream should start
+     * buffering in the background as soon as this function is called.
+     */
     runPrerollIfEligible(onComplete) {
-        if (typeof onComplete === 'function') onComplete();
+        if (!this.canShowPreroll()) {
+            if (typeof onComplete === 'function') onComplete();
+            return;
+        }
+
+        this._setLastTime('mv_last_preroll');
+        this.onPrerollCompleteCallback = onComplete;
+        this.prerollSecondsLeft = this.PREROLL_DURATION;
+
+        const overlay = document.getElementById('cinemaPrerollOverlay');
+        const timerText = document.getElementById('prerollTimerText');
+        const skipBtn = document.getElementById('prerollSkipBtn');
+        const progressBar = document.getElementById('prerollProgressBar');
+
+        if (!overlay) {
+            // Overlay HTML missing — just call through
+            if (typeof onComplete === 'function') onComplete();
+            return;
+        }
+
+        // Show overlay
+        overlay.style.display = 'flex';
+        if (timerText) timerText.textContent = `Movie starts in ${this.prerollSecondsLeft}s`;
+        if (skipBtn) { skipBtn.disabled = true; skipBtn.classList.remove('can-skip'); skipBtn.textContent = `Skip in ${this.prerollSecondsLeft}s`; }
+        if (progressBar) { progressBar.style.transition = 'none'; progressBar.style.width = '100%'; }
+
+        // Animate progress bar smoothly over the full duration
+        requestAnimationFrame(() => {
+            if (progressBar) {
+                progressBar.style.transition = `width ${this.PREROLL_DURATION}s linear`;
+                progressBar.style.width = '0%';
+            }
+        });
+
+        // Tick countdown every second
+        this.prerollTimer = setInterval(() => {
+            this.prerollSecondsLeft--;
+            if (this.prerollSecondsLeft <= 0) {
+                clearInterval(this.prerollTimer);
+                this.prerollTimer = null;
+                if (timerText) timerText.textContent = 'Continue →';
+                if (skipBtn) { skipBtn.disabled = false; skipBtn.classList.add('can-skip'); skipBtn.textContent = 'Continue →'; }
+                // Auto-close after 2 more seconds if user does nothing
+                setTimeout(() => this.dismissPreroll(), 2000);
+            } else {
+                if (timerText) timerText.textContent = `Movie starts in ${this.prerollSecondsLeft}s`;
+                if (this.prerollSecondsLeft <= 2 && skipBtn) {
+                    skipBtn.disabled = false;
+                    skipBtn.classList.add('can-skip');
+                    skipBtn.textContent = `Skip in ${this.prerollSecondsLeft}s`;
+                } else if (skipBtn) {
+                    skipBtn.textContent = `Skip in ${this.prerollSecondsLeft}s`;
+                }
+            }
+        }, 1000);
     },
 
     dismissPreroll() {
@@ -203,12 +245,20 @@ const AdEngine = {
         }
     },
 
+    // ── Exit Interstitial ───────────────────────────────────────────────────
     canShowExitInterstitial() {
-        return false;
+        const last = this._getLastTime('mv_last_exit_ad');
+        return (Date.now() - last) >= this.INTERSTITIAL_COOLDOWN_MS;
     },
 
     showExitInterstitial() {
-        return;
+        if (!this.canShowExitInterstitial()) return;
+        this._setLastTime('mv_last_exit_ad');
+        const modal = document.getElementById('exitInterstitialModal');
+        if (modal) {
+            modal.style.display = 'flex';
+            modal.classList.add('active');
+        }
     },
 
     closeExitInterstitial() {
@@ -219,6 +269,7 @@ const AdEngine = {
         }
     },
 
+    // ── Social Bar (Adsterra) ───────────────────────────────────────────────
     showSocialBar() {
         if (sessionStorage.getItem('movieverse_social_bar_dismissed')) return;
         const bar = document.getElementById('adsterraSocialBar');
@@ -4993,24 +5044,24 @@ async function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0)
         adDoneResolve();
     }
 
-    // Ensure we have activeMediaMeta for this subject
-    if (!activeMediaMeta || String(activeMediaMeta.subject_id) !== String(subjectId)) {
-        try {
-            const metaRes = await fetch(`/detail/${subjectId}`).then(r => r.json());
-            if (metaRes && metaRes.title) {
-                activeMediaMeta = metaRes;
-            }
-        } catch {}
-    }
-
+    // Concurrently fetch streams, captions, and details in parallel for instant load time
     const detailPath = (activeMediaMeta && activeMediaMeta.detail_path) ? activeMediaMeta.detail_path : '';
+    const streamEndpoint = `/api/stream/${subjectId}?se=${sNum}&ep=${eNum}${detailPath ? '&detail_path=' + encodeURIComponent(detailPath) : ''}`;
+
+    const metaPromise = (!activeMediaMeta || String(activeMediaMeta.subject_id) !== String(subjectId))
+        ? fetch(`/detail/${subjectId}`).then(r => r.json()).catch(() => null)
+        : Promise.resolve(activeMediaMeta);
 
     try {
-        const streamEndpoint = `/api/stream/${subjectId}?se=${sNum}&ep=${eNum}${detailPath ? '&detail_path=' + encodeURIComponent(detailPath) : ''}`;
-        const [streamRes, captionRes] = await Promise.all([
+        const [streamRes, captionRes, metaRes] = await Promise.all([
             fetch(streamEndpoint).then(r => r.json()).catch(() => ({ streams: [] })),
-            fetch(`/api/stream/${subjectId}/captions?se=${sNum}&ep=${eNum}`).then(r => r.json()).catch(() => ({ captions: [] }))
+            fetch(`/api/stream/${subjectId}/captions?se=${sNum}&ep=${eNum}`).then(r => r.json()).catch(() => ({ captions: [] })),
+            metaPromise
         ]);
+
+        if (metaRes && metaRes.title) {
+            activeMediaMeta = metaRes;
+        }
 
         await adDonePromise;
         if (loadingState) loadingState.style.display = 'none';

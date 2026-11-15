@@ -40,11 +40,14 @@ class DownloadService : Service() {
         // Actions
         const val ACTION_START  = "com.cinescope.guide.DOWNLOAD_START"
         const val ACTION_CANCEL = "com.cinescope.guide.DOWNLOAD_CANCEL"
+        const val ACTION_PAUSE  = "com.cinescope.guide.DOWNLOAD_PAUSE"
+        const val ACTION_RESUME = "com.cinescope.guide.DOWNLOAD_RESUME"
 
         // Broadcast actions sent back to JS
         const val BROADCAST_PROGRESS  = "com.cinescope.guide.DOWNLOAD_PROGRESS"
         const val BROADCAST_COMPLETE   = "com.cinescope.guide.DOWNLOAD_COMPLETE"
         const val BROADCAST_ERROR      = "com.cinescope.guide.DOWNLOAD_ERROR"
+        const val BROADCAST_PAUSED     = "com.cinescope.guide.DOWNLOAD_PAUSED"
 
         // Intent extras
         const val EXTRA_URL      = "url"
@@ -76,6 +79,24 @@ class DownloadService : Service() {
             }
             ctx.startService(intent)
         }
+
+        /** Convenience helper: pause a running download */
+        fun pauseDownload(ctx: Context, taskId: String) {
+            val intent = Intent(ctx, DownloadService::class.java).apply {
+                action = ACTION_PAUSE
+                putExtra(EXTRA_TASK_ID, taskId)
+            }
+            ctx.startService(intent)
+        }
+
+        /** Convenience helper: resume a paused download */
+        fun resumeDownload(ctx: Context, taskId: String) {
+            val intent = Intent(ctx, DownloadService::class.java).apply {
+                action = ACTION_RESUME
+                putExtra(EXTRA_TASK_ID, taskId)
+            }
+            ctx.startService(intent)
+        }
     }
 
     private data class DownloadJob(
@@ -84,7 +105,11 @@ class DownloadService : Service() {
         val filename: String,
         val title: String,
         @Volatile var cancelled: Boolean = false,
-        @Volatile var progress: Int = 0
+        @Volatile var paused: Boolean = false,
+        @Volatile var progress: Int = 0,
+        @Volatile var written: Long = 0L,
+        @Volatile var total: Long = -1L,
+        @Volatile var destUri: Uri? = null
     )
 
     private val executor = Executors.newFixedThreadPool(3)
@@ -103,6 +128,8 @@ class DownloadService : Service() {
         when (intent?.action) {
             ACTION_START  -> handleStart(intent)
             ACTION_CANCEL -> handleCancel(intent)
+            ACTION_PAUSE  -> handlePause(intent)
+            ACTION_RESUME -> handleResume(intent)
         }
         return START_STICKY
     }
@@ -176,19 +203,39 @@ class DownloadService : Service() {
         checkStopSelf()
     }
 
+    private fun handlePause(intent: Intent) {
+        val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return
+        val job = activeJobs[taskId] ?: return
+        job.paused = true
+        Log.i(TAG, "Pause requested for download: $taskId")
+    }
+
+    private fun handleResume(intent: Intent) {
+        val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return
+        val job = activeJobs[taskId]
+        if (job != null) {
+            job.paused = false
+            job.cancelled = false
+            showProgressNotification(job, job.progress)
+            executor.submit {
+                runDownload(job)
+            }
+        }
+    }
+
     // ── Core Download Logic (With HTTP Range Resume & Automatic Retry) ────────
 
     private fun runDownload(job: DownloadJob) {
-        var destUri: Uri? = null
-        var totalBytes = -1L
-        var writtenBytes = 0L
+        var destUri: Uri? = job.destUri
+        var totalBytes = job.total
+        var writtenBytes = job.written
         var maxRetries = 4
         var attempt = 0
         var isSuccess = false
 
         val safeFilename = sanitizeFilename(job.filename)
 
-        while (attempt < maxRetries && !job.cancelled && !isSuccess) {
+        while (attempt < maxRetries && !job.cancelled && !job.paused && !isSuccess) {
             attempt++
             var conn: HttpURLConnection? = null
             var outputStream: OutputStream? = null
@@ -200,6 +247,8 @@ class DownloadService : Service() {
                 conn.instanceFollowRedirects = true
                 conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36")
                 conn.setRequestProperty("Accept", "*/*")
+                conn.setRequestProperty("Referer", "https://movieboxonline.net/")
+                conn.setRequestProperty("Origin", "https://movieboxonline.net")
 
                 // If resuming, send HTTP Range header
                 if (writtenBytes > 0) {
@@ -251,6 +300,15 @@ class DownloadService : Service() {
                         cleanupFile(destUri)
                         return
                     }
+                    if (job.paused) {
+                        job.written = writtenBytes
+                        job.total = totalBytes
+                        job.destUri = destUri
+                        Log.i(TAG, "Download paused cleanly for ${job.taskId} at $writtenBytes bytes")
+                        broadcastPaused(job.taskId, writtenBytes, totalBytes)
+                        showPausedNotification(job, writtenBytes, totalBytes)
+                        return
+                    }
                     val n = input.read(buffer)
                     if (n == -1) {
                         isSuccess = true
@@ -258,6 +316,7 @@ class DownloadService : Service() {
                     }
                     outputStream.write(buffer, 0, n)
                     writtenBytes += n
+                    job.written = writtenBytes
 
                     val pct = if (totalBytes > 0) ((writtenBytes * 100) / totalBytes).toInt() else -1
 
@@ -295,17 +354,22 @@ class DownloadService : Service() {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && destUri != null) {
                 sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, destUri))
             }
-            Log.i(TAG, "Download complete: ${job.filename} ($writtenBytes bytes)")
-            broadcastComplete(job.taskId, destUri?.toString() ?: "")
+            val fileDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "movieverse")
+            val targetFile = File(fileDir, job.filename)
+            val finalUriStr = if (targetFile.exists()) "file://${targetFile.absolutePath}" else (destUri?.toString() ?: "")
+            Log.i(TAG, "Download complete: ${job.filename} ($writtenBytes bytes) -> $finalUriStr")
+            broadcastComplete(job.taskId, finalUriStr)
             showCompleteNotification(job, destUri)
-        } else if (!job.cancelled) {
+        } else if (!job.cancelled && !job.paused) {
             Log.e(TAG, "Download permanently failed for ${job.taskId} after $attempt attempts")
             broadcastError(job.taskId, "Download interrupted. Please check network.")
             showErrorNotification(job)
             cleanupFile(destUri)
         }
 
-        activeJobs.remove(job.taskId)
+        if (!job.paused) {
+            activeJobs.remove(job.taskId)
+        }
         checkStopSelf()
     }
 
@@ -495,6 +559,52 @@ class DownloadService : Service() {
             putExtra("task_id", taskId)
             putExtra("error", error)
         })
+    }
+
+    private fun broadcastPaused(taskId: String, written: Long, total: Long) {
+        DownloadBridge.paused(taskId, written, total)
+        sendBroadcast(Intent(BROADCAST_PAUSED).apply {
+            setPackage(packageName)
+            putExtra("task_id", taskId)
+            putExtra("written", written)
+            putExtra("total", total)
+        })
+    }
+
+    private fun showPausedNotification(job: DownloadJob, written: Long, total: Long) {
+        val resumeIntent = Intent(this, DownloadService::class.java).apply {
+            action = ACTION_RESUME
+            putExtra(EXTRA_TASK_ID, job.taskId)
+        }
+        val resumePending = PendingIntent.getService(
+            this,
+            notifIdForTask(job.taskId),
+            resumeIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
+        val cancelIntent = Intent(this, DownloadService::class.java).apply {
+            action = ACTION_CANCEL
+            putExtra(EXTRA_TASK_ID, job.taskId)
+        }
+        val cancelPending = PendingIntent.getService(
+            this,
+            notifIdForTask(job.taskId) + 1,
+            cancelIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
+        val text = "Paused • " + formatMb(written) + (if (total > 0) " / " + formatMb(total) else "")
+        val n = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(job.title)
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setOngoing(false)
+            .setAutoCancel(false)
+            .addAction(android.R.drawable.ic_media_play, "Resume", resumePending)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPending)
+            .build()
+        notifManager?.notify(notifIdForTask(job.taskId), n)
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

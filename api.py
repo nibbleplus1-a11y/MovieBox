@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
 
@@ -117,18 +117,50 @@ def serve_sw():
         return FileResponse(sw_path, media_type="application/javascript")
     raise HTTPException(status_code=404, detail="Service worker not found")
 
-@app.get("/app.apk")
-@app.get("/movieverse.apk")
-@app.get("/cinescope.apk")
-@app.get("/download/app")
-def download_apk():
+DEFAULT_CDN_APK_URL = "https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.3.0/MovieVerse.apk"
+APP_VERSION_FILE = os.path.join(STATIC_DIR, "app_version.json")
+
+@app.api_route("/app.apk", methods=["GET", "HEAD"])
+@app.api_route("/movieverse.apk", methods=["GET", "HEAD"])
+@app.api_route("/cinescope.apk", methods=["GET", "HEAD"])
+@app.api_route("/download/app", methods=["GET", "HEAD"])
+def download_apk(request: Request, direct: Optional[int] = None):
+    # If high-speed CDN download is available and direct download was not requested, redirect to CDN for 10-50MB/s speeds
+    if request.method == "GET" and not direct:
+        cdn_url = os.getenv("APK_CDN_URL")
+        if not cdn_url and os.path.exists(APP_VERSION_FILE):
+            try:
+                with open(APP_VERSION_FILE, "r", encoding="utf-8") as f:
+                    v_data = json.load(f)
+                    cdn_url = v_data.get("cdn_download_url") or v_data.get("download_url")
+                    if cdn_url and "movieverse.click" in cdn_url:
+                        cdn_url = None
+            except Exception:
+                pass
+        if not cdn_url:
+            cdn_url = DEFAULT_CDN_APK_URL
+        if cdn_url:
+            return RedirectResponse(url=cdn_url, status_code=302)
+
     for name in ["movieverse.apk", "cinescope.apk"]:
         apk_path = os.path.join(STATIC_DIR, name)
         if os.path.exists(apk_path):
-            return FileResponse(apk_path, media_type="application/vnd.android.package-archive", filename="MovieVerse.apk")
+            file_size = os.path.getsize(apk_path)
+            headers = {
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(file_size),
+                "Content-Disposition": 'attachment; filename="MovieVerse.apk"',
+                "Cache-Control": "public, max-age=3600"
+            }
+            if request.method == "HEAD":
+                return Response(status_code=200, headers=headers, media_type="application/vnd.android.package-archive")
+            return FileResponse(
+                apk_path,
+                media_type="application/vnd.android.package-archive",
+                filename="MovieVerse.apk",
+                headers=headers
+            )
     raise HTTPException(status_code=404, detail="MovieVerse APK build in progress or not yet uploaded.")
-
-APP_VERSION_FILE = os.path.join(STATIC_DIR, "app_version.json")
 
 @app.get("/api/app/version")
 def get_app_version():
@@ -139,10 +171,12 @@ def get_app_version():
         except Exception:
             pass
     return {
-        "version": "1.2.6",
-        "version_code": 19,
-        "download_url": "https://movieverse.click/download/app",
-        "changelog": "Instant poster loading fix, 350+ expanded movie catalog, dismissible download bar with fullscreen auto-hide, TV season state retention & smooth 60fps scrolling!",
+        "version": "1.3.0",
+        "version_code": 23,
+        "download_url": DEFAULT_CDN_APK_URL,
+        "cdn_download_url": DEFAULT_CDN_APK_URL,
+        "fallback_url": "https://movieverse.click/download/app?direct=1",
+        "changelog": "🚀 Ultra-fast stream startup & parallel CDN pipeline, Netflix/Prime 1:1 Android TV UI with D-Pad navigation, and subtitle sync fixes!",
         "force_update": False,
     }
 
@@ -700,6 +734,10 @@ class MovieBoxEngine:
             }
             seen_canonical[canonical_key] = entry
             results.append(entry)
+            s_sid = entry.get("subject_id")
+            s_dp = entry.get("detail_path")
+            if s_sid and s_dp:
+                app_cache.set(f"detail_path:{s_sid}", s_dp, ttl=86400)
 
         app_cache.set(cache_key, results, ttl=600)
         return results
@@ -892,92 +930,29 @@ class MovieBoxEngine:
         streams: List[Dict[str, Any]] = []
         seen_urls = set()
 
-        # Step 1: Query Mobile Native CDN first (ultra-fast, ~250-400ms)
-        try:
-            native_url = f"/wefeed-mobile-bff/subject-api/play-info?subjectId={subject_id}&se={season}&ep={episode}"
-            native_data = self.api_request("GET", native_url).get("data", {})
-            for st in native_data.get("streams", []):
-                raw_url = st.get("url") or ""
-                if not raw_url:
-                    continue
-                # Block known interstitial warning / update notice clips
-                if any(m in raw_url for m in ["b164fbfb4347792950bdfbfb563d39d9", "80da52722ee7de7a4303290af6783424", "/other/", "movieboxdownload"]):
-                    continue
-                size_bytes = int(st.get("size") or 0)
-                dur = int(st.get("duration") or 0)
-                if (0 < dur <= 45) or (0 < size_bytes <= 3 * 1024 * 1024):
-                    continue
+        if not detail_path:
+            detail_path = app_cache.get(f"detail_path:{subject_id}")
 
-                cookie = st.get("signCookie")
-                policy_url = extract_policy_resource(cookie) if cookie else None
-                final_url = policy_url or raw_url
-                if final_url in seen_urls:
-                    continue
-                seen_urls.add(final_url)
-                res_str = str(st.get("resolutions", ""))
-                quality_val = 0
-                for q in (2160, 1440, 1080, 720, 480, 360, 240):
-                    if str(q) in res_str:
-                        quality_val = q
-                        break
-                size_mb = size_bytes / (1024 * 1024) if size_bytes else 0
-                is_dash = bool(policy_url or ".mpd" in final_url)
-                streams.append({
-                    "source": "Mobile Native CDN",
-                    "format": "DASH" if is_dash else st.get("format", "MP4"),
-                    "quality": f"{quality_val}p" if quality_val else (res_str or "1080p"),
-                    "quality_value": quality_val or (1080 if is_dash else 720),
-                    "resolution_tag": res_str or "1080p",
-                    "url": final_url,
-                    "size_mb": round(size_mb, 1),
-                    "codec": st.get("codecName") or "h264/aac",
-                    "duration_sec": dur,
-                    "headers": {
-                        "User-Agent": MODERN_USER_AGENT,
-                        "Referer": "https://api3.aoneroom.com/",
-                    }
-                })
-        except Exception:
-            pass
+        def _fetch_native():
+            try:
+                native_url = f"/wefeed-mobile-bff/subject-api/play-info?subjectId={subject_id}&se={season}&ep={episode}"
+                return self.api_request("GET", native_url).get("data", {})
+            except Exception:
+                return {}
 
-        # Step 2: If native didn't provide genuine 1080p full movie or <2 streams, supplement with Web CDNs in parallel
-        has_real_1080 = any(s.get("quality_value", 0) >= 1080 and (s.get("size_mb", 0) > 20 or s.get("format") == "DASH") for s in streams)
-        if len(streams) < 2 or not has_real_1080:
-            if not detail_path:
-                detail_path = app_cache.get(f"detail_path:{subject_id}")
-            if not detail_path:
-                try:
-                    details = self.get_details(subject_id)
-                    detail_path = details.get("detail_path", "") or ""
-                    # If this subject has no detail_path (e.g. dubs), quickly inspect sibling dubs in parallel
-                    if not detail_path and details.get("dubs"):
-                        def _fetch_dub_path(dub):
-                            dsid = str(dub.get("subject_id") or "")
-                            if not dsid or dsid == subject_id:
-                                return None
-                            try:
-                                d_det = self.get_details(dsid)
-                                return d_det.get("detail_path") or None
-                            except Exception:
-                                return None
-                        with ThreadPoolExecutor(max_workers=min(4, len(details["dubs"]))) as pool:
-                            for p in pool.map(_fetch_dub_path, details["dubs"]):
-                                if p:
-                                    detail_path = p
-                                    break
-                except Exception:
-                    detail_path = ""
-            if detail_path:
-                app_cache.set(f"detail_path:{subject_id}", detail_path, ttl=86400)
+        def _fetch_web(d_path: str):
+            if not d_path:
+                return []
+            web_streams = []
             try:
                 token = self.bootstrap_token()
                 def _fetch_domain(domain: str):
                     play_url = (
                         f"{domain}/wefeed-h5api-bff/subject/play?"
-                        f"subjectId={subject_id}&se={season}&ep={episode}&detailPath={detail_path}&"
+                        f"subjectId={subject_id}&se={season}&ep={episode}&detailPath={d_path}&"
                         f"streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
                     )
-                    referer = f"{domain}/movies/{detail_path}?id={subject_id}&type=/movie/detail&detailSe=&detailEp=&lang=en"
+                    referer = f"{domain}/movies/{d_path}?id={subject_id}&type=/movie/detail&detailSe=&detailEp=&lang=en"
                     headers = {
                         "User-Agent": WEB_USER_AGENT,
                         "Referer": referer,
@@ -995,77 +970,155 @@ class MovieBoxEngine:
                         pass
                     return domain, None
 
-                # Check top 3 web domains concurrently with a short timeout
                 with ThreadPoolExecutor(max_workers=3) as pool:
                     futures = [pool.submit(_fetch_domain, d) for d in WEB_DOMAINS[:3]]
                     for f in as_completed(futures):
                         try:
                             domain, data = f.result()
-                            if not data:
-                                continue
-                            for st in data.get("streams", []):
-                                url = st.get("url") or ""
-                                if not url or url in seen_urls:
-                                    continue
-                                if any(m in url for m in ["b164fbfb4347792950bdfbfb563d39d9", "80da52722ee7de7a4303290af6783424", "/other/", "movieboxdownload"]):
-                                    continue
-                                size_bytes = int(st.get("size") or 0)
-                                dur = int(st.get("duration") or 0)
-                                if (0 < dur <= 45) or (0 < size_bytes <= 3 * 1024 * 1024):
-                                    continue
-                                seen_urls.add(url)
-                                res_str = str(st.get("resolutions", "unknown"))
-                                size_mb = size_bytes / (1024 * 1024) if size_bytes else 0
-                                quality_val = 0
-                                for q in (2160, 1440, 1080, 720, 480, 360, 240):
-                                    if str(q) in res_str:
-                                        quality_val = q
-                                        break
-                                streams.append({
-                                    "source": f"Web CDN ({domain.split('//')[-1]})",
-                                    "format": st.get("format", "MP4"),
-                                    "quality": f"{quality_val}p" if quality_val else res_str,
-                                    "quality_value": quality_val,
-                                    "resolution_tag": res_str,
-                                    "url": url,
-                                    "size_mb": round(size_mb, 1),
-                                    "codec": st.get("codecName") or "h264",
-                                    "duration_sec": dur,
-                                    "headers": {
-                                        "User-Agent": "Mozilla/5.0",
-                                        "Referer": f"{domain}/",
-                                        "Origin": domain,
-                                    }
-                                })
-                            for d in data.get("dash", []):
-                                url = d.get("url")
-                                cookie = d.get("signCookie")
-                                extracted_mpd = extract_policy_resource(cookie) if cookie else None
-                                final_url = extracted_mpd or url
-                                if final_url and final_url not in seen_urls:
-                                    seen_urls.add(final_url)
-                                    res_tag = str(d.get("resolutions", "adaptive"))
-                                    streams.append({
-                                        "source": f"Web DASH ({domain.split('//')[-1]})",
-                                        "format": "DASH",
-                                        "quality": "1080p (Adaptive)" if "1080" in res_tag else "Adaptive",
-                                        "quality_value": 1080 if "1080" in res_tag else 999,
-                                        "resolution_tag": res_tag,
-                                        "url": final_url,
-                                        "size_mb": 0,
-                                        "codec": "hevc/h264",
-                                        "duration_sec": None,
-                                        "cookie": cookie,
-                                        "headers": {
-                                            "User-Agent": "Mozilla/5.0",
-                                            "Referer": f"{domain}/",
-                                            "Origin": domain,
-                                        }
-                                    })
+                            if data:
+                                web_streams.append((domain, data))
                         except Exception:
                             pass
             except Exception:
                 pass
+            return web_streams
+
+        # If detail_path is known, query Mobile Native CDN and Web CDNs concurrently!
+        native_data = {}
+        web_results = []
+        if detail_path:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                fut_native = pool.submit(_fetch_native)
+                fut_web = pool.submit(_fetch_web, detail_path)
+                try:
+                    native_data = fut_native.result()
+                except Exception:
+                    native_data = {}
+                try:
+                    web_results = fut_web.result()
+                except Exception:
+                    web_results = []
+        else:
+            # Query native and get_details in parallel to discover detail_path with zero delay
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                fut_native = pool.submit(_fetch_native)
+                fut_details = pool.submit(self.get_details, subject_id)
+                try:
+                    native_data = fut_native.result()
+                except Exception:
+                    native_data = {}
+                try:
+                    details = fut_details.result()
+                    detail_path = details.get("detail_path", "") or ""
+                    if detail_path:
+                        app_cache.set(f"detail_path:{subject_id}", detail_path, ttl=86400)
+                except Exception:
+                    detail_path = ""
+            if detail_path:
+                web_results = _fetch_web(detail_path)
+
+        # Parse Native CDN streams
+        for st in native_data.get("streams", []):
+            raw_url = st.get("url") or ""
+            if not raw_url:
+                continue
+            if any(m in raw_url for m in ["b164fbfb4347792950bdfbfb563d39d9", "80da52722ee7de7a4303290af6783424", "/other/", "movieboxdownload"]):
+                continue
+            size_bytes = int(st.get("size") or 0)
+            dur = int(st.get("duration") or 0)
+            if (0 < dur <= 45) or (0 < size_bytes <= 3 * 1024 * 1024):
+                continue
+            cookie = st.get("signCookie")
+            policy_url = extract_policy_resource(cookie) if cookie else None
+            final_url = policy_url or raw_url
+            if final_url in seen_urls:
+                continue
+            seen_urls.add(final_url)
+            res_str = str(st.get("resolutions", ""))
+            quality_val = 0
+            for q in (2160, 1440, 1080, 720, 480, 360, 240):
+                if str(q) in res_str:
+                    quality_val = q
+                    break
+            size_mb = size_bytes / (1024 * 1024) if size_bytes else 0
+            is_dash = bool(policy_url or ".mpd" in final_url)
+            streams.append({
+                "source": "Mobile Native CDN",
+                "format": "DASH" if is_dash else st.get("format", "MP4"),
+                "quality": f"{quality_val}p" if quality_val else (res_str or "1080p"),
+                "quality_value": quality_val or (1080 if is_dash else 720),
+                "resolution_tag": res_str or "1080p",
+                "url": final_url,
+                "size_mb": round(size_mb, 1),
+                "codec": st.get("codecName") or "h264/aac",
+                "duration_sec": dur,
+                "headers": {
+                    "User-Agent": MODERN_USER_AGENT,
+                    "Referer": "https://movieboxonline.net/",
+                }
+            })
+
+        # Parse Web CDN streams
+        for domain, data in web_results:
+            for st in data.get("streams", []):
+                url = st.get("url") or ""
+                if not url or url in seen_urls:
+                    continue
+                if any(m in url for m in ["b164fbfb4347792950bdfbfb563d39d9", "80da52722ee7de7a4303290af6783424", "/other/", "movieboxdownload"]):
+                    continue
+                size_bytes = int(st.get("size") or 0)
+                dur = int(st.get("duration") or 0)
+                if (0 < dur <= 45) or (0 < size_bytes <= 3 * 1024 * 1024):
+                    continue
+                seen_urls.add(url)
+                res_str = str(st.get("resolutions", "unknown"))
+                size_mb = size_bytes / (1024 * 1024) if size_bytes else 0
+                quality_val = 0
+                for q in (2160, 1440, 1080, 720, 480, 360, 240):
+                    if str(q) in res_str:
+                        quality_val = q
+                        break
+                streams.append({
+                    "source": f"Web CDN ({domain.split('//')[-1]})",
+                    "format": st.get("format", "MP4"),
+                    "quality": f"{quality_val}p" if quality_val else res_str,
+                    "quality_value": quality_val,
+                    "resolution_tag": res_str,
+                    "url": url,
+                    "size_mb": round(size_mb, 1),
+                    "codec": st.get("codecName") or "h264",
+                    "duration_sec": dur,
+                    "headers": {
+                        "User-Agent": "Mozilla/5.0",
+                        "Referer": f"{domain}/",
+                        "Origin": domain,
+                    }
+                })
+            for d in data.get("dash", []):
+                url = d.get("url")
+                cookie = d.get("signCookie")
+                extracted_mpd = extract_policy_resource(cookie) if cookie else None
+                final_url = extracted_mpd or url
+                if final_url and final_url not in seen_urls:
+                    seen_urls.add(final_url)
+                    res_tag = str(d.get("resolutions", "adaptive"))
+                    streams.append({
+                        "source": f"Web DASH ({domain.split('//')[-1]})",
+                        "format": "DASH",
+                        "quality": "1080p (Adaptive)" if "1080" in res_tag else "Adaptive",
+                        "quality_value": 1080 if "1080" in res_tag else 999,
+                        "resolution_tag": res_tag,
+                        "url": final_url,
+                        "size_mb": 0,
+                        "codec": "hevc/h264",
+                        "duration_sec": None,
+                        "cookie": cookie,
+                        "headers": {
+                            "User-Agent": "Mozilla/5.0",
+                            "Referer": f"{domain}/",
+                            "Origin": domain,
+                        }
+                    })
 
         # Sort priority:
         # 1. Prefer MP4 streams (directly playable in HTML5 video) over raw DASH manifests
@@ -1077,8 +1130,8 @@ class MovieBoxEngine:
             s.get("size_mb", 0)
         ), reverse=True)
         if streams:
-            # Cache for 10 minutes (CDN signed URLs are valid ~15-30 minutes)
-            app_cache.set(cache_key, streams, ttl=600)
+            # Cache for 20 minutes (CDN signed URLs are valid ~20-30 minutes)
+            app_cache.set(cache_key, streams, ttl=1200)
         return streams
 
     def get_curated_feed(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -1418,11 +1471,15 @@ class MovieBoxEngine:
         feed["comedy"] = comedy_items[:30]
         feed["horror"] = horror_items[:30]
 
-        # Normalize all covers to /api/image if served from pbcdn to guarantee 100% Android render
+        # Normalize all covers to /api/image if served from pbcdn and pre-cache detail_paths
         for s_key in feed:
             for item in feed[s_key]:
                 if item.get("cover"):
                     item["cover"] = normalize_cover(item["cover"])
+                sid = item.get("subject_id")
+                dp = item.get("detail_path")
+                if sid and dp:
+                    app_cache.set(f"detail_path:{sid}", dp, ttl=86400)
 
         total_items = sum(len(v) for v in feed.values())
         if total_items >= 20:
@@ -1677,8 +1734,8 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     async def content_iterator():
         try:
-            # Yield fast 64KB slices immediately so player parses MP4 moov/ftyp header instantly without buffering
-            async for chunk in resp.aiter_bytes(chunk_size=65536):
+            # Yield high-throughput 256KB chunks for fast streaming and lower event-loop overhead
+            async for chunk in resp.aiter_bytes(chunk_size=262144):
                 yield chunk
         except Exception:
             pass
@@ -2257,9 +2314,11 @@ async def probe_stream_servers(
 
 
 @app.get("/api/stream/{subject_id}")
-async def get_streams(subject_id: str, se: int = 0, ep: int = 0, detail_path: Optional[str] = None, _bust: Optional[str] = None):
+async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int = 0, detail_path: Optional[str] = None, _bust: Optional[str] = None):
     if not subject_id or subject_id == "None":
         raise HTTPException(status_code=400, detail="Invalid subject ID")
+
+    response.headers["Cache-Control"] = "public, max-age=60"
 
     # If cache-bust requested, delete cached streams so we get fresh signed URLs
     if _bust:

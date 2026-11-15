@@ -42,6 +42,14 @@ class DownloadModule(private val reactContext: ReactApplicationContext) :
                 putString("error", error)
             })
         }
+
+        override fun onPaused(taskId: String, written: Long, total: Long) {
+            emit("MVDownloadPaused", Arguments.createMap().apply {
+                putString("taskId", taskId)
+                putDouble("written", written.toDouble())
+                putDouble("total", total.toDouble())
+            })
+        }
     }
 
     private val broadcastReceiver = object : BroadcastReceiver() {
@@ -73,6 +81,16 @@ class DownloadModule(private val reactContext: ReactApplicationContext) :
                         putString("error", error)
                     })
                 }
+                DownloadService.BROADCAST_PAUSED -> {
+                    val taskId  = intent.getStringExtra("task_id") ?: return
+                    val written = intent.getLongExtra("written", 0)
+                    val total   = intent.getLongExtra("total", 0)
+                    emit("MVDownloadPaused", Arguments.createMap().apply {
+                        putString("taskId", taskId)
+                        putDouble("written", written.toDouble())
+                        putDouble("total", total.toDouble())
+                    })
+                }
             }
         }
     }
@@ -89,6 +107,7 @@ class DownloadModule(private val reactContext: ReactApplicationContext) :
             addAction(DownloadService.BROADCAST_PROGRESS)
             addAction(DownloadService.BROADCAST_COMPLETE)
             addAction(DownloadService.BROADCAST_ERROR)
+            addAction(DownloadService.BROADCAST_PAUSED)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             reactContext.registerReceiver(broadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -114,6 +133,16 @@ class DownloadModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun pauseDownload(taskId: String) {
+        DownloadService.pauseDownload(reactContext, taskId)
+    }
+
+    @ReactMethod
+    fun resumeDownload(taskId: String) {
+        DownloadService.resumeDownload(reactContext, taskId)
+    }
+
+    @ReactMethod
     fun getActiveSnapshots(promise: Promise) {
         try {
             val map = Arguments.createMap()
@@ -128,6 +157,37 @@ class DownloadModule(private val reactContext: ReactApplicationContext) :
             promise.resolve(map)
         } catch (e: Exception) {
             promise.resolve(Arguments.createMap())
+        }
+    }
+
+    @ReactMethod
+    fun resolveFilePath(contentUriStr: String, filename: String, promise: Promise) {
+        try {
+            val fileDir = java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "movieverse")
+            val directFile = java.io.File(fileDir, filename)
+            if (directFile.exists()) {
+                promise.resolve("file://${directFile.absolutePath}")
+                return
+            }
+            val uri = android.net.Uri.parse(contentUriStr)
+            if (uri.scheme == "content") {
+                val proj = arrayOf(android.provider.MediaStore.MediaColumns.DATA)
+                reactContext.contentResolver.query(uri, proj, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
+                        if (idx >= 0) {
+                            val path = cursor.getString(idx)
+                            if (!path.isNullOrEmpty() && java.io.File(path).exists()) {
+                                promise.resolve("file://$path")
+                                return
+                            }
+                        }
+                    }
+                }
+            }
+            promise.resolve(contentUriStr)
+        } catch (e: Exception) {
+            promise.resolve(contentUriStr)
         }
     }
 

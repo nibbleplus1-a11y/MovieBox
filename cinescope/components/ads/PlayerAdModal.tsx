@@ -2,199 +2,156 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
   StyleSheet,
   Modal,
-  Animated,
+  TouchableOpacity,
   Linking,
-  Dimensions,
-  ActivityIndicator,
+  Platform,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { WebView } from 'react-native-webview';
-
-const MONETAG_SMARTLINK = 'https://uplcm.com/4/12213398';
-const ADSTERRA_SMARTLINK = 'https://asiafilm.org/4/c59f31c3db10b336a8c574304c2e9b41';
-
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { CONFIG } from '../../config';
 
 interface PlayerAdModalProps {
   visible: boolean;
-  mode: 'preroll' | 'postroll' | 'download';
+  mode?: 'preroll' | 'postroll' | 'download';
   title?: string;
   onComplete: () => void;
   onClose?: () => void;
 }
 
+const AD_COOLDOWN_MS = 15 * 60 * 1000; // Show at most once every 15 minutes
+const MONETAG_SPONSOR_URL = 'https://monetag.com';
+
 export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   visible,
-  mode,
-  title,
+  mode = 'preroll',
+  title = '',
   onComplete,
   onClose,
 }) => {
-  const [secondsLeft, setSecondsLeft] = useState(5);
+  const [secondsLeft, setSecondsLeft] = useState(4);
   const [canSkip, setCanSkip] = useState(false);
-  const [adLoaded, setAdLoaded] = useState(false);
-  const webViewRef = useRef<WebView>(null);
-  // Track whether we've started the countdown yet (wait for ad to load first, up to 2s)
-  const [countdownStarted, setCountdownStarted] = useState(false);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Target ad smartlink based on mode
-  const adUrl = mode === 'postroll' ? ADSTERRA_SMARTLINK : MONETAG_SMARTLINK;
-
-  const startCountdown = () => {
-    if (countdownRef.current) return; // already started
-    setCountdownStarted(true);
-    countdownRef.current = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          if (countdownRef.current) clearInterval(countdownRef.current);
-          countdownRef.current = null;
-          setCanSkip(true);
-          return 0;
-        }
-        if (prev <= 2) setCanSkip(true);
-        return prev - 1;
-      });
-    }, 1000);
-  };
+  const [shouldShow, setShouldShow] = useState(false);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!visible) {
-      if (countdownRef.current) clearInterval(countdownRef.current);
-      countdownRef.current = null;
+      setShouldShow(false);
       return;
     }
-    setSecondsLeft(5);
-    setCanSkip(false);
-    setAdLoaded(false);
-    setCountdownStarted(false);
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    countdownRef.current = null;
 
-    // Start countdown after at most 1.5s even if ad didn't load
-    const fallback = setTimeout(() => startCountdown(), 1500);
-    return () => {
-      clearTimeout(fallback);
-      if (countdownRef.current) clearInterval(countdownRef.current);
-      countdownRef.current = null;
+    // Check frequency capping: only show 1 ad every 15 minutes
+    const checkCap = async () => {
+      try {
+        const lastTime = await AsyncStorage.getItem('cinescope_last_ad_time');
+        const now = Date.now();
+        if (lastTime && now - Number(lastTime) < AD_COOLDOWN_MS) {
+          // Cooldown active -> bypass ad immediately without interrupting user
+          onComplete();
+          return;
+        }
+
+        // Eligible to show
+        await AsyncStorage.setItem('cinescope_last_ad_time', String(now));
+        setShouldShow(true);
+        setSecondsLeft(4);
+        setCanSkip(false);
+      } catch {
+        onComplete();
+      }
     };
-  }, [visible, mode]);
 
-  if (!visible) return null;
+    checkCap();
+  }, [visible]);
 
-  const handleAction = () => {
-    if (!canSkip) return;
-    if (mode === 'postroll') {
-      if (onClose) onClose();
-      else onComplete();
-    } else {
-      onComplete();
-    }
+  useEffect(() => {
+    if (!shouldShow) return;
+
+    timerRef.current = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          if (timerRef.current) clearInterval(timerRef.current);
+          setCanSkip(true);
+          return 0;
+        }
+        if (prev <= 2) {
+          setCanSkip(true);
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [shouldShow]);
+
+  if (!visible || !shouldShow) return null;
+
+  const handleFinish = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    onComplete();
   };
 
-  const getBadgeTitle = () => {
-    if (mode === 'download') return 'SPONSORED DOWNLOAD UNLOCK';
-    if (mode === 'postroll') return 'SPONSORED SHOWCASE';
-    return 'SPONSORED PRE-ROLL';
-  };
-
-  const getCtaLabel = () => {
-    if (!canSkip) {
-      if (mode === 'download') return `Unlocking in ${secondsLeft}s…`;
-      if (mode === 'postroll') return `Close in ${secondsLeft}s…`;
-      return `Skip in ${secondsLeft}s…`;
-    }
-    if (mode === 'download') return 'Start Download Now ›';
-    if (mode === 'postroll') return 'Close & Exit ›';
-    return 'Skip Ad › Watch Movie';
-  };
-
-  const getCtaIcon = () => {
-    if (mode === 'download') return 'cloud-download';
-    if (mode === 'postroll') return 'close';
-    return 'play';
+  const handleOpenSponsor = () => {
+    Linking.openURL(MONETAG_SPONSOR_URL).catch(() => {});
   };
 
   return (
-    <Modal visible={visible} transparent={false} animationType="fade" statusBarTranslucent>
-      <View style={styles.container}>
-        {/* Full-Screen Smartlink WebView */}
-        <WebView
-          ref={webViewRef}
-          source={{ uri: adUrl }}
-          style={styles.webView}
-          javaScriptEnabled
-          domStorageEnabled
-          mixedContentMode="always"
-          allowsInlineMediaPlayback
-          mediaPlaybackRequiresUserAction={false}
-          onLoadEnd={() => {
-            setAdLoaded(true);
-            startCountdown();
-          }}
-          onError={() => {
-            setAdLoaded(true);
-            startCountdown();
-          }}
-          onNavigationStateChange={(navState: any) => {
-            // If user explicitly clicks out to external offer
-            if (
-              navState.url &&
-              navState.url !== adUrl &&
-              !navState.url.startsWith('about:') &&
-              !navState.url.includes('uplcm.com') &&
-              !navState.url.includes('asiafilm.org')
-            ) {
-              Linking.openURL(navState.url).catch(() => {});
-            }
-          }}
-        />
-
-        {/* Loading Spinner until ad content responds */}
-        {!adLoaded && (
-          <View style={styles.loadingOverlay} pointerEvents="none">
-            <ActivityIndicator size="large" color="#E50914" />
-            <Text style={styles.loadingText}>Loading Sponsor Preview…</Text>
-          </View>
-        )}
-
-        {/* Top Header Bar */}
-        <View style={styles.topBar}>
+    <Modal visible={true} transparent={true} animationType="fade" onRequestClose={handleFinish}>
+      <View style={styles.overlay}>
+        <View style={styles.card}>
+          {/* Top sponsor badge */}
           <View style={styles.badgeRow}>
-            <View style={styles.adTag}>
-              <Text style={styles.adTagText}>AD</Text>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>SPONSORED</Text>
             </View>
-            <Text style={styles.badgeText}>{getBadgeTitle()}</Text>
+            <Text style={styles.hdText}>1080P CLOUD PARTNER</Text>
           </View>
 
-          <View style={styles.countdownTag}>
-            <Ionicons name="time-outline" size={13} color="#E2E8F0" />
-            <Text style={styles.countdownText}>
-              {secondsLeft > 0 ? `${secondsLeft}s` : 'Ready'}
-            </Text>
+          {/* Icon */}
+          <View style={styles.iconCircle}>
+            <Ionicons name="film" size={32} color={CONFIG.COLORS.accent} />
           </View>
-        </View>
 
-        {/* Bottom CTA / Skip Bar */}
-        <View style={styles.bottomBar}>
-          {title ? (
-            <Text style={styles.movieTitle} numberOfLines={1}>
-              {title}
-            </Text>
-          ) : null}
+          {/* Title */}
+          <Text style={styles.title} numberOfLines={1}>
+            {title ? `Streaming: ${title}` : 'High-Speed Cinema Stream'}
+          </Text>
+          <Text style={styles.subtitle}>
+            Your movie is buffering in high quality. Support free streaming by checking out our sponsor!
+          </Text>
 
+          {/* Sponsor CTA card */}
           <TouchableOpacity
-            style={[styles.ctaBtn, !canSkip && styles.ctaBtnDisabled]}
-            onPress={handleAction}
-            activeOpacity={0.88}
-            disabled={!canSkip}
+            style={styles.sponsorBanner}
+            onPress={handleOpenSponsor}
+            activeOpacity={0.85}
           >
-            <Ionicons name={getCtaIcon() as any} size={15} color="#FFFFFF" style={{ marginRight: 6 }} />
-            <Text style={styles.ctaText}>{getCtaLabel()}</Text>
+            <View style={styles.sponsorInfo}>
+              <Text style={styles.sponsorTitle}>MovieVerse Premium Cloud</Text>
+              <Text style={styles.sponsorDesc}>Instant zero-buffer 1080p playback & multi-language subtitles.</Text>
+            </View>
+            <View style={styles.sponsorCta}>
+              <Text style={styles.sponsorCtaText}>Visit ↗</Text>
+            </View>
           </TouchableOpacity>
+
+          {/* Skip / Continue Button */}
+          <View style={styles.btnRow}>
+            <TouchableOpacity
+              style={[styles.skipBtn, canSkip && styles.skipBtnActive]}
+              onPress={handleFinish}
+              activeOpacity={0.8}
+              // TV remote support: auto-focus on remote D-pad
+              hasTVPreferredFocus={true}
+            >
+              <Text style={styles.skipBtnText}>
+                {secondsLeft > 0 ? `Skip in ${secondsLeft}s` : 'Continue to Movie →'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </Modal>
@@ -202,124 +159,130 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
 };
 
 const styles = StyleSheet.create({
-  container: {
+  overlay: {
     flex: 1,
-    backgroundColor: '#000000',
-    position: 'relative',
-  },
-  webView: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  loadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#0A0E17',
+    backgroundColor: 'rgba(0, 0, 0, 0.88)',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 12,
-    zIndex: 5,
+    padding: 20,
   },
-  loadingText: {
-    color: '#94A3B8',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  topBar: {
-    position: 'absolute',
-    top: 40,
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  card: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#0F111A',
+    borderRadius: 18,
+    padding: 22,
     alignItems: 'center',
-    zIndex: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 46, 85, 0.25)',
+    elevation: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.6,
+    shadowRadius: 16,
   },
   badgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    gap: 6,
+    gap: 8,
+    marginBottom: 14,
   },
-  adTag: {
-    backgroundColor: '#E50914',
-    paddingHorizontal: 5,
-    paddingVertical: 2,
+  badge: {
+    backgroundColor: 'rgba(255, 46, 85, 0.18)',
     borderRadius: 4,
-  },
-  adTagText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.5,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 46, 85, 0.4)',
   },
   badgeText: {
-    color: '#F8FAFC',
+    color: '#FF2E55',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  hdText: {
+    color: 'rgba(255, 255, 255, 0.5)',
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.3,
   },
-  countdownTag: {
-    flexDirection: 'row',
+  iconCircle: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255, 46, 85, 0.12)',
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.88)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    gap: 5,
+    justifyContent: 'center',
+    marginBottom: 14,
   },
-  countdownText: {
-    color: '#FFFFFF',
-    fontSize: 12,
+  title: {
+    color: '#FFF',
+    fontSize: 17,
     fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 6,
   },
-  bottomBar: {
-    position: 'absolute',
-    bottom: 28,
-    left: 16,
-    right: 16,
-    backgroundColor: 'rgba(15, 23, 42, 0.92)',
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    zIndex: 10,
-    gap: 12,
-  },
-  movieTitle: {
-    flex: 1,
+  subtitle: {
     color: '#94A3B8',
     fontSize: 12,
-    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 17,
+    marginBottom: 16,
   },
-  ctaBtn: {
+  sponsorBanner: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E50914',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 18,
+    gap: 10,
   },
-  ctaBtnDisabled: {
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+  sponsorInfo: {
+    flex: 1,
   },
-  ctaText: {
-    color: '#FFFFFF',
+  sponsorTitle: {
+    color: '#F8FAFC',
     fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  sponsorDesc: {
+    color: '#94A3B8',
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  sponsorCta: {
+    backgroundColor: CONFIG.COLORS.accent,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  sponsorCtaText: {
+    color: '#FFF',
+    fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.2,
+  },
+  btnRow: {
+    width: '100%',
+  },
+  skipBtn: {
+    width: '100%',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  skipBtnActive: {
+    backgroundColor: CONFIG.COLORS.accent,
+  },
+  skipBtnText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

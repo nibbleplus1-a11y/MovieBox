@@ -9,11 +9,14 @@ import {
   Alert,
   StatusBar,
   ScrollView,
+  Platform,
+  Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useDownloads, DownloadTask } from '../services/downloadService';
+import * as IntentLauncher from 'expo-intent-launcher';
+import { useDownloads, DownloadTask, getPlayableLocalUri } from '../services/downloadService';
 import { PlayerAdModal } from '../components/ads/PlayerAdModal';
 import { resolvePoster } from '../services/api';
 
@@ -28,6 +31,8 @@ export default function DownloadsScreen({ navigation }: DownloadsScreenProps) {
     completedTasks,
     quota,
     grantQuota,
+    pauseDownload,
+    resumeDownload,
     cancelDownload,
     deleteDownload,
   } = useDownloads();
@@ -49,18 +54,46 @@ export default function DownloadsScreen({ navigation }: DownloadsScreenProps) {
     };
   }, [completedTasks.length]);
 
-  const handlePlayOffline = (task: DownloadTask) => {
+  const handlePlayOffline = async (task: DownloadTask) => {
     if (!task.localUri) {
       Alert.alert('File not ready', 'This download has not finished yet.');
       return;
     }
-    // Launch player with local file uri
+    const playableUri = await getPlayableLocalUri(task);
+    // Launch player with local file uri and offline subtitles
     navigation.navigate('Player', {
       title: task.episodeTitle ? `${task.title} - ${task.episodeTitle}` : task.title,
-      streamUrl: task.localUri,
+      streamUrl: playableUri,
       isOffline: true,
       poster: task.poster,
+      subtitleUrl: task.subtitlePath || task.subtitleUrl,
+      subtitleLang: task.subtitleLang || 'English',
     });
+  };
+
+  const handleOpenExternal = async (task: DownloadTask) => {
+    try {
+      const playableUri = await getPlayableLocalUri(task);
+      if (Platform.OS === 'android') {
+        let contentUri = playableUri;
+        if (playableUri.startsWith('file://')) {
+          try {
+            contentUri = await FileSystem.getContentUriAsync(playableUri);
+          } catch {
+            contentUri = playableUri;
+          }
+        }
+        await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+          data: contentUri,
+          type: 'video/mp4',
+          flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+        });
+      } else {
+        await Linking.openURL(playableUri);
+      }
+    } catch (e: any) {
+      Alert.alert('External Player', 'Could not open external player: ' + (e?.message || ''));
+    }
   };
 
   const confirmDelete = (task: DownloadTask) => {
@@ -112,18 +145,34 @@ export default function DownloadsScreen({ navigation }: DownloadsScreenProps) {
           </View>
 
           <View style={S.progressMetaRow}>
-            <Text style={S.sizeMeta}>{item.fileSize || 'Downloading…'}</Text>
+            <Text style={S.sizeMeta}>
+              {item.status === 'paused' ? '⏸️ Paused' : (item.fileSize || 'Downloading…')}
+            </Text>
             <Text style={S.percentMeta}>{percent}%</Text>
           </View>
         </View>
 
-        <TouchableOpacity
-          style={S.cancelBtn}
-          onPress={() => cancelDownload(item.id)}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="close-circle" size={24} color="#EF4444" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <TouchableOpacity
+            style={S.cancelBtn}
+            onPress={() => item.status === 'paused' ? resumeDownload(item.id) : pauseDownload(item.id)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons
+              name={item.status === 'paused' ? 'play-circle' : 'pause-circle'}
+              size={26}
+              color={item.status === 'paused' ? '#10B981' : '#F59E0B'}
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={S.cancelBtn}
+            onPress={() => cancelDownload(item.id)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="close-circle" size={24} color="#EF4444" />
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -174,6 +223,14 @@ export default function DownloadsScreen({ navigation }: DownloadsScreenProps) {
             activeOpacity={0.7}
           >
             <Ionicons name="play-circle" size={32} color="#38BDF8" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={S.deleteBtn}
+            onPress={() => handleOpenExternal(item)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="open-outline" size={20} color="#38BDF8" />
           </TouchableOpacity>
 
           <TouchableOpacity

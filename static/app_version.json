@@ -1,7 +1,9 @@
 {
-  "version": "1.2.7",
-  "version_code": 20,
-  "download_url": "https://movieverse.click/download/app",
-  "changelog": "Fix black screen buffering loop, AI Super-Resolution 1080p/4K upscaler, Netflix-style auto bandwidth detection, lightning-fast posters, and automated in-app updater!",
+  "version": "1.3.0",
+  "version_code": 23,
+  "download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.3.0/MovieVerse.apk",
+  "cdn_download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.3.0/MovieVerse.apk",
+  "fallback_url": "https://movieverse.click/download/app?direct=1",
+  "changelog": "🚀 Ultra-fast stream startup & parallel CDN pipeline, Netflix/Prime 1:1 Android TV UI with D-Pad navigation, and subtitle sync fixes!",
   "force_update": false
 }

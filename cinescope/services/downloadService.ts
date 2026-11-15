@@ -34,6 +34,9 @@ export interface DownloadTask {
   error?: string;
   localUri?: string;
   fileSize?: string;
+  subtitleUrl?: string;
+  subtitlePath?: string;
+  subtitleLang?: string;
   startedAt: number;
   completedAt?: number;
 }
@@ -46,6 +49,8 @@ export interface StartDownloadParams {
   episodeTitle?: string;
   season?: number;
   episode?: number;
+  subtitleUrl?: string;
+  subtitleLang?: string;
 }
 
 type DownloadListener = (tasks: DownloadTask[], quota: number) => void;
@@ -61,7 +66,10 @@ function formatBytes(bytes: number): string {
 const NativeDownloader = NativeModules.MovieVerseDownloader as {
   startDownload(taskId: string, url: string, filename: string, title: string): void;
   cancelDownload(taskId: string): void;
+  pauseDownload?: (taskId: string) => void;
+  resumeDownload?: (taskId: string) => void;
   getActiveSnapshots?: () => Promise<Record<string, { taskId: string; written: number; total: number; progress: number }>>;
+  resolveFilePath?: (contentUri: string, filename: string) => Promise<string>;
 } | undefined;
 
 const useNativeService = Platform.OS === 'android' && !!NativeDownloader;
@@ -157,6 +165,21 @@ class DownloadManager {
               task.error  = e.error;
             }
             this.notify();
+          }),
+
+          this.emitter.addListener('MVDownloadPaused', (e: any) => {
+            const task = this.tasks.get(e.taskId);
+            if (task) {
+              task.status = 'paused';
+              task.bytesWritten = e.written;
+              task.totalBytes = e.total;
+              if (e.total > 0) {
+                task.progress = Math.min(0.99, e.written / e.total);
+                task.fileSize = `${formatBytes(e.written)} / ${formatBytes(e.total)}`;
+              }
+            }
+            this.notify();
+            this.persistTasks();
           }),
         );
 
@@ -258,6 +281,8 @@ class DownloadManager {
       episodeTitle,
       season,
       episode,
+      subtitleUrl,
+      subtitleLang = 'English',
     } = params;
 
     const timestamp  = Date.now();
@@ -273,6 +298,8 @@ class DownloadManager {
       episodeTitle,
       season,
       episode,
+      subtitleUrl,
+      subtitleLang,
       progress: 0,
       bytesWritten: 0,
       totalBytes: 0,
@@ -282,6 +309,22 @@ class DownloadManager {
 
     this.tasks.set(taskId, task);
     this.notify();
+
+    // ── Concurrently download subtitle file (.vtt) if present ────────────
+    if (subtitleUrl) {
+      const subFilename = safeFilename.replace(/\.mp4$/i, '.vtt');
+      const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+      const subDestination = `${baseDir.endsWith('/') ? baseDir : baseDir + '/'}${timestamp}_${subFilename}`;
+      FileSystem.downloadAsync(subtitleUrl, subDestination)
+        .then(async (res) => {
+          if (res?.uri) {
+            task.subtitlePath = res.uri;
+            await this.persistTasks();
+            this.notify();
+          }
+        })
+        .catch((e) => console.warn('Subtitle download error:', e));
+    }
 
     if (useNativeService && NativeDownloader) {
       // ── Android native foreground service path ─────────────────────────
@@ -392,6 +435,64 @@ class DownloadManager {
     this.notify();
   }
 
+  public pauseDownload(taskId: string) {
+    if (useNativeService && NativeDownloader?.pauseDownload) {
+      NativeDownloader.pauseDownload(taskId);
+    } else {
+      const resumable = this.resumables.get(taskId);
+      if (resumable) {
+        try { resumable.pauseAsync(); } catch {}
+      }
+    }
+    const current = this.tasks.get(taskId);
+    if (current) {
+      current.status = 'paused';
+      this.notify();
+      this.persistTasks();
+    }
+  }
+
+  public resumeDownload(taskId: string) {
+    const current = this.tasks.get(taskId);
+    if (!current) return;
+    current.status = 'downloading';
+    this.notify();
+
+    if (useNativeService && NativeDownloader?.resumeDownload) {
+      NativeDownloader.resumeDownload(taskId);
+    } else {
+      const resumable = this.resumables.get(taskId);
+      if (resumable) {
+        resumable.resumeAsync().then(async (result) => {
+          this.resumables.delete(taskId);
+          if (result?.uri) {
+            current.localUri = result.uri;
+            current.progress = 1.0;
+            current.status = 'completed';
+            current.completedAt = Date.now();
+            this.notify();
+            await this.persistTasks();
+          }
+        }).catch((err) => {
+          current.status = 'error';
+          current.error = err instanceof Error ? err.message : 'Resume failed';
+          this.notify();
+        });
+      } else if (current.url && current.filename) {
+        this.startDownload({
+          url: current.url,
+          filename: current.filename,
+          title: current.title,
+          poster: current.poster,
+          season: current.season,
+          episode: current.episode,
+          subtitleUrl: current.subtitleUrl,
+          subtitleLang: current.subtitleLang,
+        }).catch(() => {});
+      }
+    }
+  }
+
   public async deleteDownload(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId);
     if (task?.localUri && !useNativeService) {
@@ -429,7 +530,7 @@ export function useDownloads() {
     return unsubscribe;
   }, []);
 
-  const activeTasks    = tasks.filter((t) => t.status === 'downloading');
+  const activeTasks    = tasks.filter((t) => t.status === 'downloading' || t.status === 'paused');
   const completedTasks = tasks.filter((t) => t.status === 'completed');
 
   return {
@@ -441,6 +542,8 @@ export function useDownloads() {
     quota,
     hasQuota:       quota > 0,
     startDownload:  (p: StartDownloadParams) => downloadManager.startDownload(p),
+    pauseDownload:  (id: string)             => downloadManager.pauseDownload(id),
+    resumeDownload: (id: string)             => downloadManager.resumeDownload(id),
     cancelDownload: (id: string)             => downloadManager.cancelDownload(id),
     deleteDownload: (id: string)             => downloadManager.deleteDownload(id),
     dismissTask:    (id: string)             => downloadManager.dismissTask(id),
@@ -482,4 +585,23 @@ export async function downloadStream(opts: {
   } catch (e: any) {
     opts.onError?.(e?.message || 'Download failed');
   }
+}
+
+/**
+ * Resolves the actual playable file:// URI for a completed download task.
+ * Converts MediaStore content:// URIs to direct file:///storage/emulated/0/... paths.
+ */
+export async function getPlayableLocalUri(task: DownloadTask): Promise<string> {
+  if (!task.localUri) return '';
+  if (task.localUri.startsWith('file://')) return task.localUri;
+  if (Platform.OS === 'android' && NativeDownloader?.resolveFilePath) {
+    try {
+      const resolved = await NativeDownloader.resolveFilePath(task.localUri, task.filename);
+      if (resolved && resolved.startsWith('file://')) return resolved;
+    } catch {}
+  }
+  if (Platform.OS === 'android') {
+    return `file:///storage/emulated/0/Download/movieverse/${task.filename}`;
+  }
+  return task.localUri;
 }

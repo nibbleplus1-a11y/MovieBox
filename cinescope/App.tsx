@@ -19,6 +19,8 @@ import { UpdateModal } from './components/UpdateModal';
 import { checkForAppUpdate, UpdateInfo } from './services/updateService';
 import { useDownloads } from './services/downloadService';
 import { CONFIG } from './config';
+import { useTVDetect } from './hooks/useTVDetect';
+import TVApp from './screens/tv/TVApp';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -133,6 +135,7 @@ function MainTabs() {
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const { isTVDevice } = useTVDetect();
 
   useEffect(() => {
     // Request notification permission on Android 13+ for download progress notifications
@@ -181,6 +184,13 @@ export default function App() {
       </SafeAreaProvider>
     );
   }
+
+  // ─── Android TV / Android Box ─────────────────────────────────
+  if (isTVDevice) {
+    return <TVApp />;
+  }
+
+  // ─── Phone / Tablet ───────────────────────────────────────────
 
   return (
     <SafeAreaProvider>

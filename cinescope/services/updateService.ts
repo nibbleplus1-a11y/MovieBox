@@ -8,6 +8,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { Linking, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
 
 export interface UpdateInfo {
@@ -38,7 +39,15 @@ function isNewer(remoteVer: string, currentVer: string): boolean {
   return false;
 }
 
-export async function checkForAppUpdate(): Promise<UpdateInfo | null> {
+export async function dismissUpdate(version: string): Promise<void> {
+  try {
+    // Suppress notifications for this version for 24 hours
+    const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+    await AsyncStorage.setItem(`update_dismissed_${version}`, String(expiresAt));
+  } catch {}
+}
+
+export async function checkForAppUpdate(ignoreDismissal: boolean = false): Promise<UpdateInfo | null> {
   if (Platform.OS !== 'android') return null;
 
   try {
@@ -56,22 +65,58 @@ export async function checkForAppUpdate(): Promise<UpdateInfo | null> {
     const data = await res.json();
 
     const remoteVersion = data.version || '1.0.0';
-    const remoteCode = data.version_code || 0;
-    const currentVersion = CONFIG.APP_VERSION || '1.2.3';
-    const currentCode = CONFIG.APP_BUILD || 16;
+    const remoteCode = Number(data.version_code) || 0;
+    const currentVersion = CONFIG.APP_VERSION || '1.3.0';
+    const currentCode = Number(CONFIG.APP_BUILD) || 23;
 
+    // A newer version exists ONLY if remote build code is higher,
+    // or if remote code is omitted/0 and semantic version is higher
     const hasNewVersion =
-      remoteCode > currentCode || isNewer(remoteVersion, currentVersion);
+      remoteCode > currentCode ||
+      (remoteCode === 0 && isNewer(remoteVersion, currentVersion));
+
+    if (!hasNewVersion) {
+      return {
+        available: false,
+        version: remoteVersion,
+        versionCode: remoteCode,
+        changelog: '',
+        downloadUrl: '',
+        forceUpdate: false,
+      };
+    }
+
+    const forceUpdate = Boolean(data.force_update);
+
+    // If non-force update, check if user dismissed this version in the last 24h
+    if (!forceUpdate && !ignoreDismissal) {
+      try {
+        const dismissedUntil = await AsyncStorage.getItem(`update_dismissed_${remoteVersion}`);
+        if (dismissedUntil && Number(dismissedUntil) > Date.now()) {
+          return {
+            available: false,
+            version: remoteVersion,
+            versionCode: remoteCode,
+            changelog: '',
+            downloadUrl: '',
+            forceUpdate: false,
+          };
+        }
+      } catch {}
+    }
+
+    const cdnUrl = data.cdn_download_url || data.download_url;
+    const finalDownloadUrl = cdnUrl || `${base}/download/app`;
 
     return {
-      available: hasNewVersion,
+      available: true,
       version: remoteVersion,
       versionCode: remoteCode,
       changelog:
         data.changelog ||
         'Performance improvements, smoother playback & offline download enhancements.',
-      downloadUrl: data.download_url || `${base}/download/app`,
-      forceUpdate: Boolean(data.force_update),
+      downloadUrl: finalDownloadUrl,
+      forceUpdate,
     };
   } catch (e) {
     // Fail silently in background
@@ -79,28 +124,63 @@ export async function checkForAppUpdate(): Promise<UpdateInfo | null> {
   }
 }
 
+export interface DownloadProgress {
+  ratio: number;
+  loadedMb: number;
+  totalMb: number;
+  percent: number;
+}
+
 export async function downloadAndInstallApk(
   downloadUrl: string,
-  onProgress?: (ratio: number) => void
+  onProgress?: (progress: DownloadProgress) => void
 ): Promise<void> {
+  const HIGH_SPEED_CDN_FALLBACK = 'https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.3.0/MovieVerse.apk';
+  const targetUrl = downloadUrl || HIGH_SPEED_CDN_FALLBACK;
+
   try {
     const targetDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
     const localApkUri = `${targetDir}MovieVerse_Update_${Date.now()}.apk`;
 
+    let lastBytes = 0;
+    let lastProgressTime = Date.now();
+
     // Download APK
     const downloadResumable = FileSystem.createDownloadResumable(
-      downloadUrl,
+      targetUrl,
       localApkUri,
       {},
       (p) => {
-        if (p.totalBytesExpectedToWrite > 0 && onProgress) {
-          const ratio = p.totalBytesWritten / p.totalBytesExpectedToWrite;
-          onProgress(Math.min(1.0, Math.max(0, ratio)));
+        const written = p.totalBytesWritten || 0;
+        if (written > lastBytes) {
+          lastBytes = written;
+          lastProgressTime = Date.now();
+        }
+
+        if (onProgress) {
+          // Fallback to ~84.4MB if expected bytes header is missing/chunked
+          const expected = p.totalBytesExpectedToWrite > 0 ? p.totalBytesExpectedToWrite : 84401294;
+          const ratio = Math.min(1.0, Math.max(0.01, written / expected));
+          const loadedMb = Number((written / (1024 * 1024)).toFixed(1));
+          const totalMb = Number((expected / (1024 * 1024)).toFixed(1));
+          const percent = Math.min(100, Math.round(ratio * 100));
+          onProgress({ ratio, loadedMb, totalMb, percent });
         }
       }
     );
 
+    // Watchdog: If download stalls with no progress for 20s, trigger browser download
+    const stallChecker = setInterval(() => {
+      if (Date.now() - lastProgressTime > 20000 && lastBytes === 0) {
+        clearInterval(stallChecker);
+        downloadResumable.pauseAsync().catch(() => {});
+        Linking.openURL(targetUrl).catch(() => {});
+      }
+    }, 5000);
+
     const result = await downloadResumable.downloadAsync();
+    clearInterval(stallChecker);
+
     if (!result || !result.uri) {
       throw new Error('Download failed');
     }
@@ -117,10 +197,10 @@ export async function downloadAndInstallApk(
       });
     } catch (intentErr) {
       console.warn('IntentLauncher failed, falling back to Linking:', intentErr);
-      await Linking.openURL(downloadUrl);
+      await Linking.openURL(targetUrl);
     }
   } catch (err) {
     // If anything fails, fallback to direct browser download
-    await Linking.openURL(downloadUrl);
+    await Linking.openURL(targetUrl);
   }
 }

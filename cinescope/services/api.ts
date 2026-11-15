@@ -60,6 +60,8 @@ export interface DetailData {
   duration?: string;
   coming_soon?: boolean;
   dubs?: { subject_id: string; lang_name: string }[];
+  detail_path?: string;
+  seasons?: any[];
 }
 
 export interface FallbackServer {
@@ -103,8 +105,10 @@ export const api = {
 
   detail: (id: string) => get<DetailData>(`/detail/${id}`),
 
-  streams: (id: string, season = 0, ep = 0) =>
-    get<StreamData>(`/api/stream/${id}?se=${season}&ep=${ep}`),
+  streams: (id: string, season = 0, ep = 0, detailPath?: string) =>
+    get<StreamData>(
+      `/api/stream/${id}?se=${season}&ep=${ep}${detailPath ? `&detail_path=${encodeURIComponent(detailPath)}` : ''}`
+    ),
 
   episodes: (id: string) =>
     get<{ subject_id: string; seasons: any[] }>(`/episodes/${id}`),

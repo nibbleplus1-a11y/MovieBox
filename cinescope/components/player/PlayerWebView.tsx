@@ -6,6 +6,8 @@ import type { EdgeInsets } from 'react-native-safe-area-context';
 
 interface PlayerWebViewProps {
   streamUrl: string;
+  referer?: string;
+  isOffline?: boolean;
   useIframe: boolean;
   iframeServerName?: string;
   loading: boolean;
@@ -30,7 +32,9 @@ export const buildPlayerHTML = (
   videoSrc: string,
   initialSeekTime: number = 0,
   activeSubtitleUrl?: string,
-  activeSubtitleLang?: string
+  activeSubtitleLang?: string,
+  refererDomain: string = 'https://movieboxonline.net/',
+  isOffline: boolean = false
 ): string => {
   const isHls = videoSrc.includes('.m3u8');
   const safeSeek = Math.max(0, Math.floor(initialSeekTime || 0));
@@ -109,7 +113,7 @@ export const buildPlayerHTML = (
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <meta name="referrer" content="no-referrer-when-downgrade" />
+  <meta name="referrer" content="${isOffline ? 'no-referrer' : 'unsafe-url'}" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -123,9 +127,9 @@ export const buildPlayerHTML = (
       pointer-events: none;
       transition: filter 0.25s ease;
     }
-    /* AI Super-Resolution (CAS: Contrast Adaptive Sharpening) for 1080p/4K Clarity */
+    /* Hardware-accelerated cinema clarity enhancer */
     video.ai-enhanced {
-      filter: url('#ai-sharpen-filter') contrast(1.05) saturate(1.04) brightness(1.01);
+      filter: contrast(1.04) saturate(1.03) brightness(1.01);
     }
     video.vivid-cinema {
       filter: contrast(1.10) saturate(1.12) brightness(1.02);
@@ -152,17 +156,6 @@ export const buildPlayerHTML = (
   ${hlsScriptTag}
 </head>
 <body>
-  <!-- Real-time SVG AI Super-Resolution Edge Sharpening Matrix -->
-  <svg style="position: absolute; width: 0; height: 0;" aria-hidden="true">
-    <filter id="ai-sharpen-filter">
-      <feConvolveMatrix
-        order="3"
-        preserveAlpha="true"
-        kernelMatrix="0 -0.35 0 -0.35 2.4 -0.35 0 -0.35 0"
-      />
-    </filter>
-  </svg>
-
   <video
     id="videoPlayer"
     class="ai-enhanced"
@@ -172,8 +165,6 @@ export const buildPlayerHTML = (
     webkit-playsinline
     x5-playsinline="true"
     preload="auto"
-    crossorigin="anonymous"
-    onerror="handleSourceError(this)"
   >${subTrackTag}</video>
 
   <script>
@@ -316,7 +307,13 @@ export const buildPlayerHTML = (
       }
     }
 
+    var hasFallenBackToProxy = false;
     function handleSourceError(srcEl) {
+      if (!hasFallenBackToProxy) {
+        hasFallenBackToProxy = true;
+        post({ type: 'cdn_fallback' });
+        return;
+      }
       var err = v.error ? ('Code ' + v.error.code + ': ' + (v.error.message || 'Source load error')) : 'Source failed to load';
       post({ type: 'error', error: err });
     }
@@ -401,8 +398,7 @@ export const buildPlayerHTML = (
     v.addEventListener('waiting', function() { post({ type: 'waiting' }); });
     v.addEventListener('ended', function() { post({ type: 'ended' }); });
     v.addEventListener('error', function() {
-      var err = v.error ? ('Code ' + v.error.code + ': ' + (v.error.message || 'Playback error')) : 'Video error';
-      post({ type: 'error', error: err });
+      handleSourceError(v);
     });
 
     // HLS.js or native fallback
@@ -414,6 +410,8 @@ export const buildPlayerHTML = (
 
 export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
   streamUrl,
+  referer,
+  isOffline = false,
   useIframe,
   iframeServerName,
   loading,
@@ -513,14 +511,18 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
     initialSeekRef.current = currentTime || 0;
   }
 
+  const refererBase = referer || 'https://movieboxonline.net/';
+
   const playerHTML = useMemo(() => {
     return buildPlayerHTML(
       streamUrl,
       initialSeekRef.current,
       activeSubtitleUrl,
-      activeSubtitleLang
+      activeSubtitleLang,
+      refererBase,
+      isOffline
     );
-  }, [streamUrl, activeSubtitleUrl, activeSubtitleLang]);
+  }, [streamUrl, activeSubtitleUrl, activeSubtitleLang, refererBase, isOffline]);
 
   return (
     <>
@@ -529,7 +531,7 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
         key={streamUrl}
         source={{
           html: playerHTML,
-          baseUrl: 'https://movieverse.click/',
+          baseUrl: isOffline ? undefined : (refererBase.endsWith('/') ? refererBase : `${refererBase}/`),
         }}
         originWhitelist={['*']}
         style={styles.webview}
@@ -538,14 +540,17 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
         allowsInlineMediaPlayback
         javaScriptEnabled
         domStorageEnabled
+        allowFileAccess={true}
+        allowFileAccessFromFileURLs={true}
+        allowUniversalAccessFromFileURLs={true}
+        allowingReadAccessToURL={isOffline ? streamUrl : undefined}
         mixedContentMode="always"
         allowsProtectedMedia
         androidHardwareAccelerationDisabled={false}
         scrollEnabled={false}
-        cacheEnabled={true}
-        cacheMode="LOAD_CACHE_ELSE_NETWORK"
+        cacheEnabled={!isOffline}
         setSupportMultipleWindows={false}
-        thirdPartyCookiesEnabled={true}
+        thirdPartyCookiesEnabled={!isOffline}
         onMessage={onMessage}
       />
       {isBuffering && (

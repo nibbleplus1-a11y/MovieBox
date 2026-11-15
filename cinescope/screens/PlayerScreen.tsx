@@ -51,6 +51,8 @@ export default function PlayerScreen() {
     activeStream,
     selectedServer,
     streamUrl,
+    streamReferer,
+    isOffline,
     useIframe,
     iframeServerName,
     loading,
@@ -103,9 +105,10 @@ export default function PlayerScreen() {
     sendVideoCommand,
   } = usePlayerState();
 
-  // Load Similar Movies for Recommendation Shelf
+  // Load Similar Movies for Recommendation Shelf (skipped in offline mode)
   useEffect(() => {
     let isMounted = true;
+    if (isOffline) return;
     const loadSimilar = async () => {
       try {
         let feedData: any = null;
@@ -144,14 +147,11 @@ export default function PlayerScreen() {
     return () => { isMounted = false; };
   }, [currentId, isSeriesType]);
 
-  // ── Trigger preroll interstitial once when stream URL first becomes ready ───
+  // ── Preroll is disabled on stream ready to avoid blocking video start ───
   useEffect(() => {
-    if (streamUrl && !loading && !error && !prerollShown) {
-      setPrerollShown(true);
-      setShowPrerollAd(true);
-      sendVideoCommand('if(window.videoEl){ window.videoEl.pause(); }');
-    }
-  }, [streamUrl, loading, error]);
+    // Keep prerollShown true so playback starts immediately without being paused
+    setPrerollShown(true);
+  }, []);
 
   const onCompletePreroll = () => {
     setShowPrerollAd(false);
@@ -189,6 +189,11 @@ export default function PlayerScreen() {
       api.proxyUrl(activeStream.url, activeStream.headers?.Referer) +
       `&download=true&filename=${encodeURIComponent(filename)}`;
 
+    const chosenSub =
+      activeSubtitle ||
+      subtitlesList.find((s) => s.language?.toLowerCase().includes('english')) ||
+      subtitlesList[0];
+
     const downloadParams = {
       url: dlUrl,
       filename,
@@ -197,6 +202,8 @@ export default function PlayerScreen() {
       episodeTitle,
       season: currentSeason,
       episode: currentEpisode,
+      subtitleUrl: chosenSub?.url,
+      subtitleLang: chosenSub?.language || 'English',
     };
 
     // If quota available, download IMMEDIATELY without showing any ad!
@@ -326,6 +333,8 @@ export default function PlayerScreen() {
       <View style={[styles.playerContainer, playerContainerStyle]}>
         <PlayerWebView
           streamUrl={streamUrl}
+          referer={streamReferer}
+          isOffline={isOffline}
           useIframe={useIframe}
           iframeServerName={iframeServerName}
           loading={loading}

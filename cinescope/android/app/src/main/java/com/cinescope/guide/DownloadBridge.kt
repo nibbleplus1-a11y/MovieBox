@@ -14,10 +14,17 @@ object DownloadBridge {
         fun onProgress(taskId: String, written: Long, total: Long)
         fun onComplete(taskId: String, localUri: String)
         fun onError(taskId: String, error: String)
+        fun onPaused(taskId: String, written: Long, total: Long)
     }
 
     @Volatile
     var listener: Listener? = null
+
+    fun paused(taskId: String, written: Long, total: Long) {
+        try {
+            listener?.onPaused(taskId, written, total)
+        } catch (_: Exception) {}
+    }
 
     // In-memory snapshot of active downloads so newly mounted JS screens immediately get latest progress
     data class ProgressSnapshot(
