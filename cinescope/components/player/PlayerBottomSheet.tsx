@@ -309,13 +309,17 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
               {bottomSheet === 'servers' && (
                 <ScrollView style={styles.sheetList} contentContainerStyle={{ paddingBottom: 20 }}>
                   <TouchableOpacity
-                    style={[styles.sheetRow, !useIframe && styles.sheetRowSelected]}
+                    style={[
+                      styles.sheetRow,
+                      !useIframe && styles.sheetRowSelected,
+                      playableStreams.length === 0 && { opacity: 0.7 }
+                    ]}
                     onPress={() => onSwitchServer('direct')}
                   >
                     <Ionicons
                       name="flash-outline"
                       size={18}
-                      color={!useIframe ? '#e50914' : '#64748b'}
+                      color={!useIframe ? '#e50914' : (playableStreams.length === 0 ? '#475569' : '#64748b')}
                       style={{ marginRight: 12 }}
                     />
                     <View style={{ flex: 1 }}>
@@ -327,7 +331,9 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                       >
                         MovieVerse Direct CDN
                       </Text>
-                      <Text style={styles.sheetRowSub}>Fastest · Native Stream</Text>
+                      <Text style={[styles.sheetRowSub, playableStreams.length === 0 && { color: '#f59e0b' }]}>
+                        {playableStreams.length > 0 ? 'Fastest · Native Stream' : '⚠️ Offline for this title — use Cloud Mirrors below'}
+                      </Text>
                     </View>
                     {!useIframe && (
                       <Ionicons name="checkmark-circle" size={20} color="#e50914" />

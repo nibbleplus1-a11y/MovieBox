@@ -144,7 +144,7 @@ jobs:
           echo "Updating live app version metadata on server..."
           curl -s -X POST \
             -H "Content-Type: application/json" \
-            -d "{\"version\": \"${VERSION}\", \"version_code\": ${BUILD_CODE}, \"download_url\": \"${CDN_URL}\", \"cdn_download_url\": \"${CDN_URL}\", \"fallback_url\": \"${BASE_URL}/download/app?direct=1\", \"changelog\": \"🚀 Ultra-fast stream startup & parallel CDN pipeline, Netflix/Prime 1:1 Android TV UI with D-Pad navigation, and subtitle sync fixes!\", \"force_update\": false}" \
+            -d @static/app_version.json \
             "${BASE_URL}/api/admin/set-version?secret=${SECRET}" || true
 
       - name: Report Build Error Log

@@ -30,8 +30,8 @@ export const CONFIG = {
   // App info
   APP_NAME: 'MovieVerse',
   APP_TAGLINE: '1080P CINEMA & STREAM HUB',
-  APP_VERSION: '1.3.0',
-  APP_BUILD: 23,
+  APP_VERSION: '1.4.0',
+  APP_BUILD: 24,
   IS_TV_BUILD: process.env.EXPO_PUBLIC_TV_BUILD === '1' || false,
 
   // ═══════════════════════════════════════════════════════════════

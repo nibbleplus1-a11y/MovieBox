@@ -12242,3 +12242,147 @@ kbd {
     }
 }
 
+/* ── CINEMA 5-SECOND SKIPPABLE PREROLL OVERLAY ── */
+.cinema-preroll-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    animation: fadeInOverlay 0.25s ease-out;
+}
+
+.cinema-preroll-overlay .preroll-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.88);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.cinema-preroll-overlay .preroll-card {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 440px;
+    background: #0f111a;
+    border: 1px solid rgba(229, 9, 20, 0.3);
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.preroll-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.preroll-sponsor-badge {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.6px;
+    color: #e50914;
+    background: rgba(229, 9, 20, 0.15);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(229, 9, 20, 0.35);
+}
+
+.preroll-timer {
+    font-size: 12px;
+    font-weight: 700;
+    color: #94a3b8;
+}
+
+.preroll-progress-track {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.preroll-progress-bar {
+    width: 100%;
+    height: 100%;
+    background: #e50914;
+    transform-origin: left center;
+}
+
+.preroll-body {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 0;
+}
+
+.preroll-icon {
+    font-size: 32px;
+    flex-shrink: 0;
+}
+
+.preroll-info h4 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+}
+
+.preroll-info p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #94a3b8;
+}
+
+.preroll-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.preroll-visit-btn {
+    flex: 1;
+    text-align: center;
+    text-decoration: none;
+    padding: 9px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.preroll-visit-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: #fff;
+}
+
+.preroll-skip-btn {
+    flex: 1;
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    background: rgba(229, 9, 20, 0.5);
+    border: none;
+    color: #fff;
+    cursor: not-allowed;
+    transition: all 0.2s ease;
+}
+
+.preroll-skip-btn.can-skip,
+.preroll-skip-btn:not([disabled]) {
+    cursor: pointer;
+    background: #e50914 !important;
+    box-shadow: 0 0 16px rgba(229, 9, 20, 0.4);
+}
+

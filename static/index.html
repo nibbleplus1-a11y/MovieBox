@@ -1121,6 +1121,31 @@
 
 
 
+    <!-- CINEMA 5-SECOND SKIPPABLE PREROLL OVERLAY -->
+    <div id="cinemaPrerollOverlay" class="cinema-preroll-overlay" style="display: none;">
+        <div class="preroll-backdrop"></div>
+        <div class="preroll-card">
+            <div class="preroll-top">
+                <span class="preroll-sponsor-badge">⚡ SPONSORED STREAM PARTNER</span>
+                <span class="preroll-timer" id="prerollTimerText">Movie starts in 4s</span>
+            </div>
+            <div class="preroll-progress-track">
+                <div class="preroll-progress-bar" id="prerollProgressBar"></div>
+            </div>
+            <div class="preroll-body">
+                <div class="preroll-icon">🎬</div>
+                <div class="preroll-info">
+                    <h4>MovieVerse Ultra 1080p Cloud</h4>
+                    <p>High-speed stream buffering in background. Support free movies by visiting our sponsor!</p>
+                </div>
+            </div>
+            <div class="preroll-actions">
+                <a href="https://uplcm.com/4/12213398" target="_blank" rel="noopener" class="btn btn-outline btn-sm preroll-visit-btn">Visit Sponsor ↗</a>
+                <button id="prerollSkipBtn" class="btn btn-primary btn-sm preroll-skip-btn" onclick="skipPrerollAd()" disabled>Skip in 4s</button>
+            </div>
+        </div>
+    </div>
+
     <!-- KEYBOARD SHORTCUTS MODAL -->
     <div id="shortcutsModal" class="shortcuts-modal">
         <div class="shortcuts-backdrop" onclick="closeShortcutsModal()"></div>
@@ -1165,7 +1190,7 @@
                         <h4>Unlimited Streaming on Any Device</h4>
                         <p>Fast CDN servers, zero subscription fees, multi-language audio dubs.</p>
                     </div>
-                    <a href="https://monetag.com" id="interstitialMockLink" target="_blank" rel="noopener" class="btn btn-primary btn-sm">Explore Sponsor ↗</a>
+                    <a href="https://uplcm.com/4/12213398" id="interstitialMockLink" target="_blank" rel="noopener" class="btn btn-primary btn-sm">Explore Sponsor ↗</a>
                 </div>
             </div>
             <div class="interstitial-actions">
@@ -1177,7 +1202,7 @@
     <!-- ADSTERRA SOCIAL BAR (Floating non-intrusive bottom-right pill) -->
     <div id="adsterraSocialBar" class="adsterra-social-bar" style="display: none;">
         <button class="social-bar-close" onclick="dismissSocialBar(event)" title="Dismiss">✕</button>
-        <a href="https://adsterra.com" id="socialBarLink" target="_blank" rel="noopener" class="social-bar-content">
+        <a href="https://asiafilm.org/4/c59f31c3db10b336a8c574304c2e9b41" id="socialBarLink" target="_blank" rel="noopener" class="social-bar-content">
             <div class="social-bar-icon-wrap">
                 <span class="social-bar-pulse"></span>
                 <span class="social-bar-emoji">🔥</span>

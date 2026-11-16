@@ -21,7 +21,7 @@ interface PlayerAdModalProps {
 }
 
 const AD_COOLDOWN_MS = 3 * 60 * 1000; // Show at most once every 3 minutes
-const MONETAG_SPONSOR_URL = 'https://monetag.com';
+const MONETAG_SPONSOR_URL = 'https://uplcm.com/4/12213398';
 
 export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   visible,

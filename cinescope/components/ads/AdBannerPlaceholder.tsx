@@ -12,7 +12,7 @@ interface AdBannerPlaceholderProps {
   onPress?: () => void;
 }
 
-const MONETAG_DIRECT_URL = 'https://monetag.com';
+const MONETAG_DIRECT_URL = 'https://uplcm.com/4/12213398';
 
 export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
   variant = 'feed',

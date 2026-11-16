@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { Animated } from 'react-native';
+import { Animated, Alert } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { api, StreamData, StreamSource } from '../services/api';
@@ -435,13 +435,20 @@ export function usePlayerState() {
         setStreamReferer(ref);
         setStreamUrl(first.url);
       } else {
-        // Native stream unavailable for this title (DMCA or offline). Switch to first working fallback server!
-        const fallback = streamData?.fallback_servers?.[0];
-        if (fallback) {
-          setSelectedServer(fallback.id);
-          setIframeServerName(fallback.name || fallback.id);
-          setUseIframe(true);
-          setStreamUrl(fallback.url);
+        // Native stream unavailable for this title (DMCA or offline).
+        Alert.alert(
+          'Direct CDN Unavailable',
+          'Direct stream is temporarily offline for this title. Please choose one of the Cloud Backup Servers.',
+          [{ text: 'OK' }]
+        );
+        if (!useIframe) {
+          const fallback = streamData?.fallback_servers?.[0];
+          if (fallback) {
+            setSelectedServer(fallback.id);
+            setIframeServerName(fallback.name || fallback.id);
+            setUseIframe(true);
+            setStreamUrl(fallback.url);
+          }
         }
       }
     } else {

@@ -137,7 +137,7 @@ export async function downloadAndInstallApk(
   downloadUrl: string,
   onProgress?: (progress: DownloadProgress) => void
 ): Promise<void> {
-  const HIGH_SPEED_CDN_FALLBACK = 'https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.3.0/MovieVerse.apk';
+  const HIGH_SPEED_CDN_FALLBACK = 'https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.4.0/MovieVerse.apk';
   const targetUrl = downloadUrl || HIGH_SPEED_CDN_FALLBACK;
 
   // 1. Preferred Android Native: Foreground Service with Status-Bar Notification & Range Resume
@@ -145,7 +145,7 @@ export async function downloadAndInstallApk(
     return new Promise<void>((resolve, reject) => {
       const taskId = 'update_app_apk';
       const filename = 'MovieVerse_Update.apk';
-      const title = 'MovieVerse Update v1.3.0';
+      const title = 'MovieVerse Update v1.4.0';
 
       const progressSub = DeviceEventEmitter.addListener('MVDownloadProgress', (ev) => {
         if (ev.taskId === taskId && onProgress) {
