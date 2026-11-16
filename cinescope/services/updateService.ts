@@ -137,7 +137,7 @@ export async function downloadAndInstallApk(
   downloadUrl: string,
   onProgress?: (progress: DownloadProgress) => void
 ): Promise<void> {
-  const HIGH_SPEED_CDN_FALLBACK = 'https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.4.0/MovieVerse.apk';
+  const HIGH_SPEED_CDN_FALLBACK = 'https://movieverse.click/cinescope.apk';
   const targetUrl = downloadUrl || HIGH_SPEED_CDN_FALLBACK;
 
   // 1. Preferred Android Native: Foreground Service with Status-Bar Notification & Range Resume

@@ -117,7 +117,7 @@ def serve_sw():
         return FileResponse(sw_path, media_type="application/javascript")
     raise HTTPException(status_code=404, detail="Service worker not found")
 
-DEFAULT_CDN_APK_URL = "https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.4.0/MovieVerse.apk"
+DEFAULT_CDN_APK_URL = "https://movieverse.click/cinescope.apk"
 APP_VERSION_FILE = os.path.join(STATIC_DIR, "app_version.json")
 
 @app.api_route("/app.apk", methods=["GET", "HEAD"])
@@ -125,24 +125,8 @@ APP_VERSION_FILE = os.path.join(STATIC_DIR, "app_version.json")
 @app.api_route("/cinescope.apk", methods=["GET", "HEAD"])
 @app.api_route("/download/app", methods=["GET", "HEAD"])
 def download_apk(request: Request, direct: Optional[int] = None):
-    # If high-speed CDN download is available and direct download was not requested, redirect to CDN for 10-50MB/s speeds
-    if request.method == "GET" and not direct:
-        cdn_url = os.getenv("APK_CDN_URL")
-        if not cdn_url and os.path.exists(APP_VERSION_FILE):
-            try:
-                with open(APP_VERSION_FILE, "r", encoding="utf-8") as f:
-                    v_data = json.load(f)
-                    cdn_url = v_data.get("cdn_download_url") or v_data.get("download_url")
-                    if cdn_url and "movieverse.click" in cdn_url:
-                        cdn_url = None
-            except Exception:
-                pass
-        if not cdn_url:
-            cdn_url = DEFAULT_CDN_APK_URL
-        if cdn_url:
-            return RedirectResponse(url=cdn_url, status_code=302)
-
-    for name in ["movieverse.apk", "cinescope.apk"]:
+    # Always serve the local high-speed APK file directly from nginx / FastAPI with range support
+    for name in ["cinescope.apk", "movieverse.apk"]:
         apk_path = os.path.join(STATIC_DIR, name)
         if os.path.exists(apk_path):
             file_size = os.path.getsize(apk_path)
@@ -160,9 +144,15 @@ def download_apk(request: Request, direct: Optional[int] = None):
                 filename="MovieVerse.apk",
                 headers=headers
             )
-    raise HTTPException(status_code=404, detail="MovieVerse APK build in progress or not yet uploaded.")
+
+    # Fallback to CDN release URL if local APK not found
+    cdn_url = os.getenv("APK_CDN_URL") or "https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.4.0/MovieVerse.apk"
+    if request.method == "HEAD":
+        return Response(status_code=302, headers={"Location": cdn_url})
+    return RedirectResponse(url=cdn_url, status_code=302)
 
 @app.get("/api/app/version")
+@app.head("/api/app/version")
 def get_app_version():
     if os.path.exists(APP_VERSION_FILE):
         try:
@@ -171,12 +161,12 @@ def get_app_version():
         except Exception:
             pass
     return {
-        "version": "1.4.0",
-        "version_code": 24,
-        "download_url": DEFAULT_CDN_APK_URL,
-        "cdn_download_url": DEFAULT_CDN_APK_URL,
+        "version": "1.4.1",
+        "version_code": 25,
+        "download_url": "https://movieverse.click/cinescope.apk",
+        "cdn_download_url": "https://movieverse.click/cinescope.apk",
         "fallback_url": "https://movieverse.click/download/app?direct=1",
-        "changelog": "🚀 v1.4.0: Fixed Game of Thrones server fallback & cloud mirrors, clean audio switch (suppressed Audio Description), non-intrusive ads on web & mobile, and background APK updates with notification progress!",
+        "changelog": "🚀 v1.4.1: High-speed parallel APK downloads, real active sponsor ads, Game of Thrones Server 1 guaranteed buffering & playback, Audio Description (AD) toggle for Lord of the Rings: The Rings of Power!",
         "force_update": True,
     }
 
@@ -2078,67 +2068,67 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
         e = max(1, episode)
         return [
             {
-                "name": "Server 2 (MultiEmbed Global)",
-                "id": "multiembed",
-                "type": "iframe",
-                "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
-            },
-            {
-                "name": "Server 3 (VidSrc Fast)",
+                "name": "Server 1 (Cloud Cinema HD)",
                 "id": "vidsrcto",
                 "type": "iframe",
                 "url": f"https://vidsrc.to/embed/tv/{clean_id}/{s}/{e}",
             },
             {
-                "name": "Server 4 (AutoEmbed Fast)",
-                "id": "autoembed",
-                "type": "iframe",
-                "url": f"https://player.autoembed.cc/embed/tv/{clean_id}/{s}/{e}",
-            },
-            {
-                "name": "Server 5 (VidSrc Ultra)",
+                "name": "Server 2 (VidSrc Ultra)",
                 "id": "vidsrc",
                 "type": "iframe",
                 "url": f"https://vidsrc.me/embed/tv?imdb={clean_id}&season={s}&episode={e}",
             },
             {
-                "name": "Server 6 (2Embed Cinema)",
+                "name": "Server 3 (AutoEmbed Fast)",
+                "id": "autoembed",
+                "type": "iframe",
+                "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
+            },
+            {
+                "name": "Server 4 (2Embed Cinema)",
                 "id": "twoembed",
                 "type": "iframe",
                 "url": f"https://www.2embed.cc/embedtv/{clean_id}&s={s}&e={e}",
+            },
+            {
+                "name": "Server 5 (MultiEmbed Global)",
+                "id": "multiembed",
+                "type": "iframe",
+                "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
             },
         ]
     else:
         return [
             {
-                "name": "Server 2 (MultiEmbed Global)",
-                "id": "multiembed",
-                "type": "iframe",
-                "url": f"https://multiembed.mov/?video_id={clean_id}",
-            },
-            {
-                "name": "Server 3 (VidSrc Fast)",
+                "name": "Server 1 (Cloud Cinema HD)",
                 "id": "vidsrcto",
                 "type": "iframe",
                 "url": f"https://vidsrc.to/embed/movie/{clean_id}",
             },
             {
-                "name": "Server 4 (AutoEmbed Fast)",
-                "id": "autoembed",
-                "type": "iframe",
-                "url": f"https://player.autoembed.cc/embed/movie/{clean_id}",
-            },
-            {
-                "name": "Server 5 (VidSrc Ultra)",
+                "name": "Server 2 (VidSrc Ultra)",
                 "id": "vidsrc",
                 "type": "iframe",
                 "url": f"https://vidsrc.me/embed/movie?imdb={clean_id}",
             },
             {
-                "name": "Server 6 (2Embed Cinema)",
+                "name": "Server 3 (AutoEmbed Fast)",
+                "id": "autoembed",
+                "type": "iframe",
+                "url": f"https://autoembed.co/movie/imdb/{clean_id}",
+            },
+            {
+                "name": "Server 4 (2Embed Cinema)",
                 "id": "twoembed",
                 "type": "iframe",
                 "url": f"https://www.2embed.cc/embed/{clean_id}",
+            },
+            {
+                "name": "Server 5 (MultiEmbed Global)",
+                "id": "multiembed",
+                "type": "iframe",
+                "url": f"https://multiembed.mov/?video_id={clean_id}",
             },
         ]
 

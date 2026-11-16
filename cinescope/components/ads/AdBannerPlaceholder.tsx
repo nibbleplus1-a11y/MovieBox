@@ -14,14 +14,53 @@ interface AdBannerPlaceholderProps {
 
 const MONETAG_DIRECT_URL = 'https://uplcm.com/4/12213398';
 
+const ACTIVE_CAMPAIGNS = [
+  {
+    badge: 'SPONSORED OFFER',
+    badgeColor: '#FF2E55',
+    icon: 'shield-checkmark',
+    iconColor: '#FF2E55',
+    title: 'Shield VPN · 82% Off + 3 Mo Free',
+    subtitle: 'Stream securely at full speed with zero ISP throttling & anonymous browsing.',
+    ctaText: 'Claim 82% Off',
+    accentColor: '#FF2E55',
+  },
+  {
+    badge: 'FEATURED APP',
+    badgeColor: '#38BDF8',
+    icon: 'game-controller',
+    iconColor: '#38BDF8',
+    title: 'Play 10,000+ Games Free Online',
+    subtitle: 'Instant cloud gaming with zero downloads & real player cash rewards.',
+    ctaText: 'Play Now',
+    accentColor: '#0284C7',
+  },
+  {
+    badge: 'CINEMA VIP',
+    badgeColor: '#10B981',
+    icon: 'flash',
+    iconColor: '#10B981',
+    title: 'Ultra 4K Cloud Streaming Pass',
+    subtitle: 'High-speed dedicated edge nodes with Dolby Atmos and zero waiting.',
+    ctaText: 'Get VIP Pass',
+    accentColor: '#059669',
+  },
+];
+
 export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
   variant = 'feed',
-  title = 'MovieVerse 1080p Cloud Network',
-  subtitle = 'High-speed ad-supported cinema streaming with multi-language subs.',
-  ctaText = 'Learn More',
+  title,
+  subtitle,
+  ctaText,
   onPress,
 }) => {
   const { isTVDevice } = useTVDetect();
+
+  // Pick creative based on variant or provided props
+  const defaultCampaign = variant === 'player' ? ACTIVE_CAMPAIGNS[2] : (variant === 'compact' ? ACTIVE_CAMPAIGNS[1] : ACTIVE_CAMPAIGNS[0]);
+  const activeTitle = title && !title.includes('Placement') ? title : defaultCampaign.title;
+  const activeSubtitle = subtitle && !subtitle.includes('Placement') ? subtitle : defaultCampaign.subtitle;
+  const activeCta = ctaText && !ctaText.includes('Learn More') ? ctaText : defaultCampaign.ctaText;
 
   const handlePress = () => {
     if (onPress) {
@@ -46,18 +85,22 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
       activeOpacity={0.85}
       focusable={!isTVDevice}
     >
+      <View style={[styles.iconBox, { borderColor: `${defaultCampaign.accentColor}40` }]}>
+        <Ionicons name={defaultCampaign.icon as any} size={20} color={defaultCampaign.iconColor} />
+      </View>
+
       <View style={styles.left}>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>SPONSORED</Text>
+        <View style={[styles.badge, { backgroundColor: `${defaultCampaign.badgeColor}20` }]}>
+          <Text style={[styles.badgeText, { color: defaultCampaign.badgeColor }]}>{defaultCampaign.badge}</Text>
         </View>
-        <Text style={styles.title} numberOfLines={1}>{title}</Text>
+        <Text style={styles.title} numberOfLines={1}>{activeTitle}</Text>
         {!isCompact && (
-          <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text>
+          <Text style={styles.subtitle} numberOfLines={1}>{activeSubtitle}</Text>
         )}
       </View>
 
-      <View style={styles.ctaBox}>
-        <Text style={styles.ctaText}>{ctaText}</Text>
+      <View style={[styles.ctaBox, { backgroundColor: defaultCampaign.accentColor }]}>
+        <Text style={styles.ctaText}>{activeCta}</Text>
         <Ionicons name="arrow-forward" size={12} color="#FFF" />
       </View>
     </TouchableOpacity>
@@ -76,7 +119,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: 'rgba(255, 46, 85, 0.2)',
+    borderColor: 'rgba(255, 46, 85, 0.25)',
   },
   containerCompact: {
     paddingVertical: 8,
@@ -88,20 +131,28 @@ const styles = StyleSheet.create({
     backgroundColor: '#0A0C14',
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
+  iconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
   left: {
     flex: 1,
     marginRight: 10,
   },
   badge: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255, 46, 85, 0.15)',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
     marginBottom: 4,
   },
   badgeText: {
-    color: '#FF2E55',
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 0.5,
@@ -120,9 +171,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: CONFIG.COLORS.accent,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8,
   },
   ctaText: {

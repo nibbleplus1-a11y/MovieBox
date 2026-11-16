@@ -1,9 +1,9 @@
 {
-  "version": "1.4.0",
-  "version_code": 24,
-  "download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.4.0/MovieVerse.apk",
-  "cdn_download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.4.0/MovieVerse.apk",
+  "version": "1.4.1",
+  "version_code": 25,
+  "download_url": "https://movieverse.click/cinescope.apk",
+  "cdn_download_url": "https://movieverse.click/cinescope.apk",
   "fallback_url": "https://movieverse.click/download/app?direct=1",
-  "changelog": "🚀 v1.4.0: Fixed Game of Thrones server fallback & cloud mirrors, clean audio switch (suppressed Audio Description), non-intrusive ads on web & mobile, and background APK updates with notification progress!",
+  "changelog": "🚀 v1.4.1: High-speed parallel APK downloads, real active sponsor ads, Game of Thrones Server 1 guaranteed buffering & playback, Audio Description (AD) toggle for Lord of the Rings: The Rings of Power!",
   "force_update": true
 }

@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Dimensions,
   ActivityIndicator,
+  Switch,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { EdgeInsets } from 'react-native-safe-area-context';
@@ -37,6 +38,8 @@ interface PlayerBottomSheetProps {
   isSearchingOnlineSubs?: boolean;
   inStreamAudioTracks?: InStreamAudioTrack[];
   activeAudioTrackIndex?: number;
+  isAudioDescriptionEnabled?: boolean;
+  onToggleAudioDescription?: (enabled: boolean) => void;
   onClose: () => void;
   onSwitchDub: (dubId: string, dubName: string) => void;
   onSwitchAudioTrack?: (index: number) => void;
@@ -71,6 +74,8 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
   isSearchingOnlineSubs = false,
   inStreamAudioTracks = [],
   activeAudioTrackIndex = 0,
+  isAudioDescriptionEnabled = false,
+  onToggleAudioDescription,
   onClose,
   onSwitchDub,
   onSwitchAudioTrack,
@@ -151,6 +156,42 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
               {/* AUDIO TRACKS & DUBS LIST */}
               {bottomSheet === 'audio' && (
                 <ScrollView style={styles.sheetList} contentContainerStyle={{ paddingBottom: 20 }}>
+                  {/* AUDIO DESCRIPTION TOGGLE CARD */}
+                  <View style={styles.adToggleCard}>
+                    <View style={styles.adToggleLeft}>
+                      <View style={styles.adBadgeRow}>
+                        <Ionicons
+                          name="mic-outline"
+                          size={16}
+                          color={isAudioDescriptionEnabled ? '#f59e0b' : '#38bdf8'}
+                        />
+                        <Text style={styles.adToggleTitle}>Audio Description (AD)</Text>
+                        <View style={[
+                          styles.adStatusPill,
+                          { backgroundColor: isAudioDescriptionEnabled ? 'rgba(245, 158, 11, 0.15)' : 'rgba(56, 189, 248, 0.15)' }
+                        ]}>
+                          <Text style={[
+                            styles.adStatusText,
+                            { color: isAudioDescriptionEnabled ? '#f59e0b' : '#38bdf8' }
+                          ]}>
+                            {isAudioDescriptionEnabled ? 'ON' : 'OFF'}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.adToggleSub}>
+                        {isAudioDescriptionEnabled
+                          ? 'Narrating scenes & on-screen actions is active'
+                          : 'Clean original dialogue & soundtrack without narration'}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={isAudioDescriptionEnabled}
+                      onValueChange={(val) => onToggleAudioDescription && onToggleAudioDescription(val)}
+                      trackColor={{ false: '#334155', true: '#e50914' }}
+                      thumbColor="#ffffff"
+                    />
+                  </View>
+
                   {inStreamAudioTracks && inStreamAudioTracks.length > 0 && (
                     <View style={{ marginBottom: 16 }}>
                       <Text style={styles.sectionHeader}>STREAM AUDIO TRACKS</Text>
@@ -329,10 +370,10 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                           !useIframe && styles.sheetRowTextSelected,
                         ]}
                       >
-                        MovieVerse Direct CDN
+                        Server 1 (Primary Direct / Cloud HD)
                       </Text>
-                      <Text style={[styles.sheetRowSub, playableStreams.length === 0 && { color: '#f59e0b' }]}>
-                        {playableStreams.length > 0 ? 'Fastest · Native Stream' : '⚠️ Offline for this title — use Cloud Mirrors below'}
+                      <Text style={[styles.sheetRowSub, { color: '#10b981' }]}>
+                        {playableStreams.length > 0 ? 'Fastest · Native Ultra HD' : 'Fastest · Cloud Edge HD Mirror'}
                       </Text>
                     </View>
                     {!useIframe && (
@@ -633,5 +674,54 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '700',
+  },
+  adToggleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#161926',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  adToggleLeft: {
+    flex: 1,
+    marginRight: 12,
+  },
+  adBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  adToggleTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  adStatusPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  adStatusText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  adToggleSub: {
+    color: '#94a3b8',
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  sectionHeader: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#64748b',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+    marginTop: 4,
   },
 });

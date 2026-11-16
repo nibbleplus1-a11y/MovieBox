@@ -3013,6 +3013,23 @@ function selectQualityFromGear(encodedStream, qualityLabel) {
     if (menu) menu.classList.remove('open');
 }
 
+window._isAdAudioEnabled = false;
+window.toggleAudioDescription = function() {
+    window._isAdAudioEnabled = !window._isAdAudioEnabled;
+    if (!window._isAdAudioEnabled) {
+        showToast('Audio Description Disabled: Clean Audio', 'info');
+        if (currentSelectedServer === 'direct' && activeFallbackServers && activeFallbackServers.length > 0) {
+            changePlayerServer(activeFallbackServers[0].id);
+        }
+    } else {
+        showToast('Audio Description Enabled', 'info');
+        if (currentSelectedServer !== 'direct') {
+            changePlayerServer('direct');
+        }
+    }
+    renderSettingsAudioList(activeDubsList);
+};
+
 function renderSettingsAudioList(dubs) {
     const wrap = document.getElementById('settingsAudioOptions');
     if (!wrap) return;
@@ -3032,6 +3049,15 @@ function renderSettingsAudioList(dubs) {
     }
 
     let html = `
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; background:rgba(255,255,255,0.05); border-radius:8px; margin-bottom:8px; border:1px solid rgba(255,255,255,0.08);">
+            <div>
+                <div style="font-weight:700; color:#fff; font-size:13px;">🎙 Audio Description (AD)</div>
+                <div style="font-size:11px; color:#94a3b8;">${window._isAdAudioEnabled ? 'Visual narration active' : 'Clean dialogue (narration disabled)'}</div>
+            </div>
+            <button onclick="window.toggleAudioDescription()" style="background:${window._isAdAudioEnabled ? '#e50914' : '#334155'}; color:#fff; border:none; padding:4px 10px; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;">
+                ${window._isAdAudioEnabled ? 'ON' : 'OFF'}
+            </button>
+        </div>
         <button class="settings-opt-item ${isPlayingOrig ? 'active' : ''}" onclick="selectAudioFromGear('${originalSubId}', 'Original Audio')">
             <span>🌐 Original Audio</span>
             ${isPlayingOrig ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}

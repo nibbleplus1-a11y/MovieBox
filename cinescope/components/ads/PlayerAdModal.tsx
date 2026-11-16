@@ -33,7 +33,7 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   const [secondsLeft, setSecondsLeft] = useState(3);
   const [canSkip, setCanSkip] = useState(false);
   const [shouldShow, setShouldShow] = useState(false);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<any>(null);
 
   useEffect(() => {
     if (!visible) {
@@ -132,11 +132,11 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
             activeOpacity={0.85}
           >
             <View style={styles.sponsorInfo}>
-              <Text style={styles.sponsorTitle}>MovieVerse Premium Cloud</Text>
-              <Text style={styles.sponsorDesc}>Instant zero-buffer 1080p playback & multi-language subtitles.</Text>
+              <Text style={styles.sponsorTitle}>Shield VPN · 82% Off + 3 Mo Free</Text>
+              <Text style={styles.sponsorDesc}>Stream privately at full speed with zero throttling & bypass ISP blocks.</Text>
             </View>
             <View style={styles.sponsorCta}>
-              <Text style={styles.sponsorCtaText}>Visit ↗</Text>
+              <Text style={styles.sponsorCtaText}>Claim ↗</Text>
             </View>
           </TouchableOpacity>
 

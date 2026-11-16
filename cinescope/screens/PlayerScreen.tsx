@@ -87,6 +87,8 @@ export default function PlayerScreen() {
     isSearchingOnlineSubs,
     inStreamAudioTracks,
     activeAudioTrackIndex,
+    isAudioDescriptionEnabled,
+    toggleAudioDescription,
     loadStreams,
     formatTime,
     togglePlayPause,
@@ -455,6 +457,8 @@ export default function PlayerScreen() {
         isSearchingOnlineSubs={isSearchingOnlineSubs}
         inStreamAudioTracks={inStreamAudioTracks}
         activeAudioTrackIndex={activeAudioTrackIndex}
+        isAudioDescriptionEnabled={isAudioDescriptionEnabled}
+        onToggleAudioDescription={toggleAudioDescription}
         onClose={() => setBottomSheet('none')}
         onSwitchDub={switchDub}
         onSwitchAudioTrack={switchAudioTrack}

@@ -130,6 +130,7 @@ export function usePlayerState() {
   const [isSearchingOnlineSubs, setIsSearchingOnlineSubs] = useState<boolean>(false);
   const [inStreamAudioTracks, setInStreamAudioTracks] = useState<InStreamAudioTrack[]>([]);
   const [activeAudioTrackIndex, setActiveAudioTrackIndex] = useState<number>(0);
+  const [isAudioDescriptionEnabled, setIsAudioDescriptionEnabled] = useState<boolean>(false);
   const cachedSubsRef                         = useRef<Map<string, SubtitleItem>>(new Map());
   /** FIX P1 #4: measured width from onLayout — replaces (screenWidth - magic_number) */
   const [trackWidth, setTrackWidth]           = useState<number>(300);
@@ -416,6 +417,46 @@ export function usePlayerState() {
     resetControlsTimer();
   }, [sendVideoCommand, resetControlsTimer]);
 
+  const toggleAudioDescription = useCallback((forceVal?: boolean) => {
+    setIsAudioDescriptionEnabled(prev => {
+      const nextVal = forceVal !== undefined ? forceVal : !prev;
+      if (!nextVal) {
+        // User wants to DISABLE Audio Description:
+        const cleanTrack = inStreamAudioTracks.find(t => !t.isDescriptive);
+        if (cleanTrack) {
+          setActiveAudioTrackIndex(cleanTrack.id);
+          sendVideoCommand(`if(window.setAudioTrack) window.setAudioTrack(${cleanTrack.id});`);
+        } else if (!useIframe && fallbackServers.length > 0) {
+          // Switch to clean cloud server with dialogue-only soundtrack
+          const cleanSrv = fallbackServers[0];
+          setSelectedServer(cleanSrv.id);
+          setIframeServerName(cleanSrv.name || cleanSrv.id);
+          setUseIframe(true);
+          setStreamUrl(cleanSrv.url);
+          setIsPlaying(true);
+        }
+      } else {
+        // User wants to ENABLE Audio Description:
+        const adTrack = inStreamAudioTracks.find(t => t.isDescriptive);
+        if (adTrack) {
+          setActiveAudioTrackIndex(adTrack.id);
+          sendVideoCommand(`if(window.setAudioTrack) window.setAudioTrack(${adTrack.id});`);
+        } else if (useIframe && playableStreams.length > 0) {
+          const directStream = playableStreams[0];
+          setActiveStream(directStream);
+          setSelectedServer('direct');
+          setUseIframe(false);
+          setIframeServerName('');
+          const ref = directStream.headers?.Referer || 'https://movieboxonline.net/';
+          setStreamReferer(ref);
+          setStreamUrl(directStream.url);
+          setIsPlaying(true);
+        }
+      }
+      return nextVal;
+    });
+  }, [inStreamAudioTracks, sendVideoCommand, useIframe, fallbackServers, playableStreams]);
+
   const switchServer = (serverId: string) => {
     if (serverId === 'direct') {
       if (activeStream) {
@@ -425,6 +466,7 @@ export function usePlayerState() {
         const ref = activeStream.headers?.Referer || 'https://movieboxonline.net/';
         setStreamReferer(ref);
         setStreamUrl(activeStream.url);
+        setIsPlaying(true);
       } else if (playableStreams && playableStreams.length > 0) {
         const first = playableStreams[0];
         setActiveStream(first);
@@ -434,21 +476,16 @@ export function usePlayerState() {
         const ref = first.headers?.Referer || 'https://movieboxonline.net/';
         setStreamReferer(ref);
         setStreamUrl(first.url);
+        setIsPlaying(true);
       } else {
-        // Native stream unavailable for this title (DMCA or offline).
-        Alert.alert(
-          'Direct CDN Unavailable',
-          'Direct stream is temporarily offline for this title. Please choose one of the Cloud Backup Servers.',
-          [{ text: 'OK' }]
-        );
-        if (!useIframe) {
-          const fallback = streamData?.fallback_servers?.[0];
-          if (fallback) {
-            setSelectedServer(fallback.id);
-            setIframeServerName(fallback.name || fallback.id);
-            setUseIframe(true);
-            setStreamUrl(fallback.url);
-          }
+        // Fall back to Server 1 from Cloud Servers (e.g. Game of Thrones)
+        const fallback = streamData?.fallback_servers?.[0];
+        if (fallback) {
+          setSelectedServer(fallback.id);
+          setIframeServerName(fallback.name || fallback.id);
+          setUseIframe(true);
+          setStreamUrl(fallback.url);
+          setIsPlaying(true);
         }
       }
     } else {
@@ -666,6 +703,7 @@ export function usePlayerState() {
     seasonsData, sheetSeason, setSheetSeason,
     subtitlesList, activeSubtitle, isSearchingOnlineSubs,
     inStreamAudioTracks, activeAudioTrackIndex,
+    isAudioDescriptionEnabled, toggleAudioDescription,
     trackWidth, setTrackWidth,
     webViewRef, fadeAnim,
     epLabel, playableStreams, dubsList, fallbackServers,

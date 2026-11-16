@@ -470,16 +470,17 @@ export default function HomeScreen() {
             {/* In-Feed Native Ad Banner Slot between shelves */}
             {idx === 1 && (
               <AdBannerPlaceholder
-                title="1080p Cinema Cloud Streaming"
-                subtitle="Sponsored Ad Placement · Multi-server cloud mirrors & ultra-low latency."
-                ctaText="Learn More"
+                title="Ultra VPN & Streaming Shield · 82% Off"
+                subtitle="Stream securely with zero ISP throttling, unlimited bandwidth & privacy."
+                ctaText="Claim Offer"
               />
             )}
             {idx === 3 && (
               <AdBannerPlaceholder
-                title="Watch Free With Zero Buffering"
-                subtitle="High-speed CDN nodes with multi-language Dolby audio dubs."
-                ctaText="Explore App"
+                variant="compact"
+                title="Play 10,000+ Cloud Games Free Online"
+                subtitle="Instant play with zero downloads & real player cash rewards."
+                ctaText="Play Free"
               />
             )}
           </React.Fragment>
