@@ -373,7 +373,7 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                         Server 1 (Primary Direct / Cloud HD)
                       </Text>
                       <Text style={[styles.sheetRowSub, { color: '#10b981' }]}>
-                        {playableStreams.length > 0 ? 'Fastest · Native Ultra HD' : 'Fastest · Cloud Edge HD Mirror'}
+                        {playableStreams.length > 0 ? 'Fastest · Native Ultra HD' : 'Direct Stream (if available)'}
                       </Text>
                     </View>
                     {!useIframe && (

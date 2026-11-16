@@ -2068,28 +2068,28 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
         e = max(1, episode)
         return [
             {
-                "name": "Server 1 (Cloud Cinema HD)",
+                "name": "Server 1 (EmbedSU Cinema)",
+                "id": "embedsu",
+                "type": "iframe",
+                "url": f"https://embed.su/embed/tv/{clean_id}/{s}/{e}",
+            },
+            {
+                "name": "Server 2 (VidSrc Pro)",
+                "id": "vidsrcxyz",
+                "type": "iframe",
+                "url": f"https://vidsrc.xyz/embed/tv?imdb={clean_id}&season={s}&episode={e}",
+            },
+            {
+                "name": "Server 3 (VidSrc.to HD)",
                 "id": "vidsrcto",
                 "type": "iframe",
                 "url": f"https://vidsrc.to/embed/tv/{clean_id}/{s}/{e}",
             },
             {
-                "name": "Server 2 (VidSrc Ultra)",
-                "id": "vidsrc",
-                "type": "iframe",
-                "url": f"https://vidsrc.me/embed/tv?imdb={clean_id}&season={s}&episode={e}",
-            },
-            {
-                "name": "Server 3 (AutoEmbed Fast)",
+                "name": "Server 4 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
-            },
-            {
-                "name": "Server 4 (2Embed Cinema)",
-                "id": "twoembed",
-                "type": "iframe",
-                "url": f"https://www.2embed.cc/embedtv/{clean_id}&s={s}&e={e}",
             },
             {
                 "name": "Server 5 (MultiEmbed Global)",
@@ -2097,38 +2097,50 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
             },
+            {
+                "name": "Server 6 (2Embed Cinema)",
+                "id": "twoembed",
+                "type": "iframe",
+                "url": f"https://www.2embed.cc/embedtv/{clean_id}&s={s}&e={e}",
+            },
         ]
     else:
         return [
             {
-                "name": "Server 1 (Cloud Cinema HD)",
+                "name": "Server 1 (EmbedSU Cinema)",
+                "id": "embedsu",
+                "type": "iframe",
+                "url": f"https://embed.su/embed/movie/{clean_id}",
+            },
+            {
+                "name": "Server 2 (VidSrc Pro)",
+                "id": "vidsrcxyz",
+                "type": "iframe",
+                "url": f"https://vidsrc.xyz/embed/movie?imdb={clean_id}",
+            },
+            {
+                "name": "Server 3 (VidSrc.to HD)",
                 "id": "vidsrcto",
                 "type": "iframe",
                 "url": f"https://vidsrc.to/embed/movie/{clean_id}",
             },
             {
-                "name": "Server 2 (VidSrc Ultra)",
-                "id": "vidsrc",
-                "type": "iframe",
-                "url": f"https://vidsrc.me/embed/movie?imdb={clean_id}",
-            },
-            {
-                "name": "Server 3 (AutoEmbed Fast)",
+                "name": "Server 4 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/movie/imdb/{clean_id}",
-            },
-            {
-                "name": "Server 4 (2Embed Cinema)",
-                "id": "twoembed",
-                "type": "iframe",
-                "url": f"https://www.2embed.cc/embed/{clean_id}",
             },
             {
                 "name": "Server 5 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}",
+            },
+            {
+                "name": "Server 6 (2Embed Cinema)",
+                "id": "twoembed",
+                "type": "iframe",
+                "url": f"https://www.2embed.cc/embed/{clean_id}",
             },
         ]
 

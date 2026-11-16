@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -498,6 +498,8 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
   onOpenBottomSheet,
   onMessage,
 }) => {
+  const [iframeLoading, setIframeLoading] = useState(true);
+
   if (loading) {
     return (
       <View style={styles.centerBox}>
@@ -531,13 +533,27 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
           allowsInlineMediaPlayback
           javaScriptEnabled
           domStorageEnabled
-          userAgent="Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+          // Chrome 124 desktop UA — bypasses Cloudflare IUAM on most embed sites
+          userAgent="Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
           mixedContentMode="always"
           originWhitelist={['*']}
           thirdPartyCookiesEnabled={true}
           allowsProtectedMedia={true}
           cacheEnabled={true}
+          onLoadStart={() => setIframeLoading(true)}
+          onLoadEnd={() => setIframeLoading(false)}
         />
+        {iframeLoading && (
+          <View style={styles.iframeLoadingOverlay} pointerEvents="none">
+            <ActivityIndicator size="large" color="#e50914" />
+            <Text style={styles.iframeLoadingText}>
+              Connecting to {iframeServerName || 'Server'}…
+            </Text>
+            <Text style={styles.iframeLoadingSubText}>
+              Please wait, server is loading
+            </Text>
+          </View>
+        )}
         <View style={[styles.iframeTopBar, { paddingTop: insets.top + 6 }]}>
           <TouchableOpacity style={styles.iconCircleBtn} onPress={onBack} activeOpacity={0.8}>
             <Ionicons name="chevron-back" size={22} color="#fff" />
@@ -736,5 +752,28 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 11,
     fontWeight: '600',
+  },
+  iframeLoadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(7, 8, 11, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+    gap: 12,
+  },
+  iframeLoadingText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  iframeLoadingSubText: {
+    color: '#64748b',
+    fontSize: 12,
+    textAlign: 'center',
   },
 });
