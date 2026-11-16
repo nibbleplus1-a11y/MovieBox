@@ -161,12 +161,12 @@ def get_app_version():
         except Exception:
             pass
     return {
-        "version": "1.4.1",
-        "version_code": 25,
+        "version": "1.4.2",
+        "version_code": 26,
         "download_url": "https://movieverse.click/cinescope.apk",
         "cdn_download_url": "https://movieverse.click/cinescope.apk",
         "fallback_url": "https://movieverse.click/download/app?direct=1",
-        "changelog": "🚀 v1.4.1: High-speed parallel APK downloads, real active sponsor ads, Game of Thrones Server 1 guaranteed buffering & playback, Audio Description (AD) toggle for Lord of the Rings: The Rings of Power!",
+        "changelog": "🚀 v1.4.2: Server 1 fixed for all shows (embed.su + vidsrc.xyz, no Cloudflare blocks), server loading indicator, 6 cloud servers, audio description toggle, high-speed direct APK downloads.",
         "force_update": True,
     }
 

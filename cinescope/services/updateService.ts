@@ -145,7 +145,7 @@ export async function downloadAndInstallApk(
     return new Promise<void>((resolve, reject) => {
       const taskId = 'update_app_apk';
       const filename = 'MovieVerse_Update.apk';
-      const title = 'MovieVerse Update v1.4.0';
+      const title = 'MovieVerse Update v1.4.2';
 
       const progressSub = DeviceEventEmitter.addListener('MVDownloadProgress', (ev) => {
         if (ev.taskId === taskId && onProgress) {
