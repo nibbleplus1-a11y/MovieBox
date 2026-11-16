@@ -13,7 +13,7 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { StreamSource, FallbackServer } from '../../services/api';
-import { BottomSheetType, SeasonData, EpisodeData, SubtitleItem } from '../../hooks/usePlayerState';
+import { BottomSheetType, SeasonData, EpisodeData, SubtitleItem, InStreamAudioTrack } from '../../hooks/usePlayerState';
 
 interface PlayerBottomSheetProps {
   bottomSheet: BottomSheetType;
@@ -35,8 +35,11 @@ interface PlayerBottomSheetProps {
   subtitlesList?: SubtitleItem[];
   activeSubtitle?: SubtitleItem | null;
   isSearchingOnlineSubs?: boolean;
+  inStreamAudioTracks?: InStreamAudioTrack[];
+  activeAudioTrackIndex?: number;
   onClose: () => void;
   onSwitchDub: (dubId: string, dubName: string) => void;
+  onSwitchAudioTrack?: (index: number) => void;
   onSwitchQuality: (stream: StreamSource) => void;
   onChangeSpeed: (speed: number) => void;
   onSwitchServer: (serverId: string) => void;
@@ -66,8 +69,11 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
   subtitlesList = [],
   activeSubtitle = null,
   isSearchingOnlineSubs = false,
+  inStreamAudioTracks = [],
+  activeAudioTrackIndex = 0,
   onClose,
   onSwitchDub,
+  onSwitchAudioTrack,
   onSwitchQuality,
   onChangeSpeed,
   onSwitchServer,
@@ -142,9 +148,49 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                 </TouchableOpacity>
               </View>
 
-              {/* AUDIO DUBS LIST */}
+              {/* AUDIO TRACKS & DUBS LIST */}
               {bottomSheet === 'audio' && (
                 <ScrollView style={styles.sheetList} contentContainerStyle={{ paddingBottom: 20 }}>
+                  {inStreamAudioTracks && inStreamAudioTracks.length > 0 && (
+                    <View style={{ marginBottom: 16 }}>
+                      <Text style={styles.sectionHeader}>STREAM AUDIO TRACKS</Text>
+                      {inStreamAudioTracks.map((tr) => {
+                        const isSel = activeAudioTrackIndex === tr.id;
+                        return (
+                          <TouchableOpacity
+                            key={tr.id}
+                            style={[styles.sheetRow, isSel && styles.sheetRowSelected]}
+                            onPress={() => onSwitchAudioTrack && onSwitchAudioTrack(tr.id)}
+                          >
+                            <Ionicons
+                              name="volume-high"
+                              size={18}
+                              color={isSel ? '#e50914' : '#64748b'}
+                              style={{ marginRight: 12 }}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.sheetRowText, isSel && styles.sheetRowTextSelected]}>
+                                {tr.name}
+                              </Text>
+                              {tr.isDescriptive && (
+                                <Text style={{ color: '#f59e0b', fontSize: 11, fontWeight: '600', marginTop: 2 }}>
+                                  🎙 Audio Description Track
+                                </Text>
+                              )}
+                            </View>
+                            {isSel && (
+                              <Ionicons name="checkmark-circle" size={20} color="#e50914" />
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {dubsList.length > 0 && inStreamAudioTracks && inStreamAudioTracks.length > 0 && (
+                    <Text style={styles.sectionHeader}>MULTI-LANGUAGE DUBS</Text>
+                  )}
+
                   {dubsList.length > 0 ? (
                     dubsList.map((dub) => {
                       const isSelected = dub.subject_id === currentId;
@@ -174,7 +220,7 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                         </TouchableOpacity>
                       );
                     })
-                  ) : (
+                  ) : (!inStreamAudioTracks || inStreamAudioTracks.length === 0) ? (
                     <View style={[styles.sheetRow, styles.sheetRowSelected]}>
                       <Ionicons
                         name="volume-high-outline"
@@ -187,7 +233,7 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                       </Text>
                       <Ionicons name="checkmark-circle" size={20} color="#e50914" />
                     </View>
-                  )}
+                  ) : null}
                 </ScrollView>
               )}
 

@@ -2078,67 +2078,67 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
         e = max(1, episode)
         return [
             {
-                "name": "Server 2 (VidLink Pro)",
-                "id": "vidlink",
+                "name": "Server 2 (VidSrc Ultra)",
+                "id": "vidsrc",
                 "type": "iframe",
-                "url": f"https://vidlink.pro/tv/{clean_id}/{s}/{e}?primaryColor=e50914&secondaryColor=ff4d4f",
+                "url": f"https://vidsrc.me/embed/tv?imdb={clean_id}&season={s}&episode={e}",
             },
             {
-                "name": "Server 3 (AutoEmbed Fast)",
-                "id": "autoembed",
-                "type": "iframe",
-                "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
-            },
-            {
-                "name": "Server 4 (MultiEmbed Global)",
+                "name": "Server 3 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
             },
             {
-                "name": "Server 5 (EmbedSu Fast)",
-                "id": "embedsu",
+                "name": "Server 4 (VidSrc Fast)",
+                "id": "vidsrcto",
                 "type": "iframe",
-                "url": f"https://embed.su/embed/tv/{clean_id}/{s}/{e}",
+                "url": f"https://vidsrc.to/embed/tv/{clean_id}/{s}/{e}",
             },
             {
-                "name": "Server 6 (RiveStream Ultra)",
-                "id": "rivestream",
+                "name": "Server 5 (2Embed Cinema)",
+                "id": "twoembed",
                 "type": "iframe",
-                "url": f"https://rivestream.live/embed?type=serie&id={clean_id}&season={s}&episode={e}",
+                "url": f"https://www.2embed.cc/embedtv/{clean_id}&s={s}&e={e}",
+            },
+            {
+                "name": "Server 6 (AutoEmbed Fast)",
+                "id": "autoembed",
+                "type": "iframe",
+                "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
             },
         ]
     else:
         return [
             {
-                "name": "Server 2 (VidLink Pro)",
-                "id": "vidlink",
+                "name": "Server 2 (VidSrc Ultra)",
+                "id": "vidsrc",
                 "type": "iframe",
-                "url": f"https://vidlink.pro/movie/{clean_id}?primaryColor=e50914&secondaryColor=ff4d4f",
+                "url": f"https://vidsrc.me/embed/movie?imdb={clean_id}",
             },
             {
-                "name": "Server 3 (AutoEmbed Fast)",
-                "id": "autoembed",
-                "type": "iframe",
-                "url": f"https://autoembed.co/movie/imdb/{clean_id}",
-            },
-            {
-                "name": "Server 4 (MultiEmbed Global)",
+                "name": "Server 3 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}",
             },
             {
-                "name": "Server 5 (EmbedSu Fast)",
-                "id": "embedsu",
+                "name": "Server 4 (VidSrc Fast)",
+                "id": "vidsrcto",
                 "type": "iframe",
-                "url": f"https://embed.su/embed/movie/{clean_id}",
+                "url": f"https://vidsrc.to/embed/movie/{clean_id}",
             },
             {
-                "name": "Server 6 (RiveStream Ultra)",
-                "id": "rivestream",
+                "name": "Server 5 (2Embed Cinema)",
+                "id": "twoembed",
                 "type": "iframe",
-                "url": f"https://rivestream.live/embed?type=movie&id={clean_id}",
+                "url": f"https://www.2embed.cc/embed/{clean_id}",
+            },
+            {
+                "name": "Server 6 (AutoEmbed Fast)",
+                "id": "autoembed",
+                "type": "iframe",
+                "url": f"https://autoembed.co/movie/imdb/{clean_id}",
             },
         ]
 
@@ -2386,13 +2386,19 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
         if imdb_id:
             # Cache hit — build servers immediately
             fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
+        elif len(streams) == 0:
+            # Primary stream unavailable: resolve IMDB synchronously so backup servers work immediately!
+            try:
+                imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(title, year=det_release, is_series=is_ser))
+                if imdb_id:
+                    fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
+            except Exception:
+                fallback_servers = []
         else:
-            # Kick off IMDB resolution in background — don't block the stream response
+            # Primary stream exists: Kick off IMDB resolution in background
             def _bg_resolve():
                 resolved = resolve_imdb_id(title, year=det_release, is_series=is_ser)
-                # result cached inside resolve_imdb_id already
                 return resolved
-            # Fire-and-forget — client can fetch /api/fallback-sources separately if needed
             _bg_executor.submit(_bg_resolve)
 
     return {

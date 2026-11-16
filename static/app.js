@@ -138,9 +138,9 @@ const API_ENDPOINTS = [
 // 3. Always skippable after 5 seconds — user is never trapped
 const AdEngine = {
     // ── Config ──────────────────────────────────────────────────────────────
-    AD_COOLDOWN_MS: 15 * 60 * 1000,   // 15 minutes between ads
-    PREROLL_DURATION: 5,               // seconds before skip enabled
-    INTERSTITIAL_COOLDOWN_MS: 30 * 60 * 1000, // 30 min between exit ads
+    AD_COOLDOWN_MS: 3 * 60 * 1000,     // 3 minutes between ads
+    PREROLL_DURATION: 4,               // seconds before skip enabled
+    INTERSTITIAL_COOLDOWN_MS: 5 * 60 * 1000, // 5 min between exit ads
 
     prerollTimer: null,
     prerollSecondsLeft: 0,
@@ -1459,6 +1459,31 @@ function setCinemaVideoSource(src, stream, titleText) {
             });
             hlsInstance.loadSource(src);
             hlsInstance.attachMedia(video);
+            hlsInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, (event, data) => {
+                try {
+                    const tracks = (data && data.audioTracks) || hlsInstance.audioTracks || [];
+                    if (!tracks || tracks.length <= 1) return;
+                    console.log('[WebPlayer] Audio tracks detected in stream:', tracks);
+                    const currentIdx = hlsInstance.audioTrack;
+                    const cur = tracks[currentIdx];
+                    const isAD = (t) => {
+                        const n = ((t && t.name) || (t && t.lang) || '').toLowerCase();
+                        return /description|descriptive|\[ad\]|\(ad\)|visual/i.test(n);
+                    };
+
+                    // Auto switch away from Audio Description (narrator) to original dialogue
+                    if (cur && isAD(cur)) {
+                        const normalIdx = tracks.findIndex(t => !isAD(t));
+                        if (normalIdx !== -1 && normalIdx !== currentIdx) {
+                            console.log(`[WebPlayer] Auto-switched away from Audio Description track "${cur.name}" to clean dialogue "${tracks[normalIdx].name}" (index ${normalIdx})`);
+                            hlsInstance.audioTrack = normalIdx;
+                            showToast(`Audio Track: Switched to Dialogue (${tracks[normalIdx].name})`, 'info', 3000);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[WebPlayer] Audio track check error:', e);
+                }
+            });
             hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
                 if (plyrInstance) {
                     try { plyrInstance.play().catch(() => {}); } catch {}
@@ -3408,7 +3433,10 @@ function changePlayerServer(serverId) {
 
     if (serverId === 'direct') {
         if (!activeStreamList || activeStreamList.length === 0) {
-            showToast('Direct stream unavailable for this title. Using Backup Server.', 'info');
+            showToast('Notice: Server 1 (Direct CDN) is unavailable for this title due to DMCA. Using high-speed Backup Server.', 'info', 4000);
+            if (activeFallbackServers && activeFallbackServers.length > 0) {
+                changePlayerServer(activeFallbackServers[0].id);
+            }
             return;
         }
         if (stage) stage.classList.remove('is-iframe-mode');

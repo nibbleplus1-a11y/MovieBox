@@ -7,6 +7,13 @@ import { WatchProgressService } from '../services/watchProgress';
 
 export type BottomSheetType = 'none' | 'audio' | 'quality' | 'speed' | 'episodes' | 'servers' | 'subtitles';
 
+export interface InStreamAudioTrack {
+  id: number;
+  name: string;
+  lang?: string;
+  isDescriptive?: boolean;
+}
+
 export interface SeasonData {
   season: number;
   season_number?: number;
@@ -121,6 +128,8 @@ export function usePlayerState() {
   const [subtitlesList, setSubtitlesList]     = useState<SubtitleItem[]>([]);
   const [activeSubtitle, setActiveSubtitle]   = useState<SubtitleItem | null>(null);
   const [isSearchingOnlineSubs, setIsSearchingOnlineSubs] = useState<boolean>(false);
+  const [inStreamAudioTracks, setInStreamAudioTracks] = useState<InStreamAudioTrack[]>([]);
+  const [activeAudioTrackIndex, setActiveAudioTrackIndex] = useState<number>(0);
   const cachedSubsRef                         = useRef<Map<string, SubtitleItem>>(new Map());
   /** FIX P1 #4: measured width from onLayout — replaces (screenWidth - magic_number) */
   const [trackWidth, setTrackWidth]           = useState<number>(300);
@@ -400,6 +409,13 @@ export function usePlayerState() {
     resetControlsTimer();
   };
 
+  const switchAudioTrack = useCallback((index: number) => {
+    setActiveAudioTrackIndex(index);
+    sendVideoCommand(`if(window.setAudioTrack) window.setAudioTrack(${index});`);
+    setBottomSheet('none');
+    resetControlsTimer();
+  }, [sendVideoCommand, resetControlsTimer]);
+
   const switchServer = (serverId: string) => {
     if (serverId === 'direct') {
       if (activeStream) {
@@ -409,6 +425,24 @@ export function usePlayerState() {
         const ref = activeStream.headers?.Referer || 'https://movieboxonline.net/';
         setStreamReferer(ref);
         setStreamUrl(activeStream.url);
+      } else if (playableStreams && playableStreams.length > 0) {
+        const first = playableStreams[0];
+        setActiveStream(first);
+        setSelectedServer('direct');
+        setUseIframe(false);
+        setIframeServerName('');
+        const ref = first.headers?.Referer || 'https://movieboxonline.net/';
+        setStreamReferer(ref);
+        setStreamUrl(first.url);
+      } else {
+        // Native stream unavailable for this title (DMCA or offline). Switch to first working fallback server!
+        const fallback = streamData?.fallback_servers?.[0];
+        if (fallback) {
+          setSelectedServer(fallback.id);
+          setIframeServerName(fallback.name || fallback.id);
+          setUseIframe(true);
+          setStreamUrl(fallback.url);
+        }
       }
     } else {
       const srv = streamData?.fallback_servers?.find(s => s.id === serverId);
@@ -502,6 +536,18 @@ export function usePlayerState() {
                 progress: dur > 0 ? Math.min(100, Math.round((cur / dur) * 100)) : 0,
               });
             }
+            break;
+          }
+          case 'audioTracks': {
+            const tracks = (msg as any).tracks || [];
+            if (Array.isArray(tracks) && tracks.length > 0) {
+              setInStreamAudioTracks(tracks);
+            }
+            break;
+          }
+          case 'audioTrackChanged': {
+            const idx = Number((msg as any).index) || 0;
+            setActiveAudioTrackIndex(idx);
             break;
           }
           case 'playing':
@@ -612,13 +658,14 @@ export function usePlayerState() {
     isFullscreen, bottomSheet, setBottomSheet,
     seasonsData, sheetSeason, setSheetSeason,
     subtitlesList, activeSubtitle, isSearchingOnlineSubs,
+    inStreamAudioTracks, activeAudioTrackIndex,
     trackWidth, setTrackWidth,
     webViewRef, fadeAnim,
     epLabel, playableStreams, dubsList, fallbackServers,
     progressRatio, sheetSeasonEpisodes,
     loadStreams, formatTime,
     togglePlayPause, seekRelative, seekAbsolute, changeSpeed,
-    switchQuality, switchDub, switchServer, switchEpisode,
+    switchQuality, switchDub, switchAudioTrack, switchServer, switchEpisode,
     searchOnlineSubs, selectSubtitle,
     toggleControls, toggleFullscreen, resetControlsTimer,
     handleWebViewMessage, handleBack, sendVideoCommand,

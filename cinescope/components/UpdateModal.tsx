@@ -104,17 +104,30 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ updateInfo, onDismiss 
                 <Text style={S.progressText}>
                   {progressInfo.loadedMb > 0
                     ? `Downloading: ${progressInfo.loadedMb} / ${progressInfo.totalMb} MB (${percent}%)`
-                    : `Connecting to high-speed CDN… (${percent}%)`}
+                    : `Starting background download… (${percent}%)`}
                 </Text>
               </View>
-              <TouchableOpacity
-                style={S.directFallbackBtn}
-                onPress={handleBrowserDownload}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="open-outline" size={14} color="#94A3B8" />
-                <Text style={S.directFallbackText}>Or switch to High-Speed Browser Download</Text>
-              </TouchableOpacity>
+              <Text style={S.bgNotificationNote}>
+                ⚡ Downloading in background. You can turn off your screen or close this dialog — check your notification bar for progress!
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 10 }}>
+                <TouchableOpacity
+                  style={S.runInBackgroundBtn}
+                  onPress={() => onDismiss()}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="notifications-outline" size={14} color="#38BDF8" />
+                  <Text style={S.runInBackgroundText}>Run in Background</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={S.directFallbackBtn}
+                  onPress={handleBrowserDownload}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="open-outline" size={14} color="#94A3B8" />
+                  <Text style={S.directFallbackText}>Browser Mirror</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ) : (
             <View style={{ width: '100%', gap: 10 }}>
@@ -289,14 +302,39 @@ const S = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 12,
     paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
   },
   directFallbackText: {
     color: '#94A3B8',
     fontSize: 12,
     textDecorationLine: 'underline',
+  },
+  bgNotificationNote: {
+    color: '#38BDF8',
+    fontSize: 11,
+    lineHeight: 15,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 4,
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  runInBackgroundBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderRadius: 8,
+  },
+  runInBackgroundText: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '700',
   },
   browserAltBtn: {
     flexDirection: 'row',

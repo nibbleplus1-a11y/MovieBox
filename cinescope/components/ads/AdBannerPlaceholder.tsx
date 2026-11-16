@@ -23,9 +23,6 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
 }) => {
   const { isTVDevice } = useTVDetect();
 
-  // On TV, hide banners so they never interfere with 10-foot D-Pad remote navigation
-  if (isTVDevice) return null;
-
   const handlePress = () => {
     if (onPress) {
       onPress();
@@ -43,9 +40,11 @@ export const AdBannerPlaceholder: React.FC<AdBannerPlaceholderProps> = ({
         styles.container,
         isCompact && styles.containerCompact,
         isPlayer && styles.containerPlayer,
+        isTVDevice && { marginHorizontal: 24, marginVertical: 8, opacity: 0.95 },
       ]}
       onPress={handlePress}
       activeOpacity={0.85}
+      focusable={!isTVDevice}
     >
       <View style={styles.left}>
         <View style={styles.badge}>

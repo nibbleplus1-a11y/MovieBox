@@ -76,6 +76,35 @@ export const buildPlayerHTML = (
         post({ type: 'canplay' });
         tryPlay();
       });
+      hlsInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, function(event, data) {
+        var tracks = data.audioTracks || [];
+        if (tracks.length > 0) {
+          var list = tracks.map(function(t, i) {
+            return {
+              id: i,
+              name: t.name || t.lang || ('Audio ' + (i + 1)),
+              lang: t.lang || '',
+              isDescriptive: /description|descriptive|\[ad\]|\(ad\)/i.test(t.name || '')
+            };
+          });
+          post({ type: 'audioTracks', tracks: list });
+
+          // Auto-disable Audio Description if selected by default
+          var curIdx = hlsInstance.audioTrack;
+          var cur = tracks[curIdx] || tracks[0];
+          var curName = (cur && cur.name) ? cur.name.toLowerCase() : '';
+          if (curName.includes('description') || curName.includes('descriptive') || curName.includes('[ad]')) {
+            for (var k = 0; k < tracks.length; k++) {
+              var kn = (tracks[k].name || '').toLowerCase();
+              if (!kn.includes('description') && !kn.includes('descriptive') && !kn.includes('[ad]')) {
+                hlsInstance.audioTrack = k;
+                post({ type: 'audioTrackChanged', index: k, name: tracks[k].name });
+                break;
+              }
+            }
+          }
+        }
+      });
       hlsInstance.on(Hls.Events.ERROR, function(event, data) {
         if (data.fatal) {
           switch (data.type) {
@@ -294,6 +323,23 @@ export const buildPlayerHTML = (
       }
     };
 
+    window.setAudioTrack = function(index) {
+      try {
+        if (hlsInstance && index >= 0 && index < (hlsInstance.audioTracks || []).length) {
+          hlsInstance.audioTrack = index;
+          post({ type: 'audioTrackChanged', index: index, name: hlsInstance.audioTracks[index].name });
+        } else if (v && v.audioTracks && v.audioTracks.length > index) {
+          for (var i = 0; i < v.audioTracks.length; i++) {
+            v.audioTracks[i].enabled = (i === index);
+          }
+          var lbl = v.audioTracks[index].label || ('Audio ' + (index + 1));
+          post({ type: 'audioTrackChanged', index: index, name: lbl });
+        }
+      } catch (err) {
+        console.error('Audio track switch error:', err);
+      }
+    };
+
     // Auto-enable initial subtitle if loaded
     if ('${activeSubtitleUrl || ''}') {
       setTimeout(function() {
@@ -358,6 +404,27 @@ export const buildPlayerHTML = (
       performSeek();
       if (didInitialSeek || targetSeekTime <= 0) {
         post({ type: 'timeupdate', currentTime: v.currentTime, duration: v.duration });
+      }
+      if (v.audioTracks && v.audioTracks.length > 1) {
+        var aList = [];
+        var adIdx = -1;
+        var cleanIdx = -1;
+        for (var i = 0; i < v.audioTracks.length; i++) {
+          var tr = v.audioTracks[i];
+          var lbl = tr.label || tr.language || ('Audio ' + (i + 1));
+          var isD = /description|descriptive|\[ad\]|\(ad\)/i.test(lbl);
+          aList.push({ id: i, name: lbl, isDescriptive: isD });
+          if (isD && tr.enabled) adIdx = i;
+          if (!isD && cleanIdx === -1) cleanIdx = i;
+        }
+        if (adIdx >= 0 && cleanIdx >= 0) {
+          v.audioTracks[adIdx].enabled = false;
+          v.audioTracks[cleanIdx].enabled = true;
+          post({ type: 'audioTrackChanged', index: cleanIdx, name: aList[cleanIdx].name });
+        }
+        if (aList.length > 0) {
+          post({ type: 'audioTracks', tracks: aList });
+        }
       }
       tryPlay();
     });
@@ -464,6 +531,12 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
           allowsInlineMediaPlayback
           javaScriptEnabled
           domStorageEnabled
+          userAgent="Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+          mixedContentMode="always"
+          originWhitelist={['*']}
+          thirdPartyCookiesEnabled={true}
+          allowsProtectedMedia={true}
+          cacheEnabled={true}
         />
         <View style={[styles.iframeTopBar, { paddingTop: insets.top + 6 }]}>
           <TouchableOpacity style={styles.iconCircleBtn} onPress={onBack} activeOpacity={0.8}>

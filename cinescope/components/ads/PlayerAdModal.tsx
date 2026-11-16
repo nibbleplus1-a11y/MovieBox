@@ -20,7 +20,7 @@ interface PlayerAdModalProps {
   onClose?: () => void;
 }
 
-const AD_COOLDOWN_MS = 15 * 60 * 1000; // Show at most once every 15 minutes
+const AD_COOLDOWN_MS = 3 * 60 * 1000; // Show at most once every 3 minutes
 const MONETAG_SPONSOR_URL = 'https://monetag.com';
 
 export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
@@ -30,7 +30,7 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   onComplete,
   onClose,
 }) => {
-  const [secondsLeft, setSecondsLeft] = useState(4);
+  const [secondsLeft, setSecondsLeft] = useState(3);
   const [canSkip, setCanSkip] = useState(false);
   const [shouldShow, setShouldShow] = useState(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -41,21 +41,23 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
       return;
     }
 
-    // Check frequency capping: only show 1 ad every 15 minutes
+    // Check frequency capping: only show ads if cooldown has elapsed (unless user explicitly initiated download ad)
     const checkCap = async () => {
       try {
-        const lastTime = await AsyncStorage.getItem('cinescope_last_ad_time');
-        const now = Date.now();
-        if (lastTime && now - Number(lastTime) < AD_COOLDOWN_MS) {
-          // Cooldown active -> bypass ad immediately without interrupting user
-          onComplete();
-          return;
+        if (mode !== 'download') {
+          const lastTime = await AsyncStorage.getItem('cinescope_last_ad_time');
+          const now = Date.now();
+          if (lastTime && now - Number(lastTime) < AD_COOLDOWN_MS) {
+            // Cooldown active -> bypass ad immediately without interrupting user
+            onComplete();
+            return;
+          }
+          await AsyncStorage.setItem('cinescope_last_ad_time', String(now));
         }
 
         // Eligible to show
-        await AsyncStorage.setItem('cinescope_last_ad_time', String(now));
         setShouldShow(true);
-        setSecondsLeft(4);
+        setSecondsLeft(3);
         setCanSkip(false);
       } catch {
         onComplete();

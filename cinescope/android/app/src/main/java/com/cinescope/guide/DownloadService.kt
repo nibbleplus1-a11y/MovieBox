@@ -386,9 +386,11 @@ class DownloadService : Service() {
             if (append && existingUri != null) {
                 uri = existingUri
             } else {
+                val isApk = filename.endsWith(".apk", ignoreCase = true)
+                val mimeType = if (isApk) "application/vnd.android.package-archive" else "video/mp4"
                 val values = ContentValues().apply {
                     put(android.provider.MediaStore.Downloads.DISPLAY_NAME, filename)
-                    put(android.provider.MediaStore.Downloads.MIME_TYPE, "video/mp4")
+                    put(android.provider.MediaStore.Downloads.MIME_TYPE, mimeType)
                     put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/movieverse")
                     put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
                 }
@@ -489,9 +491,12 @@ class DownloadService : Service() {
     }
 
     private fun showCompleteNotification(job: DownloadJob, destUri: Uri?) {
+        val isApk = job.filename.endsWith(".apk", ignoreCase = true)
+        val mimeType = if (isApk) "application/vnd.android.package-archive" else "video/mp4"
+
         val openIntent = destUri?.let { uri ->
             Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "video/mp4")
+                setDataAndType(uri, mimeType)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
             }.let {
                 PendingIntent.getActivity(
@@ -503,9 +508,12 @@ class DownloadService : Service() {
             }
         }
 
+        val titleText = if (isApk) "Update Ready to Install 🚀" else "Download Complete 🎉"
+        val descText = if (isApk) "Tap to install the new MovieVerse update." else "${job.title} is ready to watch offline."
+
         val n = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Download Complete 🎉")
-            .setContentText("${job.title} is ready to watch offline.")
+            .setContentTitle(titleText)
+            .setContentText(descText)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setAutoCancel(true)
             .apply { if (openIntent != null) setContentIntent(openIntent) }

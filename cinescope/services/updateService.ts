@@ -7,7 +7,7 @@
 
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
-import { Linking, Platform } from 'react-native';
+import { Linking, Platform, NativeModules, DeviceEventEmitter } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../config';
 
@@ -124,6 +124,8 @@ export async function checkForAppUpdate(ignoreDismissal: boolean = false): Promi
   }
 }
 
+const { MovieVerseDownloader } = NativeModules;
+
 export interface DownloadProgress {
   ratio: number;
   loadedMb: number;
@@ -138,6 +140,87 @@ export async function downloadAndInstallApk(
   const HIGH_SPEED_CDN_FALLBACK = 'https://github.com/nibbleplus1-a11y/MovieBox/releases/download/v1.3.0/MovieVerse.apk';
   const targetUrl = downloadUrl || HIGH_SPEED_CDN_FALLBACK;
 
+  // 1. Preferred Android Native: Foreground Service with Status-Bar Notification & Range Resume
+  if (Platform.OS === 'android' && MovieVerseDownloader) {
+    return new Promise<void>((resolve, reject) => {
+      const taskId = 'update_app_apk';
+      const filename = 'MovieVerse_Update.apk';
+      const title = 'MovieVerse Update v1.3.0';
+
+      const progressSub = DeviceEventEmitter.addListener('MVDownloadProgress', (ev) => {
+        if (ev.taskId === taskId && onProgress) {
+          const written = Number(ev.written) || 0;
+          const total = Number(ev.total) > 0 ? Number(ev.total) : 84435330;
+          const ratio = Math.min(1.0, Math.max(0.01, written / total));
+          const loadedMb = Number((written / (1024 * 1024)).toFixed(1));
+          const totalMb = Number((total / (1024 * 1024)).toFixed(1));
+          const percent = Math.min(100, Math.round(ratio * 100));
+          onProgress({ ratio, loadedMb, totalMb, percent });
+        }
+      });
+
+      const completeSub = DeviceEventEmitter.addListener('MVDownloadComplete', async (ev) => {
+        if (ev.taskId === taskId) {
+          progressSub.remove();
+          completeSub.remove();
+          errorSub.remove();
+
+          if (onProgress) {
+            onProgress({ ratio: 1.0, loadedMb: 84.4, totalMb: 84.4, percent: 100 });
+          }
+
+          try {
+            let installUri = ev.localUri;
+            if (installUri && installUri.startsWith('file://')) {
+              try {
+                installUri = await FileSystem.getContentUriAsync(installUri);
+              } catch (_) {}
+            }
+            if (installUri) {
+              await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                data: installUri,
+                flags: 268435457, // FLAG_ACTIVITY_NEW_TASK | FLAG_GRANT_READ_URI_PERMISSION
+                type: 'application/vnd.android.package-archive',
+              });
+            }
+          } catch (intentErr) {
+            console.warn('IntentLauncher failed, opening via browser/file:', intentErr);
+            await Linking.openURL(targetUrl).catch(() => {});
+          }
+          resolve();
+        }
+      });
+
+      const errorSub = DeviceEventEmitter.addListener('MVDownloadError', (ev) => {
+        if (ev.taskId === taskId) {
+          progressSub.remove();
+          completeSub.remove();
+          errorSub.remove();
+          Linking.openURL(targetUrl).catch(() => {});
+          reject(new Error(ev.error || 'Native download failed'));
+        }
+      });
+
+      try {
+        MovieVerseDownloader.startDownload(taskId, targetUrl, filename, title);
+      } catch (startErr) {
+        progressSub.remove();
+        completeSub.remove();
+        errorSub.remove();
+        // Fall back to FileSystem
+        fallbackFileSystemDownload(targetUrl, onProgress).then(resolve).catch(reject);
+      }
+    });
+  }
+
+  // 2. Fallback: Expo FileSystem createDownloadResumable
+  return fallbackFileSystemDownload(targetUrl, onProgress);
+}
+
+async function fallbackFileSystemDownload(
+  targetUrl: string,
+  onProgress?: (progress: DownloadProgress) => void
+): Promise<void> {
   try {
     const targetDir = FileSystem.cacheDirectory || FileSystem.documentDirectory || '';
     const localApkUri = `${targetDir}MovieVerse_Update_${Date.now()}.apk`;
@@ -145,7 +228,6 @@ export async function downloadAndInstallApk(
     let lastBytes = 0;
     let lastProgressTime = Date.now();
 
-    // Download APK
     const downloadResumable = FileSystem.createDownloadResumable(
       targetUrl,
       localApkUri,
@@ -158,8 +240,7 @@ export async function downloadAndInstallApk(
         }
 
         if (onProgress) {
-          // Fallback to ~84.4MB if expected bytes header is missing/chunked
-          const expected = p.totalBytesExpectedToWrite > 0 ? p.totalBytesExpectedToWrite : 84401294;
+          const expected = p.totalBytesExpectedToWrite > 0 ? p.totalBytesExpectedToWrite : 84435330;
           const ratio = Math.min(1.0, Math.max(0.01, written / expected));
           const loadedMb = Number((written / (1024 * 1024)).toFixed(1));
           const totalMb = Number((expected / (1024 * 1024)).toFixed(1));
@@ -169,9 +250,8 @@ export async function downloadAndInstallApk(
       }
     );
 
-    // Watchdog: If download stalls with no progress for 20s, trigger browser download
     const stallChecker = setInterval(() => {
-      if (Date.now() - lastProgressTime > 20000 && lastBytes === 0) {
+      if (Date.now() - lastProgressTime > 25000 && lastBytes === 0) {
         clearInterval(stallChecker);
         downloadResumable.pauseAsync().catch(() => {});
         Linking.openURL(targetUrl).catch(() => {});
@@ -185,14 +265,12 @@ export async function downloadAndInstallApk(
       throw new Error('Download failed');
     }
 
-    // Convert to content:// URI using Expo FileProvider
     const contentUri = await FileSystem.getContentUriAsync(result.uri);
 
-    // Launch Android Package Installer
     try {
       await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
         data: contentUri,
-        flags: 268435457, // FLAG_ACTIVITY_NEW_TASK | FLAG_GRANT_READ_URI_PERMISSION
+        flags: 268435457,
         type: 'application/vnd.android.package-archive',
       });
     } catch (intentErr) {
@@ -200,7 +278,6 @@ export async function downloadAndInstallApk(
       await Linking.openURL(targetUrl);
     }
   } catch (err) {
-    // If anything fails, fallback to direct browser download
     await Linking.openURL(targetUrl);
   }
 }

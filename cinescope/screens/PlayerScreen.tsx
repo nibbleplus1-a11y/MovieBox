@@ -85,6 +85,8 @@ export default function PlayerScreen() {
     subtitlesList,
     activeSubtitle,
     isSearchingOnlineSubs,
+    inStreamAudioTracks,
+    activeAudioTrackIndex,
     loadStreams,
     formatTime,
     togglePlayPause,
@@ -93,6 +95,7 @@ export default function PlayerScreen() {
     changeSpeed,
     switchQuality,
     switchDub,
+    switchAudioTrack,
     switchServer,
     switchEpisode,
     searchOnlineSubs,
@@ -147,21 +150,24 @@ export default function PlayerScreen() {
     return () => { isMounted = false; };
   }, [currentId, isSeriesType]);
 
-  // ── Preroll is disabled on stream ready to avoid blocking video start ───
+  // ── Preroll Ad: Triggered non-intrusively on stream start (subject to 3m cooldown) ───
   useEffect(() => {
-    // Keep prerollShown true so playback starts immediately without being paused
-    setPrerollShown(true);
-  }, []);
+    if ((streamUrl || useIframe) && !loading && !prerollShown) {
+      setPrerollShown(true);
+      setShowPrerollAd(true);
+      sendVideoCommand('if(window.videoEl){ window.videoEl.pause(); }');
+    }
+  }, [streamUrl, useIframe, loading, prerollShown, sendVideoCommand]);
 
   const onCompletePreroll = () => {
     setShowPrerollAd(false);
     sendVideoCommand('if(window.videoEl){ window.videoEl.muted = false; window.videoEl.play(); }');
   };
 
-  // Reset preroll gate ONLY when user switches episode (not audio/dub)
+  // Reset preroll gate ONLY when user switches movie or episode (not audio/dub)
   useEffect(() => {
     setPrerollShown(false);
-  }, [currentSeason, currentEpisode]);
+  }, [currentId, currentSeason, currentEpisode]);
 
   const onSelectMovie = (m: MovieCardData) => {
     navigation.replace('Player', {
@@ -447,8 +453,11 @@ export default function PlayerScreen() {
         subtitlesList={subtitlesList}
         activeSubtitle={activeSubtitle}
         isSearchingOnlineSubs={isSearchingOnlineSubs}
+        inStreamAudioTracks={inStreamAudioTracks}
+        activeAudioTrackIndex={activeAudioTrackIndex}
         onClose={() => setBottomSheet('none')}
         onSwitchDub={switchDub}
+        onSwitchAudioTrack={switchAudioTrack}
         onSwitchQuality={switchQuality}
         onChangeSpeed={changeSpeed}
         onSwitchServer={switchServer}
