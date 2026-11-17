@@ -1,9 +1,9 @@
 {
   "version": "1.4.3",
   "version_code": 27,
-  "download_url": "https://movieverse.click/cinescope.apk",
-  "cdn_download_url": "https://movieverse.click/cinescope.apk",
-  "fallback_url": "https://movieverse.click/download/app?direct=1",
+  "download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
+  "cdn_download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
+  "fallback_url": "https://movieverse.click/cinescope.apk",
   "changelog": "🚀 v1.4.3: Fixed movie playback startup crash, resolved persistent update notification, improved cloud server fallback & high-speed streaming.",
   "force_update": true
 }

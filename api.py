@@ -163,9 +163,9 @@ def get_app_version():
     return {
         "version": "1.4.3",
         "version_code": 27,
-        "download_url": "https://movieverse.click/cinescope.apk",
-        "cdn_download_url": "https://movieverse.click/cinescope.apk",
-        "fallback_url": "https://movieverse.click/download/app?direct=1",
+        "download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
+        "cdn_download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
+        "fallback_url": "https://movieverse.click/cinescope.apk",
         "changelog": "🚀 v1.4.3: Fixed movie playback startup crash, resolved persistent update notification, improved cloud server fallback & high-speed streaming.",
         "force_update": True,
     }
@@ -2322,101 +2322,130 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
 
     response.headers["Cache-Control"] = "public, max-age=60"
 
-    # If cache-bust requested, delete cached streams so we get fresh signed URLs
-    if _bust:
-        app_cache.delete_prefix(f"streams:{subject_id}:")
-
-    loop = asyncio.get_event_loop()
-    # Concurrently fetch streams and details in thread pool for 2x faster stream load time
-    streams_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path))
-    details_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
-    streams_res, details_res = await asyncio.gather(streams_fut, details_fut, return_exceptions=True)
-
-    streams = streams_res if isinstance(streams_res, list) else []
-    details = details_res if isinstance(details_res, dict) else None
-
-    # If se=0 and ep=0 returned no streams, check if this subject is a TV series (Season 1 Episode 1)
-    local_se, local_ep = se, ep
-    if not streams and se == 0 and ep == 0:
-        s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path))
-        if s1_streams:
-            streams = s1_streams
-            local_se = 1
-            local_ep = 1
-    else:
-        local_se, local_ep = se, ep
-
     try:
-        if details and is_adult_content(details):
-            raise HTTPException(status_code=404, detail="Title not found")
-        dubs = details.get("dubs", []) if details else []
-        title = details.get("title") if details else None
-        cover = details.get("cover") if details else None
-        is_coming_soon = bool(details and details.get("coming_soon") and len(streams) == 0)
-        trailer_url = details.get("trailer_url") if details else None
-        det_type = details.get("type", "") if details else ""
-        det_release = str(details.get("release_date") or "")[:4] or None if details else None
+        # If cache-bust requested, delete cached streams so we get fresh signed URLs
+        if _bust:
+            app_cache.delete_prefix(f"streams:{subject_id}:")
+
+        loop = asyncio.get_event_loop()
+        # Concurrently fetch streams and details in thread pool for 2x faster stream load time
+        streams_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path))
+        details_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
+        streams_res, details_res = await asyncio.gather(streams_fut, details_fut, return_exceptions=True)
+
+        streams = streams_res if isinstance(streams_res, list) else []
+        details = details_res if isinstance(details_res, dict) else None
+
+        # If se=0 and ep=0 returned no streams, check if this subject is a TV series (Season 1 Episode 1)
+        local_se, local_ep = se, ep
+        if not streams and se == 0 and ep == 0:
+            try:
+                s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path))
+                if s1_streams:
+                    streams = s1_streams
+                    local_se = 1
+                    local_ep = 1
+            except Exception:
+                pass
+        else:
+            local_se, local_ep = se, ep
+
+        try:
+            if details and is_adult_content(details):
+                raise HTTPException(status_code=404, detail="Title not found")
+            dubs = details.get("dubs", []) if details else []
+            title = details.get("title") if details else None
+            cover = details.get("cover") if details else None
+            is_coming_soon = bool(details and details.get("coming_soon") and len(streams) == 0)
+            trailer_url = details.get("trailer_url") if details else None
+            det_type = details.get("type", "") if details else ""
+            det_release = str(details.get("release_date") or "")[:4] or None if details else None
+        except HTTPException:
+            raise
+        except Exception:
+            dubs = []
+            title = None
+            cover = None
+            is_coming_soon = False
+            trailer_url = None
+            det_type = ""
+            det_release = None
+
+        # Check cache for IMDB/fallback servers first (avoids the slow 13s Cinemeta call)
+        imdb_id = None
+        fallback_servers = []
+        if details and (details.get("subject_type") == 1 or det_type == "Movie"):
+            local_se = 0
+            local_ep = 0
+            is_ser = False
+        else:
+            is_ser = bool(det_type in ("Series", "TV Series") or (details and details.get("subject_type") == 2) or local_se > 0 or local_ep > 0)
+            if is_ser and se == 0 and ep == 0:
+                local_se, local_ep = 1, 1
+                try:
+                    s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path))
+                    if s1_streams:
+                        streams = s1_streams
+                except Exception:
+                    pass
+
+        if title and not is_coming_soon:
+            cache_key_imdb = f"imdb_id:{re.sub(r'[\[\(].*?[\]\)]', '', str(title)).strip()}:{det_release or ''}:{is_ser}"
+            imdb_id = app_cache.get(cache_key_imdb)
+            if imdb_id:
+                # Cache hit — build servers immediately
+                fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
+            elif len(streams) == 0:
+                # Primary stream unavailable: resolve IMDB synchronously so backup servers work immediately!
+                try:
+                    imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(title, year=det_release, is_series=is_ser))
+                    if imdb_id:
+                        fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
+                except Exception:
+                    fallback_servers = []
+            else:
+                # Primary stream exists: Kick off IMDB resolution in background
+                def _bg_resolve():
+                    try:
+                        return resolve_imdb_id(title, year=det_release, is_series=is_ser)
+                    except Exception:
+                        return None
+                _bg_executor.submit(_bg_resolve)
+
+        return {
+            "subject_id": subject_id,
+            "season": local_se,
+            "episode": local_ep,
+            "count": len(streams),
+            "streams": streams,
+            "dubs": dubs,
+            "title": title,
+            "cover": cover,
+            "coming_soon": is_coming_soon,
+            "trailer_url": trailer_url,
+            "imdb_id": imdb_id,
+            "fallback_servers": fallback_servers
+        }
     except HTTPException:
         raise
-    except Exception:
-        dubs = []
-        title = None
-        cover = None
-        is_coming_soon = False
-        trailer_url = None
-        det_type = ""
-        det_release = None
-
-    # Check cache for IMDB/fallback servers first (avoids the slow 13s Cinemeta call)
-    imdb_id = None
-    fallback_servers = []
-    if details and (details.get("subject_type") == 1 or det_type == "Movie"):
-        local_se = 0
-        local_ep = 0
-        is_ser = False
-    else:
-        is_ser = bool(det_type in ("Series", "TV Series") or details.get("subject_type") == 2 or local_se > 0 or local_ep > 0)
-        if is_ser and se == 0 and ep == 0:
-            local_se, local_ep = 1, 1
-            s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path))
-            if s1_streams:
-                streams = s1_streams
-
-    if title and not is_coming_soon:
-        cache_key_imdb = f"imdb_id:{re.sub(r'[\[\(].*?[\]\)]', '', title).strip()}:{det_release or ''}:{is_ser}"
-        imdb_id = app_cache.get(cache_key_imdb)
-        if imdb_id:
-            # Cache hit — build servers immediately
-            fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
-        elif len(streams) == 0:
-            # Primary stream unavailable: resolve IMDB synchronously so backup servers work immediately!
-            try:
-                imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(title, year=det_release, is_series=is_ser))
-                if imdb_id:
-                    fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
-            except Exception:
-                fallback_servers = []
-        else:
-            # Primary stream exists: Kick off IMDB resolution in background
-            def _bg_resolve():
-                resolved = resolve_imdb_id(title, year=det_release, is_series=is_ser)
-                return resolved
-            _bg_executor.submit(_bg_resolve)
-
-    return {
-        "subject_id": subject_id,
-        "season": local_se,
-        "episode": local_ep,
-        "count": len(streams),
-        "streams": streams,
-        "dubs": dubs,
-        "title": title,
-        "cover": cover,
-        "coming_soon": is_coming_soon,
-        "trailer_url": trailer_url,
-        "imdb_id": imdb_id,
-        "fallback_servers": fallback_servers
-    }
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return {
+            "subject_id": subject_id,
+            "season": se,
+            "episode": ep,
+            "count": 0,
+            "streams": [],
+            "dubs": [],
+            "title": None,
+            "cover": None,
+            "coming_soon": False,
+            "trailer_url": None,
+            "imdb_id": None,
+            "fallback_servers": [],
+            "error": str(exc),
+        }
 
 @app.get("/api/stream/{subject_id}/captions")
 async def get_captions(subject_id: str, se: int = 0, ep: int = 0, stream_id: Optional[str] = None):
@@ -2613,6 +2642,19 @@ async def trigger_server_deploy(secret: Optional[str] = Query(None)):
     app_cache.delete_prefix("feed:")
     app_cache.delete_prefix("streams:")
     return {"status": "success", "message": "Deployed latest GitHub commit", "log": res}
+
+
+@app.get("/api/admin/journal")
+async def get_journal(secret: Optional[str] = Query(None), lines: int = 60):
+    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
+    if not secret or not secrets.compare_digest(secret, expected):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    import subprocess
+    try:
+        r = subprocess.run(["journalctl", "-u", "moviebox", "-n", str(lines), "--no-pager"], capture_output=True, text=True, timeout=10)
+        return PlainTextResponse(r.stdout + "\n" + r.stderr)
+    except Exception as e:
+        return PlainTextResponse(f"Error: {e}")
 
 
 @app.post("/api/admin/setup-ssl")
