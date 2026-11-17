@@ -2665,6 +2665,30 @@ async def get_journal(secret: Optional[str] = Query(None), lines: int = 60):
         return PlainTextResponse(f"Error: {e}")
 
 
+@app.get("/api/admin/debug-upstream")
+def debug_upstream(secret: Optional[str] = Query(None)):
+    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
+    if not secret or not secrets.compare_digest(secret, expected):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    results = {}
+    import traceback
+    try:
+        t = engine.bootstrap_token(force=True)
+        results["bootstrap_token"] = t[:15] + "..." if t else None
+    except Exception as e:
+        results["bootstrap_error"] = str(e)
+        results["bootstrap_trace"] = traceback.format_exc()
+
+    try:
+        url = "/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
+        d = engine.api_request("GET", url)
+        results["detail_title"] = d.get("data", {}).get("title")
+    except Exception as e:
+        results["detail_error"] = str(e)
+        results["detail_trace"] = traceback.format_exc()
+    return results
+
+
 @app.post("/api/admin/setup-ssl")
 async def trigger_setup_ssl(
     secret: Optional[str] = Query(None),
