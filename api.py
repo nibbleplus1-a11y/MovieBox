@@ -649,10 +649,13 @@ class MovieBoxEngine:
                 if resp.status_code == 406:
                     # Upstream MovieBox API returns 406 for "find no content" (item not found / no resources)
                     return {"code": 406, "data": {}}
-            except Exception:
+                print(f"[api_request] {full_url} returned {resp.status_code}: {resp.text[:200]}", flush=True)
+            except Exception as e:
+                print(f"[api_request] {full_url} exception: {e}", flush=True)
                 continue
 
-        if last_resp is not None and last_resp.status_code in (401, 403, 441) and retry_auth:
+        if last_resp is not None and last_resp.status_code in (400, 401, 403, 441) and retry_auth:
+            print(f"[api_request] status {last_resp.status_code} - re-bootstrapping token and retrying", flush=True)
             self.bootstrap_token(force=True)
             return self.api_request(method, path_or_url, body_dict, use_token, retry_auth=False)
 
