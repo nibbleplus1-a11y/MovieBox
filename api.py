@@ -2730,46 +2730,31 @@ def debug_upstream(secret: Optional[str] = Query(None)):
         t = engine.bootstrap_token(force=True)
         results["bootstrap_token"] = t[:15] + "..." if t else None
         
-        # Test A: Native API (known 406)
-        test_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
-        hdrs = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
-        r = engine.session.get(test_url, headers=hdrs, timeout=10)
-        results["native_api"] = {"status": r.status_code, "body": r.text[:100]}
-        
-        # Test B: Web CDN stream fetch with known detail_path
-        detail_path = "the-lord-of-the-rings-the-rings-of-power-oWxADnOpP26"
-        subject_id = "5074096615720375064"
-        web_results = {}
-        for domain in WEB_DOMAINS[:3]:
-            play_url = (
-                f"{domain}/wefeed-h5api-bff/subject/play?"
-                f"subjectId={subject_id}&se=1&ep=1&detailPath={detail_path}&"
-                f"streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
-            )
-            referer = f"{domain}/movies/{detail_path}?id={subject_id}&type=/movie/detail"
-            hdrs_web = {
-                "User-Agent": WEB_USER_AGENT,
-                "Referer": referer,
-                "Accept": "application/json",
-                "x-client-info": '{"timezone":"Asia/Calcutta"}',
-                "x-request-lang": "en",
-                "x-source": "moviebox",
-                "Authorization": f"Bearer {t}",
-            }
-            try:
-                rw = engine.session.get(play_url, headers=hdrs_web, timeout=8)
-                web_results[domain] = {"status": rw.status_code, "body": rw.text[:200]}
-            except Exception as we:
-                web_results[domain] = {"error": str(we)}
-        results["web_cdn_streams"] = web_results
-        
-        # Test C: Try curl_cffi impersonate
+        # Test 1: get_details
         try:
-            from curl_cffi import requests as cffi_requests
-            r_cffi = cffi_requests.get(test_url, headers=hdrs, timeout=10, impersonate="chrome110")
-            results["curl_cffi_native"] = {"status": r_cffi.status_code, "body": r_cffi.text[:100]}
-        except Exception as ce:
-            results["curl_cffi_native"] = {"error": str(ce)}
+            det = engine.get_details("5074096615720375064")
+            results["get_details"] = {"title": det.get("title"), "detail_path": det.get("detail_path")}
+        except Exception as de:
+            results["get_details_error"] = str(de)
+
+        # Test 2: get_streams
+        try:
+            st = engine.get_streams("5074096615720375064", season=1, episode=1)
+            results["get_streams"] = {"count": len(st), "streams": [s.get("source") for s in st]}
+        except Exception as se:
+            results["get_streams_error"] = str(se)
+
+        # Test 3: Raw hosts
+        host_results = {}
+        for h in NATIVE_API_HOSTS:
+            u = f"{h}/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
+            hdrs = build_auth_headers("GET", u, token=t, device_id=engine.device_id)
+            try:
+                r = engine.session.get(u, headers=hdrs, timeout=5)
+                host_results[h] = {"status": r.status_code, "body": r.text[:120]}
+            except Exception as he:
+                host_results[h] = {"error": str(he)}
+        results["hosts"] = host_results
         
     except Exception as e:
         results["error"] = str(e)
