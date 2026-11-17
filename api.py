@@ -2790,8 +2790,9 @@ def debug_upstream(secret: Optional[str] = Query(None)):
     except Exception as se:
         diag["get_streams_error"] = str(se)
 
-    # 3. Test direct web domains using engine.session (httpx)
+    # 3. Test direct web domains using engine.session (httpx) WITH token
     web_httpx = {}
+    web_httpx_notoken = {}
     domains = [
         "https://123moviesfree.club",
         "https://movie-box.co",
@@ -2806,7 +2807,7 @@ def debug_upstream(secret: Optional[str] = Query(None)):
             f"streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
         )
         referer = f"{dom}/movies/{dpath}?id={sid}&type=/movie/detail&detailSe=&detailEp=&lang=en"
-        headers = {
+        headers_notok = {
             "User-Agent": WEB_USER_AGENT,
             "Referer": referer,
             "Accept": "application/json",
@@ -2814,6 +2815,19 @@ def debug_upstream(secret: Optional[str] = Query(None)):
             "x-request-lang": "en",
             "x-source": "moviebox",
         }
+        try:
+            r0 = engine.session.get(play_url, headers=headers_notok, timeout=5)
+            data0 = r0.json() if r0.status_code == 200 else {}
+            st0 = (data0.get("data") or {}).get("streams", [])
+            web_httpx_notoken[dom] = {
+                "status": r0.status_code,
+                "streams": len(st0),
+                "body_preview": r0.text[:150]
+            }
+        except Exception as e0:
+            web_httpx_notoken[dom] = {"error": str(e0)}
+
+        headers = dict(headers_notok)
         if t:
             headers["Authorization"] = f"Bearer {t}"
         t0 = time.time()
@@ -2831,6 +2845,7 @@ def debug_upstream(secret: Optional[str] = Query(None)):
         except Exception as he:
             web_httpx[dom] = {"error": str(he), "elapsed": round(time.time() - t0, 3)}
     diag["web_httpx"] = web_httpx
+    diag["web_httpx_notoken"] = web_httpx_notoken
 
     # 4. Test with curl_cffi if available
     if cr:
