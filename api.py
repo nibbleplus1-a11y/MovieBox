@@ -2691,17 +2691,16 @@ def debug_upstream(secret: Optional[str] = Query(None)):
     try:
         t = engine.bootstrap_token(force=True)
         results["bootstrap_token"] = t[:15] + "..." if t else None
+        
+        test_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
+        headers = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
+        resp = engine.session.get(test_url, headers=headers, timeout=10)
+        results["raw_status"] = resp.status_code
+        results["raw_headers"] = dict(resp.headers)
+        results["raw_body"] = resp.text[:400]
     except Exception as e:
-        results["bootstrap_error"] = str(e)
-        results["bootstrap_trace"] = traceback.format_exc()
-
-    try:
-        url = "/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
-        d = engine.api_request("GET", url)
-        results["detail_title"] = d.get("data", {}).get("title")
-    except Exception as e:
-        results["detail_error"] = str(e)
-        results["detail_trace"] = traceback.format_exc()
+        results["error"] = str(e)
+        results["trace"] = traceback.format_exc()
     return results
 
 
