@@ -2762,20 +2762,32 @@ def debug_upstream(secret: Optional[str] = Query(None)):
                     host_results[f"{h}_cffi"] = {"error": str(ce)}
         results["hosts"] = host_results
 
-        # Test 4: Web domain play with curl_cffi
+        # Test 4: Web domain play with curl_cffi across all candidate domains
         if cr:
             detail_path = "the-lord-of-the-rings-the-rings-of-power-oWxADnOpP26"
             web_cffi = {}
-            for domain in WEB_DOMAINS[:2]:
+            test_domains = [
+                "https://123moviesfree.club",
+                "https://movie-box.co",
+                "https://movieboxonline.net",
+                "https://h5-api.aoneroom.com",
+                "https://moviebox.ph",
+                "https://movieboxhd.net",
+                "https://moviebox.city",
+            ]
+            for domain in test_domains:
                 play_url = f"{domain}/wefeed-h5api-bff/subject/play?subjectId=5074096615720375064&se=1&ep=1&detailPath={detail_path}&streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
                 hdrs_w = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Referer": f"{domain}/movies/{detail_path}?id=5074096615720375064&type=/movie/detail",
                     "Accept": "application/json",
                     "Authorization": f"Bearer {t}",
+                    "x-source": "moviebox",
+                    "x-client-info": '{"timezone":"Asia/Calcutta"}',
+                    "x-request-lang": "en"
                 }
                 try:
-                    rcw = cr.get(play_url, headers=hdrs_w, timeout=6, impersonate="chrome120")
+                    rcw = cr.get(play_url, headers=hdrs_w, timeout=5, impersonate="chrome120")
                     web_cffi[domain] = {"status": rcw.status_code, "body": rcw.text[:150]}
                 except Exception as we:
                     web_cffi[domain] = {"error": str(we)}
