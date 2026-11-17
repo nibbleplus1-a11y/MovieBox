@@ -646,10 +646,13 @@ class MovieBoxEngine:
                 last_resp = resp
                 if resp.status_code == 200:
                     return resp.json()
+                if resp.status_code == 406:
+                    # Upstream MovieBox API returns 406 for "find no content" (item not found / no resources)
+                    return {"code": 406, "data": {}}
             except Exception:
                 continue
 
-        if last_resp is not None and last_resp.status_code in (401, 403, 406, 441) and retry_auth:
+        if last_resp is not None and last_resp.status_code in (401, 403, 441) and retry_auth:
             self.bootstrap_token(force=True)
             return self.api_request(method, path_or_url, body_dict, use_token, retry_auth=False)
 
@@ -1967,11 +1970,7 @@ def get_detail(subject_id: str):
     try:
         res = engine.get_details(subject_id)
     except Exception:
-        try:
-            engine.bootstrap_token(force=True)
-            res = engine.get_details(subject_id)
-        except Exception:
-            raise HTTPException(status_code=502, detail="Upstream media service temporarily unavailable")
+        res = None
 
     if not res or not res.get("title") or is_adult_content(res):
         raise HTTPException(status_code=404, detail="Title not found")
