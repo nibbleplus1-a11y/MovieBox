@@ -2688,28 +2688,48 @@ def debug_upstream(secret: Optional[str] = Query(None)):
     results = {}
     import traceback
     try:
+        results["server_time"] = time.time()
         try:
-            ip_info = engine.session.get("http://ip-api.com/json/", timeout=5).json()
-            results["server_geo"] = {"ip": ip_info.get("query"), "country": ip_info.get("country"), "countryCode": ip_info.get("countryCode")}
-        except Exception as e:
-            results["server_geo_error"] = str(e)
+            wt = engine.session.get("http://worldtimeapi.org/api/timezone/Etc/UTC", timeout=5).json()
+            results["utc_time"] = wt.get("unixtime")
+            results["time_skew_seconds"] = results["server_time"] - results["utc_time"]
+        except Exception as te:
+            results["time_error"] = str(te)
 
         t = engine.bootstrap_token(force=True)
         results["bootstrap_token"] = t[:15] + "..." if t else None
         
-        host_results = {}
-        for h in NATIVE_API_HOSTS:
-            test_url = f"{h}/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
-            headers = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
+        # Test 1: Test with different regions in x-client-info
+        test_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
+        region_results = {}
+        for r_code, tz in [("IN", "Asia/Calcutta"), ("US", "America/New_York"), ("PK", "Asia/Karachi"), ("GB", "Europe/London")]:
+            ts = int(time.time() * 1000)
+            custom_info = json.dumps({
+                "package_name": "com.community.mbox.in",
+                "version_name": "4.0.03.0920.03",
+                "version_code": 50020130,
+                "os": "android",
+                "os_version": "14",
+                "device_id": engine.device_id,
+                "install_store": "official",
+                "gaid": "1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d",
+                "brand": "Google",
+                "model": "Pixel 8",
+                "system_language": "en",
+                "net": "NETWORK_WIFI",
+                "region": r_code,
+                "timezone": tz,
+                "sp_code": ""
+            }, separators=(",", ":"))
+            hdrs = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
+            hdrs["x-client-info"] = custom_info
             try:
-                resp = engine.session.get(test_url, headers=headers, timeout=10)
-                host_results[h] = {
-                    "status": resp.status_code,
-                    "body_snippet": resp.text[:200],
-                }
-            except Exception as he:
-                host_results[h] = {"error": str(he)}
-        results["hosts"] = host_results
+                resp = engine.session.get(test_url, headers=hdrs, timeout=10)
+                region_results[r_code] = {"status": resp.status_code, "body": resp.text[:150]}
+            except Exception as e:
+                region_results[r_code] = {"error": str(e)}
+        results["regions_tested"] = region_results
+
     except Exception as e:
         results["error"] = str(e)
         results["trace"] = traceback.format_exc()
