@@ -2688,47 +2688,32 @@ def debug_upstream(secret: Optional[str] = Query(None)):
     results = {}
     import traceback
     try:
-        results["server_time"] = time.time()
-        try:
-            wt = engine.session.get("http://worldtimeapi.org/api/timezone/Etc/UTC", timeout=5).json()
-            results["utc_time"] = wt.get("unixtime")
-            results["time_skew_seconds"] = results["server_time"] - results["utc_time"]
-        except Exception as te:
-            results["time_error"] = str(te)
-
         t = engine.bootstrap_token(force=True)
         results["bootstrap_token"] = t[:15] + "..." if t else None
         
-        # Test 1: Test with different regions in x-client-info
         test_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
-        region_results = {}
-        for r_code, tz in [("IN", "Asia/Calcutta"), ("US", "America/New_York"), ("PK", "Asia/Karachi"), ("GB", "Europe/London")]:
-            ts = int(time.time() * 1000)
-            custom_info = json.dumps({
-                "package_name": "com.community.mbox.in",
-                "version_name": "4.0.03.0920.03",
-                "version_code": 50020130,
-                "os": "android",
-                "os_version": "14",
-                "device_id": engine.device_id,
-                "install_store": "official",
-                "gaid": "1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d",
-                "brand": "Google",
-                "model": "Pixel 8",
-                "system_language": "en",
-                "net": "NETWORK_WIFI",
-                "region": r_code,
-                "timezone": tz,
-                "sp_code": ""
-            }, separators=(",", ":"))
-            hdrs = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
-            hdrs["x-client-info"] = custom_info
-            try:
-                resp = engine.session.get(test_url, headers=hdrs, timeout=10)
-                region_results[r_code] = {"status": resp.status_code, "body": resp.text[:150]}
-            except Exception as e:
-                region_results[r_code] = {"error": str(e)}
-        results["regions_tested"] = region_results
+        
+        # Test A: WITHOUT token
+        hdrs_no_tok = build_auth_headers("GET", test_url, token=None, device_id=engine.device_id)
+        r_no_tok = engine.session.get(test_url, headers=hdrs_no_tok, timeout=10)
+        results["without_token"] = {"status": r_no_tok.status_code, "body": r_no_tok.text[:200]}
+        
+        # Test B: WITH token
+        hdrs_tok = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
+        r_tok = engine.session.get(test_url, headers=hdrs_tok, timeout=10)
+        results["with_token"] = {"status": r_tok.status_code, "body": r_tok.text[:200]}
+
+        # Test C: Ranking list item detail (get subjectId from ranking list directly!)
+        rank_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=5"
+        hdrs_rank = build_auth_headers("GET", rank_url, token=t, device_id=engine.device_id)
+        r_rank = engine.session.get(rank_url, headers=hdrs_rank, timeout=10)
+        results["ranking_status"] = r_rank.status_code
+        if r_rank.status_code == 200:
+            rank_data = r_rank.json().get("data", {})
+            results["ranking_data_keys"] = list(rank_data.keys())
+            results["ranking_first_item"] = (rank_data.get("items") or rank_data.get("list") or [{}])[0]
+        else:
+            results["ranking_body"] = r_rank.text[:200]
 
     except Exception as e:
         results["error"] = str(e)
