@@ -2768,7 +2768,107 @@ def debug_upstream(secret: Optional[str] = Query(None)):
     expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
     if not secret or not secrets.compare_digest(secret, expected):
         raise HTTPException(status_code=403, detail="Unauthorized")
-    return {"status": "ok", "timestamp": time.time()}
+    
+    diag = {}
+    sid = "5196212192642848184"
+    dpath = "premada-oorali-hindi-8u7eMAPHQb6"
+    
+    # 1. Test token
+    try:
+        t = engine.bootstrap_token()
+        diag["token_len"] = len(t) if t else 0
+        diag["token_prefix"] = t[:20] if t else None
+    except Exception as te:
+        diag["token_error"] = str(te)
+        t = None
+
+    # 2. Test get_streams
+    try:
+        st = engine.get_streams(sid, 0, 0, dpath)
+        diag["get_streams_count"] = len(st)
+        diag["get_streams"] = [{"quality": s.get("quality"), "source": s.get("source"), "url": s.get("url", "")[:50]} for s in st]
+    except Exception as se:
+        diag["get_streams_error"] = str(se)
+
+    # 3. Test direct web domains using engine.session (httpx)
+    web_httpx = {}
+    domains = [
+        "https://123moviesfree.club",
+        "https://movie-box.co",
+        "https://movieboxonline.net",
+        "https://sflix.film",
+        "https://h5-api.aoneroom.com"
+    ]
+    for dom in domains:
+        play_url = (
+            f"{dom}/wefeed-h5api-bff/subject/play?"
+            f"subjectId={sid}&se=0&ep=0&detailPath={dpath}&"
+            f"streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
+        )
+        referer = f"{dom}/movies/{dpath}?id={sid}&type=/movie/detail&detailSe=&detailEp=&lang=en"
+        headers = {
+            "User-Agent": WEB_USER_AGENT,
+            "Referer": referer,
+            "Accept": "application/json",
+            "x-client-info": '{"timezone":"Asia/Calcutta"}',
+            "x-request-lang": "en",
+            "x-source": "moviebox",
+        }
+        if t:
+            headers["Authorization"] = f"Bearer {t}"
+        t0 = time.time()
+        try:
+            r = engine.session.get(play_url, headers=headers, timeout=5)
+            dt = round(time.time() - t0, 3)
+            data = r.json() if r.status_code == 200 else {}
+            st_list = (data.get("data") or {}).get("streams", [])
+            web_httpx[dom] = {
+                "status": r.status_code,
+                "elapsed": dt,
+                "streams": len(st_list),
+                "body_preview": r.text[:150]
+            }
+        except Exception as he:
+            web_httpx[dom] = {"error": str(he), "elapsed": round(time.time() - t0, 3)}
+    diag["web_httpx"] = web_httpx
+
+    # 4. Test with curl_cffi if available
+    if cr:
+        web_cffi = {}
+        for dom in domains:
+            play_url = (
+                f"{dom}/wefeed-h5api-bff/subject/play?"
+                f"subjectId={sid}&se=0&ep=0&detailPath={dpath}&"
+                f"streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
+            )
+            referer = f"{dom}/movies/{dpath}?id={sid}&type=/movie/detail&detailSe=&detailEp=&lang=en"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": referer,
+                "Accept": "application/json",
+                "x-client-info": '{"timezone":"Asia/Calcutta"}',
+                "x-request-lang": "en",
+                "x-source": "moviebox",
+            }
+            if t:
+                headers["Authorization"] = f"Bearer {t}"
+            t0 = time.time()
+            try:
+                rc = cr.get(play_url, headers=headers, timeout=5, impersonate="chrome120")
+                dt = round(time.time() - t0, 3)
+                data = rc.json() if rc.status_code == 200 else {}
+                st_list = (data.get("data") or {}).get("streams", [])
+                web_cffi[dom] = {
+                    "status": rc.status_code,
+                    "elapsed": dt,
+                    "streams": len(st_list),
+                    "body_preview": rc.text[:150]
+                }
+            except Exception as ce:
+                web_cffi[dom] = {"error": str(ce), "elapsed": round(time.time() - t0, 3)}
+        diag["web_cffi"] = web_cffi
+
+    return diag
 
 
 @app.post("/api/admin/setup-ssl")
