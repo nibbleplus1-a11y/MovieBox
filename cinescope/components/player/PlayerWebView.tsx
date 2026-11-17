@@ -500,6 +500,27 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
 }) => {
   const [iframeLoading, setIframeLoading] = useState(true);
 
+  // Capture initial seek time once per streamUrl, preventing timeupdate from causing WebView reloads!
+  const initialSeekRef = useRef(currentTime || 0);
+  const prevStreamUrlRef = useRef(streamUrl);
+  if (prevStreamUrlRef.current !== streamUrl) {
+    prevStreamUrlRef.current = streamUrl;
+    initialSeekRef.current = currentTime || 0;
+  }
+
+  const refererBase = referer || 'https://movieboxonline.net/';
+
+  const playerHTML = useMemo(() => {
+    return buildPlayerHTML(
+      streamUrl,
+      initialSeekRef.current,
+      activeSubtitleUrl,
+      activeSubtitleLang,
+      refererBase,
+      isOffline
+    );
+  }, [streamUrl, activeSubtitleUrl, activeSubtitleLang, refererBase, isOffline]);
+
   if (loading) {
     return (
       <View style={styles.centerBox}>
@@ -591,27 +612,6 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
       </>
     );
   }
-
-  // Capture initial seek time once per streamUrl, preventing timeupdate from causing WebView reloads!
-  const initialSeekRef = useRef(currentTime || 0);
-  const prevStreamUrlRef = useRef(streamUrl);
-  if (prevStreamUrlRef.current !== streamUrl) {
-    prevStreamUrlRef.current = streamUrl;
-    initialSeekRef.current = currentTime || 0;
-  }
-
-  const refererBase = referer || 'https://movieboxonline.net/';
-
-  const playerHTML = useMemo(() => {
-    return buildPlayerHTML(
-      streamUrl,
-      initialSeekRef.current,
-      activeSubtitleUrl,
-      activeSubtitleLang,
-      refererBase,
-      isOffline
-    );
-  }, [streamUrl, activeSubtitleUrl, activeSubtitleLang, refererBase, isOffline]);
 
   return (
     <>

@@ -97,6 +97,25 @@ class DownloadModule(private val reactContext: ReactApplicationContext) :
 
     override fun getName(): String = MODULE_NAME
 
+    override fun getConstants(): Map<String, Any> {
+        val constants = HashMap<String, Any>()
+        try {
+            val pInfo = reactContext.packageManager.getPackageInfo(reactContext.packageName, 0)
+            val vCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                pInfo.versionCode.toLong()
+            }
+            constants["nativeVersionCode"] = vCode
+            constants["nativeVersionName"] = pInfo.versionName ?: ""
+        } catch (_: Exception) {
+            constants["nativeVersionCode"] = 0L
+            constants["nativeVersionName"] = ""
+        }
+        return constants
+    }
+
     override fun initialize() {
         super.initialize()
         // Register direct in-process listener (guaranteed delivery)

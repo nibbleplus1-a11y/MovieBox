@@ -66,8 +66,15 @@ export async function checkForAppUpdate(ignoreDismissal: boolean = false): Promi
 
     const remoteVersion = data.version || '1.0.0';
     const remoteCode = Number(data.version_code) || 0;
-    const currentVersion = CONFIG.APP_VERSION || '1.3.0';
-    const currentCode = Number(CONFIG.APP_BUILD) || 23;
+
+    // Use native installed package version code and version name if available,
+    // falling back to CONFIG constants.
+    const downloaderConstants = NativeModules.MovieVerseDownloader || {};
+    const nativeCode = Number(downloaderConstants.nativeVersionCode) || 0;
+    const nativeVersion = downloaderConstants.nativeVersionName || '';
+
+    const currentVersion = nativeVersion || CONFIG.APP_VERSION || '1.4.3';
+    const currentCode = nativeCode > 0 ? nativeCode : (Number(CONFIG.APP_BUILD) || 27);
 
     // A newer version exists ONLY if remote build code is higher,
     // or if remote code is omitted/0 and semantic version is higher
