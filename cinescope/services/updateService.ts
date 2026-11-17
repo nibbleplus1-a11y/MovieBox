@@ -144,15 +144,16 @@ export async function downloadAndInstallApk(
   downloadUrl: string,
   onProgress?: (progress: DownloadProgress) => void
 ): Promise<void> {
-  const HIGH_SPEED_CDN_FALLBACK = 'https://movieverse.click/cinescope.apk';
-  const targetUrl = downloadUrl || HIGH_SPEED_CDN_FALLBACK;
+  const GITHUB_CDN_URL = 'https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk';
+  // Always prioritize GitHub global CDN edge for multi-megabyte/s download speeds
+  const targetUrl = downloadUrl && downloadUrl.includes('github.com') ? downloadUrl : GITHUB_CDN_URL;
 
   // 1. Preferred Android Native: Foreground Service with Status-Bar Notification & Range Resume
   if (Platform.OS === 'android' && MovieVerseDownloader) {
     return new Promise<void>((resolve, reject) => {
       const taskId = 'update_app_apk';
       const filename = 'MovieVerse_Update.apk';
-      const title = 'MovieVerse Update v1.4.2';
+      const title = 'MovieVerse App Update';
 
       const progressSub = DeviceEventEmitter.addListener('MVDownloadProgress', (ev) => {
         if (ev.taskId === taskId && onProgress) {

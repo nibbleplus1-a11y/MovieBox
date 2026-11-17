@@ -633,7 +633,7 @@ class MovieBoxEngine:
             resp = self.session.post(full_url, headers=headers, data=data_bytes, timeout=25)
         else:
             resp = self.session.get(full_url, headers=headers, timeout=25)
-        if resp.status_code in (401, 441) and retry_auth:
+        if resp.status_code in (401, 403, 406, 441) and retry_auth:
             self.bootstrap_token(force=True)
             return self.api_request(method, path_or_url, body_dict, use_token, retry_auth=False)
         if resp.status_code != 200:
@@ -1948,7 +1948,15 @@ def _format_runtime(dur_val: Any) -> Optional[str]:
 def get_detail(subject_id: str):
     if not subject_id or subject_id == "None":
         raise HTTPException(status_code=400, detail="Invalid subject ID")
-    res = engine.get_details(subject_id)
+    try:
+        res = engine.get_details(subject_id)
+    except Exception:
+        try:
+            engine.bootstrap_token(force=True)
+            res = engine.get_details(subject_id)
+        except Exception:
+            raise HTTPException(status_code=502, detail="Upstream media service temporarily unavailable")
+
     if not res or not res.get("title") or is_adult_content(res):
         raise HTTPException(status_code=404, detail="Title not found")
     
