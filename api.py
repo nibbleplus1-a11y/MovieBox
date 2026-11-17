@@ -254,7 +254,13 @@ SECRET_KEY_ALT_B64 = "WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ=="
 MODERN_USER_AGENT = "com.community.mbox.in/50020130 (Linux; U; Android 14; en_IN; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)"
 WEB_USER_AGENT = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36"
 API_BASE = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
-NATIVE_API_BASE = "https://api3.aoneroom.com"
+NATIVE_API_HOSTS = [
+    "https://apig.inmoviebox.com",
+    "https://api-in.inmoviebox.com",
+    "https://api3.aoneroom.com",
+    "https://api.aoneroom.com",
+]
+NATIVE_API_BASE = NATIVE_API_HOSTS[0]
 BOOTSTRAP_HOST = "https://apig.inmoviebox.com"
 BOOTSTRAP_URL = f"{BOOTSTRAP_HOST}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
 
@@ -613,30 +619,42 @@ class MovieBoxEngine:
 
     def api_request(self, method: str, path_or_url: str, body_dict: Optional[Dict[str, Any]] = None, use_token: bool = True, retry_auth: bool = True) -> Dict[str, Any]:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
-            full_url = path_or_url
+            hosts_to_try = [""]
         else:
-            full_url = f"{NATIVE_API_BASE}{path_or_url}"
+            hosts_to_try = NATIVE_API_HOSTS
+
         if use_token and not self.bearer_token:
             self.bootstrap_token()
-        body_str = json.dumps(body_dict, separators=(",", ":")) if body_dict is not None else None
-        headers = build_auth_headers(
-            method=method,
-            url=full_url,
-            body=body_str,
-            token=self.bearer_token if use_token else None,
-            device_id=self.device_id,
-        )
-        data_bytes = body_str.encode("utf-8") if body_str is not None else None
-        if method.upper() == "POST":
-            resp = self.session.post(full_url, headers=headers, data=data_bytes, timeout=25)
-        else:
-            resp = self.session.get(full_url, headers=headers, timeout=25)
-        if resp.status_code in (401, 403, 406, 441) and retry_auth:
+
+        last_resp = None
+        for host in hosts_to_try:
+            full_url = f"{host}{path_or_url}" if host else path_or_url
+            body_str = json.dumps(body_dict, separators=(",", ":")) if body_dict is not None else None
+            headers = build_auth_headers(
+                method=method,
+                url=full_url,
+                body=body_str,
+                token=self.bearer_token if use_token else None,
+                device_id=self.device_id,
+            )
+            data_bytes = body_str.encode("utf-8") if body_str is not None else None
+            try:
+                if method.upper() == "POST":
+                    resp = self.session.post(full_url, headers=headers, data=data_bytes, timeout=15)
+                else:
+                    resp = self.session.get(full_url, headers=headers, timeout=15)
+                last_resp = resp
+                if resp.status_code == 200:
+                    return resp.json()
+            except Exception:
+                continue
+
+        if last_resp is not None and last_resp.status_code in (401, 403, 406, 441) and retry_auth:
             self.bootstrap_token(force=True)
             return self.api_request(method, path_or_url, body_dict, use_token, retry_auth=False)
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"API returned HTTP {resp.status_code}")
-        return resp.json()
+
+        status_code = last_resp.status_code if last_resp else 502
+        raise HTTPException(status_code=502, detail=f"API returned HTTP {status_code}")
 
     def search(self, query: str, page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
         safe_per_page = min(max(1, int(per_page or 20)), 20)
