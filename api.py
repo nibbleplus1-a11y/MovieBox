@@ -2693,15 +2693,17 @@ def debug_upstream(secret: Optional[str] = Query(None)):
         
         test_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
         
-        # Test A: WITHOUT token
-        hdrs_no_tok = build_auth_headers("GET", test_url, token=None, device_id=engine.device_id)
-        r_no_tok = engine.session.get(test_url, headers=hdrs_no_tok, timeout=10)
-        results["without_token"] = {"status": r_no_tok.status_code, "body": r_no_tok.text[:200]}
-        
-        # Test B: WITH token
-        hdrs_tok = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
-        r_tok = engine.session.get(test_url, headers=hdrs_tok, timeout=10)
-        results["with_token"] = {"status": r_tok.status_code, "body": r_tok.text[:200]}
+        # Test D: Check if X-Forwarded-For or Client-IP bypasses 406
+        test_ips = ["154.208.51.71", "157.48.246.181", "49.36.120.15"]
+        ip_results = {}
+        for tip in test_ips:
+            hdrs_ip = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
+            hdrs_ip["x-forwarded-for"] = tip
+            hdrs_ip["x-real-ip"] = tip
+            hdrs_ip["client-ip"] = tip
+            r_ip = engine.session.get(test_url, headers=hdrs_ip, timeout=10)
+            ip_results[tip] = {"status": r_ip.status_code, "body": r_ip.text[:150]}
+        results["xff_tested"] = ip_results
 
         # Test C: Ranking list item detail (get subjectId from ranking list directly!)
         rank_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=5"
