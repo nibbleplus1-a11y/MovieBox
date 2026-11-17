@@ -2744,17 +2744,42 @@ def debug_upstream(secret: Optional[str] = Query(None)):
         except Exception as se:
             results["get_streams_error"] = str(se)
 
-        # Test 3: Raw hosts
+        # Test 3: Raw hosts with both httpx and curl_cffi
         host_results = {}
         for h in NATIVE_API_HOSTS:
             u = f"{h}/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
             hdrs = build_auth_headers("GET", u, token=t, device_id=engine.device_id)
             try:
                 r = engine.session.get(u, headers=hdrs, timeout=5)
-                host_results[h] = {"status": r.status_code, "body": r.text[:120]}
+                host_results[f"{h}_httpx"] = {"status": r.status_code, "body": r.text[:120]}
             except Exception as he:
-                host_results[h] = {"error": str(he)}
+                host_results[f"{h}_httpx"] = {"error": str(he)}
+            if cr:
+                try:
+                    rc = cr.get(u, headers=hdrs, timeout=5, impersonate="chrome120")
+                    host_results[f"{h}_cffi"] = {"status": rc.status_code, "body": rc.text[:120]}
+                except Exception as ce:
+                    host_results[f"{h}_cffi"] = {"error": str(ce)}
         results["hosts"] = host_results
+
+        # Test 4: Web domain play with curl_cffi
+        if cr:
+            detail_path = "the-lord-of-the-rings-the-rings-of-power-oWxADnOpP26"
+            web_cffi = {}
+            for domain in WEB_DOMAINS[:2]:
+                play_url = f"{domain}/wefeed-h5api-bff/subject/play?subjectId=5074096615720375064&se=1&ep=1&detailPath={detail_path}&streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
+                hdrs_w = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer": f"{domain}/movies/{detail_path}?id=5074096615720375064&type=/movie/detail",
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {t}",
+                }
+                try:
+                    rcw = cr.get(play_url, headers=hdrs_w, timeout=6, impersonate="chrome120")
+                    web_cffi[domain] = {"status": rcw.status_code, "body": rcw.text[:150]}
+                except Exception as we:
+                    web_cffi[domain] = {"error": str(we)}
+            results["web_cffi"] = web_cffi
         
     except Exception as e:
         results["error"] = str(e)
