@@ -1972,7 +1972,7 @@ def get_detail(subject_id: str, title: Optional[str] = Query(None)):
     try:
         res = engine.get_details(subject_id)
     except Exception as e:
-        logger.warning(f"get_detail upstream failed for {subject_id}: {e}")
+        print(f"[get_detail] upstream failed for {subject_id}: {e}")
         res = None
 
     if not res or not res.get("title"):
