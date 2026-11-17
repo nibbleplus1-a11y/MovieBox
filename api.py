@@ -2688,15 +2688,28 @@ def debug_upstream(secret: Optional[str] = Query(None)):
     results = {}
     import traceback
     try:
+        try:
+            ip_info = engine.session.get("http://ip-api.com/json/", timeout=5).json()
+            results["server_geo"] = {"ip": ip_info.get("query"), "country": ip_info.get("country"), "countryCode": ip_info.get("countryCode")}
+        except Exception as e:
+            results["server_geo_error"] = str(e)
+
         t = engine.bootstrap_token(force=True)
         results["bootstrap_token"] = t[:15] + "..." if t else None
         
-        test_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
-        headers = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
-        resp = engine.session.get(test_url, headers=headers, timeout=10)
-        results["raw_status"] = resp.status_code
-        results["raw_headers"] = dict(resp.headers)
-        results["raw_body"] = resp.text[:400]
+        host_results = {}
+        for h in NATIVE_API_HOSTS:
+            test_url = f"{h}/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
+            headers = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
+            try:
+                resp = engine.session.get(test_url, headers=headers, timeout=10)
+                host_results[h] = {
+                    "status": resp.status_code,
+                    "body_snippet": resp.text[:200],
+                }
+            except Exception as he:
+                host_results[h] = {"error": str(he)}
+        results["hosts"] = host_results
     except Exception as e:
         results["error"] = str(e)
         results["trace"] = traceback.format_exc()
