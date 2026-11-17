@@ -1,9 +1,9 @@
 {
-  "version": "1.4.3",
-  "version_code": 27,
+  "version": "1.4.4",
+  "version_code": 28,
   "download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
   "cdn_download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
   "fallback_url": "https://movieverse.click/cinescope.apk",
-  "changelog": "🚀 v1.4.3: Fixed movie playback startup crash, resolved persistent update notification, improved cloud server fallback & high-speed streaming.",
+  "changelog": "🚀 v1.4.4: Restored fast cloud backup servers (Server 1 VidSrc HD & Server 2 AutoEmbed), fixed series/movie playback stalls, and enabled high-speed CDN direct streams.",
   "force_update": true
 }

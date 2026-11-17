@@ -161,12 +161,12 @@ def get_app_version():
         except Exception:
             pass
     return {
-        "version": "1.4.3",
-        "version_code": 27,
+        "version": "1.4.4",
+        "version_code": 28,
         "download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
         "cdn_download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
         "fallback_url": "https://movieverse.click/cinescope.apk",
-        "changelog": "🚀 v1.4.3: Fixed movie playback startup crash, resolved persistent update notification, improved cloud server fallback & high-speed streaming.",
+        "changelog": "🚀 v1.4.4: Restored fast cloud backup servers (Server 1 VidSrc HD & Server 2 AutoEmbed), fixed series/movie playback stalls, and enabled high-speed CDN direct streams.",
         "force_update": True,
     }
 
@@ -941,6 +941,10 @@ class MovieBoxEngine:
 
         if not detail_path:
             detail_path = app_cache.get(f"detail_path:{subject_id}")
+            if not detail_path:
+                card = app_cache.get(f"card:{subject_id}")
+                if card and card.get("detail_path"):
+                    detail_path = card["detail_path"]
 
         def _fetch_native():
             try:
@@ -2121,79 +2125,67 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
         e = max(1, episode)
         return [
             {
-                "name": "Server 1 (EmbedSU Cinema)",
-                "id": "embedsu",
-                "type": "iframe",
-                "url": f"https://embed.su/embed/tv/{clean_id}/{s}/{e}",
-            },
-            {
-                "name": "Server 2 (VidSrc Pro)",
-                "id": "vidsrcxyz",
-                "type": "iframe",
-                "url": f"https://vidsrc.xyz/embed/tv?imdb={clean_id}&season={s}&episode={e}",
-            },
-            {
-                "name": "Server 3 (VidSrc.to HD)",
+                "name": "Server 1 (VidSrc HD)",
                 "id": "vidsrcto",
                 "type": "iframe",
                 "url": f"https://vidsrc.to/embed/tv/{clean_id}/{s}/{e}",
             },
             {
-                "name": "Server 4 (AutoEmbed Fast)",
+                "name": "Server 2 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
             },
             {
-                "name": "Server 5 (MultiEmbed Global)",
+                "name": "Server 3 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
             },
             {
-                "name": "Server 6 (2Embed Cinema)",
+                "name": "Server 4 (2Embed Cinema)",
                 "id": "twoembed",
                 "type": "iframe",
                 "url": f"https://www.2embed.cc/embedtv/{clean_id}&s={s}&e={e}",
+            },
+            {
+                "name": "Server 5 (VidLink Pro)",
+                "id": "vidlink",
+                "type": "iframe",
+                "url": f"https://vidlink.pro/tv/{clean_id}/{s}/{e}",
             },
         ]
     else:
         return [
             {
-                "name": "Server 1 (EmbedSU Cinema)",
-                "id": "embedsu",
-                "type": "iframe",
-                "url": f"https://embed.su/embed/movie/{clean_id}",
-            },
-            {
-                "name": "Server 2 (VidSrc Pro)",
-                "id": "vidsrcxyz",
-                "type": "iframe",
-                "url": f"https://vidsrc.xyz/embed/movie?imdb={clean_id}",
-            },
-            {
-                "name": "Server 3 (VidSrc.to HD)",
+                "name": "Server 1 (VidSrc HD)",
                 "id": "vidsrcto",
                 "type": "iframe",
                 "url": f"https://vidsrc.to/embed/movie/{clean_id}",
             },
             {
-                "name": "Server 4 (AutoEmbed Fast)",
+                "name": "Server 2 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/movie/imdb/{clean_id}",
             },
             {
-                "name": "Server 5 (MultiEmbed Global)",
+                "name": "Server 3 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}",
             },
             {
-                "name": "Server 6 (2Embed Cinema)",
+                "name": "Server 4 (2Embed Cinema)",
                 "id": "twoembed",
                 "type": "iframe",
                 "url": f"https://www.2embed.cc/embed/{clean_id}",
+            },
+            {
+                "name": "Server 5 (VidLink Pro)",
+                "id": "vidlink",
+                "type": "iframe",
+                "url": f"https://vidlink.pro/movie/{clean_id}",
             },
         ]
 
