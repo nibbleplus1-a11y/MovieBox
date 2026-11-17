@@ -2382,8 +2382,15 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
 
         loop = asyncio.get_event_loop()
         # Concurrently fetch streams and details in thread pool for 2x faster stream load time
+        # For details: first check the card cache (populated by feed), only hit upstream if cache miss
+        def _get_details_with_card_fallback(sid: str):
+            try:
+                return engine.get_details(sid)
+            except Exception:
+                return app_cache.get(f"card:{sid}") or None
+
         streams_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path))
-        details_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
+        details_fut = loop.run_in_executor(_bg_executor, lambda: _get_details_with_card_fallback(subject_id))
         streams_res, details_res = await asyncio.gather(streams_fut, details_fut, return_exceptions=True)
 
         streams = streams_res if isinstance(streams_res, list) else []
@@ -2424,6 +2431,15 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
             det_type = ""
             det_release = None
 
+        # If details unavailable (upstream 406/block), fall back to card cache
+        if not title:
+            card = app_cache.get(f"card:{subject_id}")
+            if card:
+                title = card.get("title")
+                cover = cover or card.get("cover")
+                det_type = det_type or card.get("type") or "Movie"
+                det_release = det_release or str(card.get("year") or "")[:4] or None
+
         # Check cache for IMDB/fallback servers first (avoids the slow 13s Cinemeta call)
         imdb_id = None
         fallback_servers = []
@@ -2442,6 +2458,7 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
                 except Exception:
                     pass
 
+        # Always attempt IMDB fallback when no direct streams available
         if title and not is_coming_soon:
             cache_key_imdb = f"imdb_id:{re.sub(r'[\[\(].*?[\]\)]', '', str(title)).strip()}:{det_release or ''}:{is_ser}"
             imdb_id = app_cache.get(cache_key_imdb)
