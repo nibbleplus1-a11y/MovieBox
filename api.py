@@ -587,10 +587,8 @@ class MovieBoxEngine:
     def __init__(self):
         self.device_id = generate_device_id()
         self.bearer_token: Optional[str] = None
-        if cr:
-            self.session = cr.Session(impersonate="chrome120")
-        else:
-            self.session = httpx.Client(timeout=25, follow_redirects=True)
+        # Always use httpx.Client for native mobile API requests so browser pseudo-headers are not injected
+        self.session = httpx.Client(timeout=25, follow_redirects=True)
 
     @classmethod
     def get_instance(cls) -> "MovieBoxEngine":
