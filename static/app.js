@@ -2763,16 +2763,22 @@ async function quickPlay(subjectId, title, startTime = 0) {
         activeMediaMeta = detail || { title, cover: streamData.cover };
 
         // Post-fetch strict type check
-        const isActuallyMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
+        const isDetectedSeries = Boolean(
+            (activeMediaMeta && (activeMediaMeta.subject_type === 2 || activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series')) ||
+            (streamData && (streamData.season > 0 || streamData.episode > 0)) ||
+            targetSe > 0 ||
+            targetEp > 0
+        );
+        const isActuallyMovie = !isDetectedSeries && Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
         if (isActuallyMovie) {
             targetSe = 0; targetEp = 0; currentSeason = 0; currentEpisode = 0;
-        } else if (activeMediaMeta && (activeMediaMeta.subject_type === 2 || activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series')) {
+        } else if (isDetectedSeries) {
             if (targetSe === 0) targetSe = 1;
             if (targetEp === 0) targetEp = 1;
             currentSeason = targetSe;
             currentEpisode = targetEp;
         }
-        const isFinalSeries = !isActuallyMovie && Boolean(activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series' || activeMediaMeta.subject_type === 2));
+        const isFinalSeries = isDetectedSeries;
 
         renderSettingsAudioList(activeDubsList);
         renderSettingsSubsList(activeCaptionList);

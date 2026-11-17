@@ -2199,25 +2199,38 @@ async def get_fallback_sources(
     subject_id: Optional[str] = Query(None)
 ):
     loop = asyncio.get_event_loop()
-    real_is_series = is_series
+    real_is_series = bool(is_series or season > 0 or episode > 0)
     real_season = season
     real_episode = episode
 
     if subject_id and subject_id != "None":
-        try:
-            details = await loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
-            if details:
-                st = details.get("subject_type")
-                if st == 1 or details.get("type") == "Movie":
-                    real_is_series = False
-                    real_season = 0
-                    real_episode = 0
-                elif st == 2 or details.get("type") in ["Series", "TV Series"]:
-                    real_is_series = True
-                    if real_season == 0: real_season = 1
-                    if real_episode == 0: real_episode = 1
-        except Exception:
-            pass
+        card = app_cache.get(f"card:{subject_id}")
+        if card:
+            st = card.get("subject_type")
+            ctype = str(card.get("type") or "").lower()
+            if st == 2 or "series" in ctype or "show" in ctype or season > 0 or episode > 0:
+                real_is_series = True
+                real_season = max(1, season)
+                real_episode = max(1, episode)
+            elif (st == 1 or ctype == "movie") and season == 0 and episode == 0:
+                real_is_series = False
+                real_season = 0
+                real_episode = 0
+        else:
+            try:
+                details = await loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
+                if details:
+                    st = details.get("subject_type")
+                    if st == 1 or details.get("type") == "Movie":
+                        real_is_series = False
+                        real_season = 0
+                        real_episode = 0
+                    elif st == 2 or details.get("type") in ["Series", "TV Series"]:
+                        real_is_series = True
+                        if real_season == 0: real_season = 1
+                        if real_episode == 0: real_episode = 1
+            except Exception:
+                pass
 
     imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(title, year=year, is_series=real_is_series))
     if not imdb_id:
@@ -2724,79 +2737,7 @@ def debug_upstream(secret: Optional[str] = Query(None)):
     expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
     if not secret or not secrets.compare_digest(secret, expected):
         raise HTTPException(status_code=403, detail="Unauthorized")
-    results = {}
-    import traceback
-    try:
-        t = engine.bootstrap_token(force=True)
-        results["bootstrap_token"] = t[:15] + "..." if t else None
-        
-        # Test 1: get_details
-        try:
-            det = engine.get_details("5074096615720375064")
-            results["get_details"] = {"title": det.get("title"), "detail_path": det.get("detail_path")}
-        except Exception as de:
-            results["get_details_error"] = str(de)
-
-        # Test 2: get_streams
-        try:
-            st = engine.get_streams("5074096615720375064", season=1, episode=1)
-            results["get_streams"] = {"count": len(st), "streams": [s.get("source") for s in st]}
-        except Exception as se:
-            results["get_streams_error"] = str(se)
-
-        # Test 3: Raw hosts with both httpx and curl_cffi
-        host_results = {}
-        for h in NATIVE_API_HOSTS:
-            u = f"{h}/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
-            hdrs = build_auth_headers("GET", u, token=t, device_id=engine.device_id)
-            try:
-                r = engine.session.get(u, headers=hdrs, timeout=5)
-                host_results[f"{h}_httpx"] = {"status": r.status_code, "body": r.text[:120]}
-            except Exception as he:
-                host_results[f"{h}_httpx"] = {"error": str(he)}
-            if cr:
-                try:
-                    rc = cr.get(u, headers=hdrs, timeout=5, impersonate="chrome120")
-                    host_results[f"{h}_cffi"] = {"status": rc.status_code, "body": rc.text[:120]}
-                except Exception as ce:
-                    host_results[f"{h}_cffi"] = {"error": str(ce)}
-        results["hosts"] = host_results
-
-        # Test 4: Web domain play with curl_cffi across all candidate domains
-        if cr:
-            detail_path = "the-lord-of-the-rings-the-rings-of-power-oWxADnOpP26"
-            web_cffi = {}
-            test_domains = [
-                "https://123moviesfree.club",
-                "https://movie-box.co",
-                "https://movieboxonline.net",
-                "https://h5-api.aoneroom.com",
-                "https://moviebox.ph",
-                "https://movieboxhd.net",
-                "https://moviebox.city",
-            ]
-            for domain in test_domains:
-                play_url = f"{domain}/wefeed-h5api-bff/subject/play?subjectId=5074096615720375064&se=1&ep=1&detailPath={detail_path}&streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
-                hdrs_w = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer": f"{domain}/movies/{detail_path}?id=5074096615720375064&type=/movie/detail",
-                    "Accept": "application/json",
-                    "Authorization": f"Bearer {t}",
-                    "x-source": "moviebox",
-                    "x-client-info": '{"timezone":"Asia/Calcutta"}',
-                    "x-request-lang": "en"
-                }
-                try:
-                    rcw = cr.get(play_url, headers=hdrs_w, timeout=5, impersonate="chrome120")
-                    web_cffi[domain] = {"status": rcw.status_code, "body": rcw.text[:150]}
-                except Exception as we:
-                    web_cffi[domain] = {"error": str(we)}
-            results["web_cffi"] = web_cffi
-        
-    except Exception as e:
-        results["error"] = str(e)
-        results["trace"] = traceback.format_exc()
-    return results
+    return {"status": "ok", "timestamp": time.time()}
 
 
 @app.post("/api/admin/setup-ssl")
