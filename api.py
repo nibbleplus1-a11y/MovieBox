@@ -2721,32 +2721,47 @@ def debug_upstream(secret: Optional[str] = Query(None)):
         t = engine.bootstrap_token(force=True)
         results["bootstrap_token"] = t[:15] + "..." if t else None
         
+        # Test A: Native API (known 406)
         test_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/subject-api/get?subjectId=5074096615720375064"
+        hdrs = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
+        r = engine.session.get(test_url, headers=hdrs, timeout=10)
+        results["native_api"] = {"status": r.status_code, "body": r.text[:100]}
         
-        # Test D: Check if X-Forwarded-For or Client-IP bypasses 406
-        test_ips = ["154.208.51.71", "157.48.246.181", "49.36.120.15"]
-        ip_results = {}
-        for tip in test_ips:
-            hdrs_ip = build_auth_headers("GET", test_url, token=t, device_id=engine.device_id)
-            hdrs_ip["x-forwarded-for"] = tip
-            hdrs_ip["x-real-ip"] = tip
-            hdrs_ip["client-ip"] = tip
-            r_ip = engine.session.get(test_url, headers=hdrs_ip, timeout=10)
-            ip_results[tip] = {"status": r_ip.status_code, "body": r_ip.text[:150]}
-        results["xff_tested"] = ip_results
-
-        # Test C: Ranking list item detail (get subjectId from ranking list directly!)
-        rank_url = "https://apig.inmoviebox.com/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=5"
-        hdrs_rank = build_auth_headers("GET", rank_url, token=t, device_id=engine.device_id)
-        r_rank = engine.session.get(rank_url, headers=hdrs_rank, timeout=10)
-        results["ranking_status"] = r_rank.status_code
-        if r_rank.status_code == 200:
-            rank_data = r_rank.json().get("data", {})
-            results["ranking_data_keys"] = list(rank_data.keys())
-            results["ranking_first_item"] = (rank_data.get("items") or rank_data.get("list") or [{}])[0]
-        else:
-            results["ranking_body"] = r_rank.text[:200]
-
+        # Test B: Web CDN stream fetch with known detail_path
+        detail_path = "the-lord-of-the-rings-the-rings-of-power-oWxADnOpP26"
+        subject_id = "5074096615720375064"
+        web_results = {}
+        for domain in WEB_DOMAINS[:3]:
+            play_url = (
+                f"{domain}/wefeed-h5api-bff/subject/play?"
+                f"subjectId={subject_id}&se=1&ep=1&detailPath={detail_path}&"
+                f"streamSignType=1&supportCodecs%5Bhevc%5D=1&supportCodecs%5Bh264%5D=1"
+            )
+            referer = f"{domain}/movies/{detail_path}?id={subject_id}&type=/movie/detail"
+            hdrs_web = {
+                "User-Agent": WEB_USER_AGENT,
+                "Referer": referer,
+                "Accept": "application/json",
+                "x-client-info": '{"timezone":"Asia/Calcutta"}',
+                "x-request-lang": "en",
+                "x-source": "moviebox",
+                "Authorization": f"Bearer {t}",
+            }
+            try:
+                rw = engine.session.get(play_url, headers=hdrs_web, timeout=8)
+                web_results[domain] = {"status": rw.status_code, "body": rw.text[:200]}
+            except Exception as we:
+                web_results[domain] = {"error": str(we)}
+        results["web_cdn_streams"] = web_results
+        
+        # Test C: Try curl_cffi impersonate
+        try:
+            from curl_cffi import requests as cffi_requests
+            r_cffi = cffi_requests.get(test_url, headers=hdrs, timeout=10, impersonate="chrome110")
+            results["curl_cffi_native"] = {"status": r_cffi.status_code, "body": r_cffi.text[:100]}
+        except Exception as ce:
+            results["curl_cffi_native"] = {"error": str(ce)}
+        
     except Exception as e:
         results["error"] = str(e)
         results["trace"] = traceback.format_exc()
