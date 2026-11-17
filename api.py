@@ -983,8 +983,8 @@ class MovieBoxEngine:
                         pass
                     return domain, None
 
-                with ThreadPoolExecutor(max_workers=3) as pool:
-                    futures = [pool.submit(_fetch_domain, d) for d in WEB_DOMAINS[:3]]
+                with ThreadPoolExecutor(max_workers=6) as pool:
+                    futures = [pool.submit(_fetch_domain, d) for d in WEB_DOMAINS[:6]]
                     for f in as_completed(futures):
                         try:
                             domain, data = f.result()
@@ -2487,6 +2487,18 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
                         return None
                 _bg_executor.submit(_bg_resolve)
 
+        resolved_detail_path = detail_path or app_cache.get(f"detail_path:{subject_id}")
+        if not resolved_detail_path:
+            card = app_cache.get(f"card:{subject_id}")
+            if card and card.get("detail_path"):
+                resolved_detail_path = card["detail_path"]
+
+        token_str = ""
+        try:
+            token_str = engine.bootstrap_token()
+        except Exception:
+            pass
+
         return {
             "subject_id": subject_id,
             "season": local_se,
@@ -2499,13 +2511,20 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
             "coming_soon": is_coming_soon,
             "trailer_url": trailer_url,
             "imdb_id": imdb_id,
-            "fallback_servers": fallback_servers
+            "fallback_servers": fallback_servers,
+            "token": token_str,
+            "detail_path": resolved_detail_path or ""
         }
     except HTTPException:
         raise
     except Exception as exc:
         import traceback
         traceback.print_exc()
+        token_str = ""
+        try:
+            token_str = engine.bootstrap_token()
+        except Exception:
+            pass
         return {
             "subject_id": subject_id,
             "season": se,
@@ -2519,8 +2538,17 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
             "trailer_url": None,
             "imdb_id": None,
             "fallback_servers": [],
+            "token": token_str,
+            "detail_path": detail_path or app_cache.get(f"detail_path:{subject_id}") or "",
             "error": str(exc),
         }
+
+@app.get("/api/token")
+def get_engine_token():
+    try:
+        return {"token": engine.bootstrap_token(), "ok": True}
+    except Exception as e:
+        return {"token": "", "ok": False, "error": str(e)}
 
 @app.get("/api/stream/{subject_id}/captions")
 async def get_captions(subject_id: str, se: int = 0, ep: int = 0, stream_id: Optional[str] = None):

@@ -2659,6 +2659,86 @@ async function _loadFallbackServersInBackground(subjectId, title, year, isSeries
     } catch {}
 }
 
+// ─── CLIENT-SIDE DIRECT STREAM RESOLUTION (bypasses datacenter VPS IP blocking) ─
+async function clientResolveDirectStreams(subjectId, season = 0, episode = 0, detailPath = '', token = '') {
+    if (!subjectId) return [];
+
+    let authToken = token;
+    if (!authToken) {
+        try {
+            const tRes = await fetch('/api/token').then(r => r.json());
+            if (tRes && tRes.token) authToken = tRes.token;
+        } catch {}
+    }
+
+    const candidateDomains = [
+        'https://123moviesfree.club',
+        'https://movie-box.co',
+        'https://movieboxonline.net',
+        'https://h5-api.aoneroom.com'
+    ];
+
+    const dPath = detailPath || (activeMediaMeta && activeMediaMeta.detail_path) || '';
+
+    for (const domain of candidateDomains) {
+        try {
+            const playUrl = `${domain}/wefeed-h5api-bff/subject/play?subjectId=${subjectId}&se=${season}&ep=${episode}&detailPath=${encodeURIComponent(dPath)}&streamSignType=1&supportCodecs[hevc]=1&supportCodecs[h264]=1`;
+            const headers = {
+                'Accept': 'application/json',
+                'x-client-info': '{"timezone":"Asia/Calcutta"}',
+                'x-request-lang': 'en',
+                'x-source': 'moviebox'
+            };
+            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4500);
+            const res = await fetch(playUrl, { headers, mode: 'cors', signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (res.ok) {
+                const json = await res.json();
+                const rawStreams = json.data?.streams || [];
+                if (rawStreams.length > 0) {
+                    const parsed = [];
+                    for (const st of rawStreams) {
+                        const url = st.url || '';
+                        if (!url || isNoticeStream({ url })) continue;
+                        const resStr = String(st.resolutions || '1080');
+                        let qVal = 0;
+                        for (const q of [2160, 1440, 1080, 720, 480, 360]) {
+                            if (resStr.includes(String(q))) { qVal = q; break; }
+                        }
+                        if (!qVal) qVal = parseInt(resStr) || 1080;
+                        parsed.push({
+                            source: `Web CDN (${domain.replace('https://', '')})`,
+                            format: st.format || 'MP4',
+                            quality: `${qVal}p`,
+                            quality_value: qVal,
+                            resolution_tag: `${qVal}p`,
+                            url: url,
+                            size_mb: st.size ? Math.round(st.size / (1024 * 1024)) : 0,
+                            codec: st.codecName || 'h264',
+                            headers: {
+                                Referer: 'https://movieboxonline.net/',
+                                Origin: domain
+                            }
+                        });
+                    }
+                    if (parsed.length > 0) {
+                        parsed.sort((a, b) => (b.quality_value || 0) - (a.quality_value || 0));
+                        console.log(`[MovieVerse] Client resolved ${parsed.length} direct streams from ${domain}`);
+                        return parsed;
+                    }
+                }
+            }
+        } catch (e) {
+            // Silently try next domain
+        }
+    }
+    return [];
+}
+
 // ─── QUICK PLAY (INSTANT — opens modal + starts ad IMMEDIATELY, streams load in parallel) ─
 async function quickPlay(subjectId, title, startTime = 0) {
     if (!subjectId || subjectId === 'None' || subjectId === 'undefined') {
@@ -2782,6 +2862,16 @@ async function quickPlay(subjectId, title, startTime = 0) {
 
         renderSettingsAudioList(activeDubsList);
         renderSettingsSubsList(activeCaptionList);
+
+        // ─── RESOLVE S1 DIRECT STREAMS CLIENT-SIDE IF VPS RETURNED 0 STREAMS ───
+        if (activeStreamList.length === 0) {
+            const clientDetailPath = streamData.detail_path || detailPath || (detail && detail.detail_path) || '';
+            const clientToken = streamData.token || '';
+            const clientStreams = await clientResolveDirectStreams(subjectId, targetSe, targetEp, clientDetailPath, clientToken);
+            if (clientStreams && clientStreams.length > 0) {
+                activeStreamList = clientStreams;
+            }
+        }
 
         // Coming soon check
         if ((detail && detail.coming_soon && activeStreamList.length === 0) || (streamData && streamData.coming_soon && activeStreamList.length === 0)) {
@@ -3352,9 +3442,9 @@ function setupPlaybackWatchdog(video) {
                 }
             }, 2500);
             setTimeout(() => {
-                if (video.readyState < 3 && !video.paused && currentSelectedServer === 'direct') {
-                    console.log('[MovieVerse] S1 Direct stalled > 6s — auto-switching to fast backup server');
-                    switchBufferingToFastServer();
+                if (video.readyState < 3 && !video.paused) {
+                    // Show fast retry or switch options if buffering takes longer than 6s, but DO NOT auto-force switch
+                    actions.style.display = 'flex';
                 }
             }, 6000);
         }
@@ -3370,8 +3460,17 @@ function setupPlaybackWatchdog(video) {
 
     video.addEventListener('error', () => {
         if (!video.error || video.error.code === 1) return;
-        showToast('Direct stream unavailable. Switching to fast backup server…', 'warning');
-        switchBufferingToFastServer();
+        console.warn('[MovieVerse] Video stream error:', video.error.code);
+        if (currentSelectedServer === 'direct' && currentPlayingStream) {
+            showBuffering('Reconnecting S1 Direct stream…');
+            const resumeSec = Math.floor(video.currentTime || _lastObservedTime || 0);
+            setTimeout(() => {
+                setCinemaVideoSource(getEffectiveStreamUrl(currentPlayingStream), currentPlayingStream, activeMediaMeta?.title);
+                if (resumeSec > 0) video.currentTime = resumeSec;
+                video.play().catch(() => {});
+                hideBuffering();
+            }, 1000);
+        }
     });
 }
 
@@ -3465,10 +3564,19 @@ function changePlayerServer(serverId) {
 
     if (serverId === 'direct') {
         if (!activeStreamList || activeStreamList.length === 0) {
-            showToast('Notice: Server 1 (Direct CDN) is unavailable for this title due to DMCA. Using high-speed Backup Server.', 'info', 4000);
-            if (activeFallbackServers && activeFallbackServers.length > 0) {
-                changePlayerServer(activeFallbackServers[0].id);
-            }
+            showBuffering('Connecting to S1 Direct 1080p stream…');
+            const dPath = (activeMediaMeta && activeMediaMeta.detail_path) || '';
+            clientResolveDirectStreams(currentPlayingSubjectId, currentSeason, currentEpisode, dPath).then(resolved => {
+                hideBuffering();
+                if (resolved && resolved.length > 0) {
+                    activeStreamList = resolved;
+                    const playable = activeStreamList.filter(s => s.format !== 'DASH' && !s.url.includes('.mpd'));
+                    currentPlayingStream = playable.length > 0 ? playable[0] : activeStreamList[0];
+                    changePlayerServer('direct');
+                } else {
+                    showToast('S1 Direct stream connecting… please wait', 'info');
+                }
+            }).catch(() => hideBuffering());
             return;
         }
         if (stage) stage.classList.remove('is-iframe-mode');
@@ -5143,6 +5251,16 @@ async function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0)
                 cover: streamRes.cover,
                 type: 'Series'
             };
+        }
+
+        // ─── RESOLVE S1 DIRECT STREAMS CLIENT-SIDE IF VPS RETURNED 0 STREAMS ───
+        if (activeStreamList.length === 0) {
+            const clientDetailPath = streamRes.detail_path || detailPath || (activeMediaMeta && activeMediaMeta.detail_path) || '';
+            const clientToken = streamRes.token || '';
+            const clientStreams = await clientResolveDirectStreams(subjectId, sNum, eNum, clientDetailPath, clientToken);
+            if (clientStreams && clientStreams.length > 0) {
+                activeStreamList = clientStreams;
+            }
         }
 
         // 1. Direct stream available — always prefer direct stream!
