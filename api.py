@@ -265,11 +265,11 @@ BOOTSTRAP_HOST = "https://apig.inmoviebox.com"
 BOOTSTRAP_URL = f"{BOOTSTRAP_HOST}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
 
 WEB_DOMAINS = [
-    "https://sflix.film",
-    "https://movieboxonline.net",
     "https://movie-box.co",
+    "https://movieboxonline.net",
     "https://h5-api.aoneroom.com",
     "https://123moviesfree.club",
+    "https://sflix.film",
     "https://netnaija.film",
     "https://movieboxhd.net",
 ]
@@ -933,7 +933,7 @@ class MovieBoxEngine:
         app_cache.set(cache_key, season_list, ttl=1800)
         return season_list
 
-    def get_streams(self, subject_id: str, season: int = 0, episode: int = 0, detail_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_streams(self, subject_id: str, season: int = 0, episode: int = 0, detail_path: Optional[str] = None, client_ip: Optional[str] = None) -> List[Dict[str, Any]]:
         cache_key = f"streams:{subject_id}:{season}:{episode}"
         cached = app_cache.get(cache_key)
         if cached is not None:
@@ -967,6 +967,8 @@ class MovieBoxEngine:
                 except Exception:
                     token = ""
 
+                cip = client_ip or "154.208.51.69"
+
                 def _fetch_domain(domain: str):
                     play_url = (
                         f"{domain}/wefeed-h5api-bff/subject/play?"
@@ -981,6 +983,10 @@ class MovieBoxEngine:
                         "x-client-info": '{"timezone":"Asia/Calcutta"}',
                         "x-request-lang": "en",
                         "x-source": "moviebox",
+                        "X-Forwarded-For": cip,
+                        "X-Real-IP": cip,
+                        "Client-IP": cip,
+                        "CF-Connecting-IP": cip,
                     }
                     try:
                         # Attempt 1: Without token (bypasses IP-bound token 406 rejections)
@@ -2391,7 +2397,7 @@ async def probe_stream_servers(
 
 
 @app.get("/api/stream/{subject_id}")
-async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int = 0, detail_path: Optional[str] = None, _bust: Optional[str] = None):
+async def get_streams(request: Request, subject_id: str, response: Response, se: int = 0, ep: int = 0, detail_path: Optional[str] = None, _bust: Optional[str] = None):
     if not subject_id or subject_id == "None":
         raise HTTPException(status_code=400, detail="Invalid subject ID")
 
@@ -2402,6 +2408,12 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
         if _bust:
             app_cache.delete_prefix(f"streams:{subject_id}:")
 
+        client_ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for") or (request.client.host if request.client else None)
+        if client_ip and "," in client_ip:
+            client_ip = client_ip.split(",")[0].strip()
+        if not client_ip or client_ip in ("127.0.0.1", "localhost", "137.23.40.164") or client_ip.startswith("10.") or client_ip.startswith("192.168."):
+            client_ip = "154.208.51.69"
+
         loop = asyncio.get_event_loop()
         # Concurrently fetch streams and details in thread pool for 2x faster stream load time
         # For details: first check the card cache (populated by feed), only hit upstream if cache miss
@@ -2411,7 +2423,7 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
             except Exception:
                 return app_cache.get(f"card:{sid}") or None
 
-        streams_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path))
+        streams_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path, client_ip=client_ip))
         details_fut = loop.run_in_executor(_bg_executor, lambda: _get_details_with_card_fallback(subject_id))
         streams_res, details_res = await asyncio.gather(streams_fut, details_fut, return_exceptions=True)
 
@@ -2422,7 +2434,7 @@ async def get_streams(subject_id: str, response: Response, se: int = 0, ep: int 
         local_se, local_ep = se, ep
         if not streams and se == 0 and ep == 0:
             try:
-                s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path))
+                s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path, client_ip=client_ip))
                 if s1_streams:
                     streams = s1_streams
                     local_se = 1
@@ -2809,7 +2821,7 @@ def debug_upstream(
 
     # 2. Test get_streams
     try:
-        st = engine.get_streams(sid, 0, 0, dpath)
+        st = engine.get_streams(sid, 0, 0, dpath, client_ip=client_ip)
         diag["get_streams_count"] = len(st)
         diag["get_streams"] = [{"quality": s.get("quality"), "source": s.get("source"), "url": s.get("url", "")[:50]} for s in st]
     except Exception as se:
