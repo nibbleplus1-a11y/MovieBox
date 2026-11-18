@@ -124,7 +124,7 @@ export const api = {
     ),
 
   proxyUrl: (streamUrl: string, referer?: string) => {
-    const ref = referer || 'https://movieboxonline.net/';
+    const ref = referer || 'https://movie-box.co/';
     return `${BASE}/api/proxy/stream?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent(ref)}`;
   },
 

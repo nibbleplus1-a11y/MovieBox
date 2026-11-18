@@ -1604,6 +1604,112 @@ function setCinemaVideoSource(src, stream, titleText) {
         video.src = src;
         try { video.load(); } catch {}
     }
+
+    ensurePlaybackStarted(0);
+}
+
+// ─── GUARANTEED PLAYBACK ENGINE ─────────────────────────────────────────────
+function ensurePlaybackStarted(seekToTime = 0) {
+    const video = getCinemaVideoElement();
+    if (!video) return;
+
+    let started = false;
+    let attempts = 0;
+
+    const doPlay = () => {
+        if (started && video && !video.paused) return;
+        const currentV = getCinemaVideoElement() || video;
+        const target = plyrInstance || currentV;
+        if (!target) return;
+
+        try {
+            const playPromise = target.play();
+            if (playPromise !== undefined && typeof playPromise.then === 'function') {
+                playPromise.then(() => {
+                    started = true;
+                    hideBuffering();
+                    if (seekToTime > 0) {
+                        try {
+                            if (plyrInstance) plyrInstance.currentTime = seekToTime;
+                            else currentV.currentTime = seekToTime;
+                        } catch {}
+                    }
+                }).catch(err => {
+                    console.warn('[MovieVerse] Play rejected, attempting muted autoplay:', err);
+                    if (plyrInstance) {
+                        try { plyrInstance.muted = true; } catch {}
+                    }
+                    if (currentV) {
+                        currentV.muted = true;
+                        currentV.defaultMuted = true;
+                        currentV.setAttribute('muted', '');
+                    }
+                    try {
+                        const mutedPromise = (plyrInstance ? plyrInstance.play() : currentV.play());
+                        if (mutedPromise !== undefined && typeof mutedPromise.then === 'function') {
+                            mutedPromise.then(() => {
+                                started = true;
+                                hideBuffering();
+                                if (seekToTime > 0) {
+                                    try {
+                                        if (plyrInstance) plyrInstance.currentTime = seekToTime;
+                                        else currentV.currentTime = seekToTime;
+                                    } catch {}
+                                }
+                                showToast('🔇 Audio muted — tap screen to unmute', 'info');
+                            }).catch(() => {});
+                        }
+                    } catch {}
+                });
+            }
+        } catch (e) {
+            console.warn('[MovieVerse] doPlay error:', e);
+        }
+    };
+
+    // 1. Immediate attempt
+    doPlay();
+
+    // 2. Event-driven attempts on readiness
+    const onReady = () => {
+        doPlay();
+        if (video && !video.paused) cleanup();
+    };
+
+    const onPlaying = () => {
+        started = true;
+        hideBuffering();
+        cleanup();
+    };
+
+    const cleanup = () => {
+        if (video) {
+            video.removeEventListener('loadedmetadata', onReady);
+            video.removeEventListener('loadeddata', onReady);
+            video.removeEventListener('canplay', onReady);
+            video.removeEventListener('canplaythrough', onReady);
+            video.removeEventListener('playing', onPlaying);
+        }
+        if (retryTimer) clearInterval(retryTimer);
+    };
+
+    video.addEventListener('loadedmetadata', onReady, { once: true });
+    video.addEventListener('loadeddata', onReady, { once: true });
+    video.addEventListener('canplay', onReady, { once: true });
+    video.addEventListener('canplaythrough', onReady, { once: true });
+    video.addEventListener('playing', onPlaying, { once: true });
+
+    // 3. Active poller: if video is buffered / ready but paused, trigger play
+    const retryTimer = setInterval(() => {
+        attempts++;
+        if (started || (video && !video.paused) || attempts > 20) {
+            cleanup();
+            return;
+        }
+        if (video && (video.readyState >= 2 || (video.buffered && video.buffered.length > 0)) && video.paused) {
+            doPlay();
+        }
+    }, 150);
 }
 
 function showBuffering(text = 'Buffering 1080p Stream...') {
@@ -2488,6 +2594,7 @@ async function _resolveAndReplayFreshStream(seekToTime = 0) {
             const proxyUrl = getProxyStreamUrl(best);
             console.log('[MovieVerse] Fresh stream resolved via server cache-bust:', best.quality, best.url.slice(0, 60));
             setCinemaVideoSource(proxyUrl, best, activeMediaMeta?.title);
+            ensurePlaybackStarted(seekToTime);
             _doSeekAfterPlay(seekToTime);
             hideBuffering();
             showToast('Stream refreshed ✓', 'success');
@@ -2503,6 +2610,7 @@ async function _resolveAndReplayFreshStream(seekToTime = 0) {
             const proxyUrl = getProxyStreamUrl(best);
             console.log('[MovieVerse] Fresh stream resolved via client:', best.quality, best.url.slice(0, 60));
             setCinemaVideoSource(proxyUrl, best, activeMediaMeta?.title);
+            ensurePlaybackStarted(seekToTime);
             _doSeekAfterPlay(seekToTime);
             hideBuffering();
             showToast('Stream refreshed ✓', 'success');
@@ -2541,11 +2649,16 @@ async function tryDirectThenProxy(stream, titleText, seekToTime = 0) {
         console.log('[MovieVerse] Routing via proxy (hakunaymatata/CDN requires Referer spoofing)');
         setCinemaVideoSource(proxyUrl, stream, titleText);
 
-        // Install stall detector: if no progress within 12s → refresh stream URLs
+        // Install stall detector: if no progress within 12s → check if preloaded; else refresh
         if (video) {
             let _proxyPlaybackStarted = false;
             const _proxyPlayTimer = setTimeout(() => {
                 if (!_proxyPlaybackStarted && currentPlayingStream === stream) {
+                    if (video && (video.readyState >= 2 || (video.buffered && video.buffered.length > 0))) {
+                        console.log('[MovieVerse] Video preloaded on progress bar — forcing playback start');
+                        ensurePlaybackStarted(seekToTime);
+                        return;
+                    }
                     console.warn('[MovieVerse] Proxy stream stalled after 12s — refreshing signed URLs');
                     _resolveAndReplayFreshStream(seekToTime);
                 }
@@ -2570,6 +2683,7 @@ async function tryDirectThenProxy(stream, titleText, seekToTime = 0) {
             video.addEventListener('error', _onProxyError, { once: true });
         }
 
+        ensurePlaybackStarted(seekToTime);
         _doSeekAfterPlay(seekToTime);
         return;
     }
@@ -2586,6 +2700,7 @@ async function tryDirectThenProxy(stream, titleText, seekToTime = 0) {
             _directStreamFailed = true;
             const resumeTime = video.currentTime || seekToTime || 0;
             setCinemaVideoSource(proxyUrl, stream, titleText);
+            ensurePlaybackStarted(resumeTime);
             if (resumeTime > 0) {
                 video.addEventListener('canplay', () => { video.currentTime = resumeTime; }, { once: true });
             }
@@ -2600,6 +2715,7 @@ async function tryDirectThenProxy(stream, titleText, seekToTime = 0) {
         video.addEventListener('timeupdate', onFirstPlay, { once: true });
     }
 
+    ensurePlaybackStarted(seekToTime);
     _doSeekAfterPlay(seekToTime);
 }
 
@@ -3609,9 +3725,25 @@ function setupPlaybackWatchdog(video) {
     video.addEventListener('canplay', () => {
         clearStallTimer();
         hideBuffering();
+        if (video.paused) {
+            ensurePlaybackStarted(0);
+        }
+    });
+    video.addEventListener('loadeddata', () => {
+        clearStallTimer();
+        hideBuffering();
+        if (video.paused && (video.readyState >= 2 || (video.buffered && video.buffered.length > 0))) {
+            ensurePlaybackStarted(0);
+        }
     });
     video.addEventListener('durationchange', updateUnifiedPlayerTimeline);
-    video.addEventListener('progress', updateUnifiedPlayerTimeline);
+    video.addEventListener('progress', () => {
+        updateUnifiedPlayerTimeline();
+        if (video.paused && (video.readyState >= 2 || (video.buffered && video.buffered.length > 0))) {
+            hideBuffering();
+            ensurePlaybackStarted(0);
+        }
+    });
 
     video.addEventListener('play', () => {
         updatePlayPauseIcon();
@@ -4164,15 +4296,20 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     };
 
     // playInCinemaModal only reaches here after quickPlay already ran the ad — start immediately
-    // (quickPlay now runs the ad before calling playInCinemaModal)
-    setTimeout(startPlayback, 80);
+    ensurePlaybackStarted(seekToTime);
+    setTimeout(startPlayback, 60);
     if (video) {
-        video.addEventListener('canplay', () => { startPlayback(); }, { once: true });
+        if (video.readyState >= 2 || (video.buffered && video.buffered.length > 0)) {
+            startPlayback();
+        } else {
+            video.addEventListener('canplay', () => { startPlayback(); }, { once: true });
+            video.addEventListener('loadeddata', () => { startPlayback(); }, { once: true });
+        }
     }
     renderPlayerSeriesRibbon();
     renderPlayerServerPills();
 
-    // Unmute on first user click/tap anywhere on the player stage (fixes browser autoplay mute)
+    // Unmute & play on first user click/tap anywhere on the player stage
     const stageEl = document.getElementById('videoStage');
     if (stageEl && !stageEl.dataset.unmuteListenerBound) {
         stageEl.dataset.unmuteListenerBound = 'true';
@@ -4187,6 +4324,10 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
                 if (slider) slider.value = 1;
                 updateVolumeIcon();
                 showToast('🔊 Audio restored', 'success');
+            }
+            if (vid && vid.paused) {
+                if (plyrInstance) plyrInstance.play().catch(() => {});
+                else vid.play().catch(() => {});
             }
             stageEl.removeEventListener('click', _unmuteOnInteraction);
             stageEl.removeEventListener('touchstart', _unmuteOnInteraction);

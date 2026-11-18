@@ -1832,8 +1832,8 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
 
     async def content_iterator():
         try:
-            # Yield high-throughput 256KB chunks for fast streaming and lower event-loop overhead
-            async for chunk in resp.aiter_bytes(chunk_size=262144):
+            # Yield 64KB chunks for fast initial video header delivery and low latency
+            async for chunk in resp.aiter_bytes(chunk_size=65536):
                 yield chunk
         except Exception:
             pass
