@@ -960,6 +960,17 @@ function initGlobalSearch() {
         }
     });
 
+    const searchIcon = document.querySelector('.search-container .search-icon');
+    if (searchIcon) {
+        searchIcon.style.cursor = 'pointer';
+        searchIcon.title = 'Click to search';
+        searchIcon.addEventListener('click', () => {
+            const q = input.value.trim();
+            dropdown.style.display = 'none';
+            if (q) performFullSearch(q);
+        });
+    }
+
     document.addEventListener('click', (e) => {
         if (!e.target.closest('.search-container')) dropdown.style.display = 'none';
     });
@@ -1462,29 +1473,44 @@ function setCinemaVideoSource(src, stream, titleText) {
             hlsInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, (event, data) => {
                 try {
                     const tracks = (data && data.audioTracks) || hlsInstance.audioTracks || [];
-                    if (!tracks || tracks.length <= 1) return;
+                    if (!tracks || !tracks.length) return;
+                    window._detectedStreamAudioTracks = tracks;
                     console.log('[WebPlayer] Audio tracks detected in stream:', tracks);
-                    const currentIdx = hlsInstance.audioTrack;
-                    const cur = tracks[currentIdx];
-                    const isAD = (t) => {
-                        const n = ((t && t.name) || (t && t.lang) || '').toLowerCase();
-                        return /description|descriptive|\[ad\]|\(ad\)|visual/i.test(n);
-                    };
-
-                    // Auto switch away from Audio Description (narrator) to original dialogue
-                    if (cur && isAD(cur)) {
-                        const normalIdx = tracks.findIndex(t => !isAD(t));
-                        if (normalIdx !== -1 && normalIdx !== currentIdx) {
-                            console.log(`[WebPlayer] Auto-switched away from Audio Description track "${cur.name}" to clean dialogue "${tracks[normalIdx].name}" (index ${normalIdx})`);
-                            hlsInstance.audioTrack = normalIdx;
-                            showToast(`Audio Track: Switched to Dialogue (${tracks[normalIdx].name})`, 'info', 3000);
-                        }
-                    }
+                    renderSettingsAudioList(activeDubsList);
+                    renderInPlayerAudioPopover();
                 } catch (e) {
                     console.warn('[WebPlayer] Audio track check error:', e);
                 }
             });
+            hlsInstance.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (event, data) => {
+                try {
+                    const subTracks = (data && data.subtitleTracks) || hlsInstance.subtitleTracks || [];
+                    if (!subTracks || !subTracks.length) return;
+                    console.log('[WebPlayer] Subtitle tracks detected in stream:', subTracks);
+                    const streamSubs = subTracks.map((t, idx) => ({
+                        id: `hls_sub_${idx}`,
+                        language: t.name || t.lang || `Subtitle ${idx + 1}`,
+                        code: t.lang || '',
+                        isHls: true,
+                        trackIndex: idx,
+                        url: `hls://${idx}`
+                    }));
+                    const existing = new Set((activeCaptionList || []).map(c => c.url));
+                    const toAdd = streamSubs.filter(s => !existing.has(s.url));
+                    if (toAdd.length > 0) {
+                        activeCaptionList = [...toAdd, ...(activeCaptionList || [])];
+                        renderSettingsSubsList(activeCaptionList);
+                    }
+                } catch (e) {
+                    console.warn('[WebPlayer] Subtitle tracks error:', e);
+                }
+            });
             hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+                if (hlsInstance.audioTracks && hlsInstance.audioTracks.length > 0) {
+                    window._detectedStreamAudioTracks = hlsInstance.audioTracks;
+                    renderSettingsAudioList(activeDubsList);
+                    renderInPlayerAudioPopover();
+                }
                 if (plyrInstance) {
                     try { plyrInstance.play().catch(() => {}); } catch {}
                 }
@@ -1515,9 +1541,12 @@ function setCinemaVideoSource(src, stream, titleText) {
     const spinner = document.getElementById('videoBufferingSpinner');
     if (spinner) spinner.style.display = 'flex';
 
-    // Always ensure crossorigin is set before adding tracks
-    if (video && !video.getAttribute('crossorigin')) {
-        video.setAttribute('crossorigin', 'anonymous');
+    if (video) {
+        if (src.startsWith('/api/proxy')) {
+            video.setAttribute('crossorigin', 'anonymous');
+        } else {
+            video.removeAttribute('crossorigin');
+        }
     }
 
     if (plyrInstance) {
@@ -2901,7 +2930,11 @@ async function quickPlay(subjectId, title, startTime = 0) {
 
         if (activeStreamList.length > 0) {
             const playable = activeStreamList.filter(s => s.format !== 'DASH' && !s.url.includes('.mpd'));
-            const bestStream = playable.length > 0 ? playable[0] : activeStreamList[0];
+            // Prefer 1080p / 720p H.264 for instant start and browser playback compatibility without 4K HEVC buffering stalls
+            const bestStream = playable.find(s => (s.quality === '1080p' || s.quality === '720p') && (!s.codec || s.codec.toLowerCase().includes('h264')))
+                || playable.find(s => s.quality === '1080p')
+                || playable.find(s => s.quality === '720p')
+                || (playable.length > 0 ? playable[0] : activeStreamList[0]);
             currentSelectedServer = 'direct';
 
             if (chipsWrap) chipsWrap.innerHTML = `<span class="probe-chip healthy"><span class="chip-dot"></span>Direct ${bestStream.quality || '1080p'} ✓</span>`;
@@ -3121,67 +3154,153 @@ function selectQualityFromGear(encodedStream, qualityLabel) {
     if (menu) menu.classList.remove('open');
 }
 
-window._isAdAudioEnabled = false;
-window.toggleAudioDescription = function() {
-    window._isAdAudioEnabled = !window._isAdAudioEnabled;
-    if (!window._isAdAudioEnabled) {
-        showToast('Audio Description Disabled: Clean Audio', 'info');
+window._detectedStreamAudioTracks = [];
+window._selectedStreamAudioTrackIndex = 0;
+
+function selectStreamAudioTrack(trackIndex, trackName) {
+    window._selectedStreamAudioTrackIndex = trackIndex;
+    if (typeof hlsInstance !== 'undefined' && hlsInstance && hlsInstance.audioTracks && hlsInstance.audioTracks[trackIndex]) {
+        try { hlsInstance.audioTrack = trackIndex; } catch (e) { console.warn(e); }
     } else {
-        showToast('Audio Description Enabled', 'info');
+        const video = getCinemaVideoElement();
+        if (video && video.audioTracks && video.audioTracks[trackIndex]) {
+            for (let i = 0; i < video.audioTracks.length; i++) {
+                video.audioTracks[i].enabled = (i === trackIndex);
+            }
+        }
     }
+    safeText('settingsValAudio', trackName || 'Audio');
+    safeText('inPlayerDubBadge', `${trackName || 'Audio'} ▾`);
+    safeText('inPlayerCurrentAudioText', `Audio: ${trackName || 'Audio'}`);
+    const menu = document.getElementById('playerUnifiedSettingsMenu');
+    if (menu) menu.classList.remove('open');
     renderSettingsAudioList(activeDubsList);
-};
+    renderInPlayerAudioPopover();
+    showToast(`Audio Track: ${trackName || 'Switched'}`);
+}
 
 function renderSettingsAudioList(dubs) {
     const wrap = document.getElementById('settingsAudioOptions');
     if (!wrap) return;
 
     const dubsList = dubs || [];
-    // Use activeOriginalSubjectId if available (set when detail response includes original_subject_id)
-    // This ensures that when playing an English dub entry, 'Original Audio' still points to the Korean original
     const originalSubId = activeOriginalSubjectId ||
         ((activeMediaMeta && activeMediaMeta.subject_id) ? String(activeMediaMeta.subject_id) : '');
     const isPlayingOrig = !currentPlayingSubjectId ||
         String(currentPlayingSubjectId) === originalSubId ||
         !dubsList.some(d => String(d.subject_id) === String(currentPlayingSubjectId));
 
-    if (isPlayingOrig) {
-        safeText('settingsValAudio', 'Original');
-        safeText('inPlayerDubBadge', 'Original Audio ▾');
-    }
+    const streamTracks = window._detectedStreamAudioTracks || [];
+    const activeStreamIdx = (typeof window._selectedStreamAudioTrackIndex !== 'undefined') ? window._selectedStreamAudioTrackIndex : 0;
 
-    let html = `
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 12px; background:rgba(255,255,255,0.05); border-radius:8px; margin-bottom:8px; border:1px solid rgba(255,255,255,0.08);">
-            <div>
-                <div style="font-weight:700; color:#fff; font-size:13px;">🎙 Audio Description (AD)</div>
-                <div style="font-size:11px; color:#94a3b8;">${window._isAdAudioEnabled ? 'Visual narration active' : 'Clean dialogue (narration disabled)'}</div>
-            </div>
-            <button onclick="window.toggleAudioDescription()" style="background:${window._isAdAudioEnabled ? '#e50914' : '#334155'}; color:#fff; border:none; padding:4px 10px; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;">
-                ${window._isAdAudioEnabled ? 'ON' : 'OFF'}
-            </button>
-        </div>
-        <button class="settings-opt-item ${isPlayingOrig ? 'active' : ''}" onclick="selectAudioFromGear('${originalSubId}', 'Original Audio')">
-            <span>🌐 Original Audio</span>
-            ${isPlayingOrig ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
-        </button>
-    `;
+    let html = '';
 
-    html += dubsList.filter(d => String(d.subject_id) !== originalSubId && (d.lang_name || d.language) !== 'Original Audio').map(d => {
-        const isSel = (String(d.subject_id) === String(currentPlayingSubjectId));
-        const name = d.lang_name || d.language || 'Audio Track';
-        if (isSel) {
-            safeText('settingsValAudio', name);
-            safeText('inPlayerDubBadge', `${name} ▾`);
-        }
-        return `
-            <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="selectAudioFromGear('${d.subject_id}', '${escapeAttr(name)}')">
-                <span>🌐 ${escapeHtml(name)}</span>
-                ${isSel ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
+    // Render detected embedded stream audio tracks (e.g. English, English - Audio Description, Hindi, Spanish)
+    if (streamTracks.length > 0) {
+        streamTracks.forEach((t, idx) => {
+            let label = t.name || t.lang || `Track ${idx + 1}`;
+            const isAD = /description|descriptive|\[ad\]|\(ad\)|visual/i.test(label) || /description|descriptive|\[ad\]|\(ad\)|visual/i.test(t.lang || '');
+            if (isAD && !label.toLowerCase().includes('description') && !label.toLowerCase().includes('ad')) {
+                label = `${label} - Audio Description`;
+            }
+            const isSel = (idx === activeStreamIdx);
+            if (isSel && isPlayingOrig) {
+                safeText('settingsValAudio', label);
+                safeText('inPlayerDubBadge', `${label} ▾`);
+            }
+            html += `
+                <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="selectStreamAudioTrack(${idx}, '${escapeAttr(label)}')">
+                    <span>${isAD ? '🎙' : '🔊'} ${escapeHtml(label)}</span>
+                    ${isSel ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
+                </button>
+            `;
+        });
+    } else {
+        html += `
+            <button class="settings-opt-item ${isPlayingOrig ? 'active' : ''}" onclick="selectAudioFromGear('${originalSubId}', 'Original Audio')">
+                <span>🌐 Original Audio</span>
+                ${isPlayingOrig ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
             </button>
         `;
-    }).join('');
+    }
+
+    // Render multi-audio dubs from MovieBox (e.g. Hindi Dub, Tamil Dub, English Dub, etc.)
+    const extraDubs = dubsList.filter(d => String(d.subject_id) !== originalSubId && (d.lang_name || d.language) !== 'Original Audio');
+    if (extraDubs.length > 0) {
+        extraDubs.forEach(d => {
+            const isSel = (String(d.subject_id) === String(currentPlayingSubjectId));
+            let name = d.lang_name || d.language || 'Audio Dub';
+            const isAD = /description|descriptive|\[ad\]|\(ad\)|visual/i.test(name);
+            if (isAD && !name.toLowerCase().includes('audio description')) {
+                name = `${name} - Audio Description`;
+            }
+            if (isSel) {
+                safeText('settingsValAudio', name);
+                safeText('inPlayerDubBadge', `${name} ▾`);
+            }
+            html += `
+                <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="selectAudioFromGear('${d.subject_id}', '${escapeAttr(name)}')">
+                    <span>${isAD ? '🎙' : '🌐'} ${escapeHtml(name)}</span>
+                    ${isSel ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
+                </button>
+            `;
+        });
+    }
 
     wrap.innerHTML = html;
+}
+
+function renderInPlayerAudioPopover() {
+    const inPlayerAudioList = document.getElementById('inPlayerAudioList');
+    if (!inPlayerAudioList) return;
+
+    const dubsToUse = (currentTitleDubs && currentTitleDubs.length > 0) ? currentTitleDubs : (activeDubsList || []);
+    const originalSubId = activeOriginalSubjectId ||
+        ((activeMediaMeta && activeMediaMeta.subject_id) ? String(activeMediaMeta.subject_id) : '');
+    const isPlayingOrig = !currentPlayingSubjectId ||
+        String(currentPlayingSubjectId) === originalSubId ||
+        !dubsToUse.some(d => String(d.subject_id) === String(currentPlayingSubjectId));
+
+    const streamTracks = window._detectedStreamAudioTracks || [];
+    const activeStreamIdx = (typeof window._selectedStreamAudioTrackIndex !== 'undefined') ? window._selectedStreamAudioTrackIndex : 0;
+
+    let html = '';
+
+    if (streamTracks.length > 0) {
+        streamTracks.forEach((t, idx) => {
+            let label = t.name || t.lang || `Track ${idx + 1}`;
+            const isAD = /description|descriptive|\[ad\]|\(ad\)|visual/i.test(label) || /description|descriptive|\[ad\]|\(ad\)|visual/i.test(t.lang || '');
+            if (isAD && !label.toLowerCase().includes('description') && !label.toLowerCase().includes('ad')) {
+                label = `${label} - Audio Description`;
+            }
+            const isSel = (idx === activeStreamIdx);
+            html += `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectStreamAudioTrack(${idx}, '${escapeAttr(label)}')">
+                <span>${isAD ? '🎙' : '🔊'} ${escapeHtml(label)}</span>
+                ${isSel ? '<span>✓</span>' : ''}
+            </button>`;
+        });
+    } else {
+        html += `<button class="popover-item ${isPlayingOrig ? 'active' : ''}" onclick="selectInPlayerAudio('${originalSubId}', 'Original Audio')">
+            <span>🌐 Original Audio</span>
+            ${isPlayingOrig ? '<span>✓</span>' : ''}
+        </button>`;
+    }
+
+    const extraDubs = dubsToUse.filter(d => String(d.subject_id) !== originalSubId && (d.lang_name || d.language) !== 'Original Audio');
+    extraDubs.forEach(d => {
+        const isSel = (String(d.subject_id) === String(currentPlayingSubjectId));
+        let name = d.lang_name || d.language || 'Audio Dub';
+        const isAD = /description|descriptive|\[ad\]|\(ad\)|visual/i.test(name);
+        if (isAD && !name.toLowerCase().includes('audio description')) {
+            name = `${name} - Audio Description`;
+        }
+        html += `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerAudio('${d.subject_id}', '${escapeAttr(name)}')">
+            <span>${isAD ? '🎙' : '🌐'} ${escapeHtml(name)}</span>
+            ${isSel ? '<span>✓</span>' : ''}
+        </button>`;
+    });
+
+    inPlayerAudioList.innerHTML = html;
 }
 
 function selectAudioFromGear(dubSubjectId, dubName) {
@@ -3577,7 +3696,10 @@ function changePlayerServer(serverId) {
                 if (resolved && resolved.length > 0) {
                     activeStreamList = resolved;
                     const playable = activeStreamList.filter(s => s.format !== 'DASH' && !s.url.includes('.mpd'));
-                    currentPlayingStream = playable.length > 0 ? playable[0] : activeStreamList[0];
+                    currentPlayingStream = playable.find(s => (s.quality === '1080p' || s.quality === '720p') && (!s.codec || s.codec.toLowerCase().includes('h264')))
+                        || playable.find(s => s.quality === '1080p')
+                        || playable.find(s => s.quality === '720p')
+                        || (playable.length > 0 ? playable[0] : activeStreamList[0]);
                     changePlayerServer('direct');
                 } else {
                     showToast('S1 Direct stream connecting… please wait', 'info');
@@ -3812,21 +3934,7 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     safeText('settingsValQuality', stream ? (stream.quality || '1080p FHD') : '1080p FHD');
 
     // Populate In-Player Audio Popover List (Works inside Fullscreen!)
-    const inPlayerAudioList = document.getElementById('inPlayerAudioList');
-    if (inPlayerAudioList) {
-        if (dubsToUse && dubsToUse.length > 0) {
-            inPlayerAudioList.innerHTML = dubsToUse.map(d => {
-                const isSel = d.subject_id === currentPlayingSubjectId;
-                const name = d.lang_name || d.language || 'Audio Dub';
-                return `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerAudio('${d.subject_id}', '${escapeHtml(name)}')">
-                    <span>${escapeHtml(name)}</span>
-                    ${isSel ? '<span>✓</span>' : ''}
-                </button>`;
-            }).join('');
-        } else {
-            inPlayerAudioList.innerHTML = `<button class="popover-item active" onclick="selectInPlayerAudio('', 'Original Audio')"><span>Original Audio</span><span>✓</span></button>`;
-        }
-    }
+    renderInPlayerAudioPopover();
 
     // Populate In-Player Quality Popover List (Works inside Fullscreen!)
     const inPlayerQualityList = document.getElementById('inPlayerQualityList');
@@ -3874,10 +3982,12 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         }
     } else {
         if (subSyncGroup) subSyncGroup.style.display = 'none';
-        captionSelect.innerHTML = '<option value="">No Subtitles Available</option>';
+        captionSelect.innerHTML = '<option value="">Searching Subtitles…</option>';
         safeText('inPlayerCurrentSubText', 'Subtitles: Off');
         safeText('settingsValSubs', 'Off');
         renderSettingsSubsList([]);
+        // Auto-detect and fetch matching subtitles online seamlessly
+        autoDetectAndApplySubtitle();
     }
 
     // Populate In-Player Subtitles Popover List
@@ -4367,13 +4477,22 @@ async function autoDetectAndApplySubtitle(event) {
         activeCaptionList = [...newSubs, ...(activeCaptionList || [])];
 
         // Find best English subtitle or top rated
-        const best = newSubs.find(s => (s.code && s.code.toLowerCase() === 'en') || (s.language && s.language.toLowerCase().includes('english'))) || newSubs[0];
+        // Update select dropdown and in-player menu
+        const captionSelect = document.getElementById('playerCaptionSelect');
+        const subSyncGroup = document.getElementById('subSyncGroup');
+        if (subSyncGroup) subSyncGroup.style.display = 'flex';
+        if (captionSelect) {
+            captionSelect.innerHTML = '<option value="">Subtitles Off</option>' +
+                activeCaptionList.map(c => `<option value="${c.url}" ${best && c.url === best.url ? 'selected' : ''}>${escapeHtml(c.language || 'Unknown')}</option>`).join('');
+        }
 
         if (best) {
             changePlayerSubtitle(best.url);
-            showToast(`Auto-applied: ${best.language} (${newSubs.length} subtitles loaded)`, 'success');
+            refreshInPlayerSubMenu(best.url);
+            showToast(`Subtitles: ${best.language} (${newSubs.length} subtitles loaded)`, 'success');
         } else {
             renderSettingsSubsList(activeCaptionList);
+            refreshInPlayerSubMenu('');
             showToast(`Loaded ${newSubs.length} online subtitles`, 'success');
         }
     } catch (err) {
@@ -5272,7 +5391,10 @@ async function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0)
         // 1. Direct stream available — always prefer direct stream!
         if (activeStreamList.length > 0) {
             const playableStreams = activeStreamList.filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
-            const streamToPlay = playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0];
+            const streamToPlay = playableStreams.find(s => (s.quality === '1080p' || s.quality === '720p') && (!s.codec || s.codec.toLowerCase().includes('h264')))
+                || playableStreams.find(s => s.quality === '1080p')
+                || playableStreams.find(s => s.quality === '720p')
+                || (playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0]);
             currentSelectedServer = 'direct';
 
             _testedServersList = [{ id: 'direct', name: '⚡ S1 Direct (1080p Ultra HD)', status: 'healthy', latency_ms: 0, type: 'direct', stream_meta: streamToPlay }];

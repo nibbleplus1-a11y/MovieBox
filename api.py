@@ -1,9 +1,10 @@
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
+from datetime import date, datetime
 import asyncio
 import threading
 import base64
+import gzip
 import hashlib
 import hmac
 import json
@@ -14,7 +15,8 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 import urllib.parse
-from urllib.parse import urlsplit, urlparse
+import urllib.request
+from urllib.parse import urlsplit, urlparse, parse_qs, quote
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -247,7 +249,7 @@ class SimpleCache:
                 self.cache.pop(k, None)
 
 app_cache = SimpleCache()
-_bg_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="bg_imdb")
+_bg_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="bg_imdb")
 
 SECRET_KEY_DEFAULT_B64 = "NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw=="
 SECRET_KEY_ALT_B64 = "WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ=="
@@ -713,10 +715,38 @@ class MovieBoxEngine:
             # If we've already seen this movie/show with just an audio dub tag
             if canonical_key in seen_canonical:
                 existing = seen_canonical[canonical_key]
+                # Check if this item or existing item has an audio dub tag
+                lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
+                if lang_match:
+                    tag = (lang_match.group(1) or lang_match.group(2) or '').strip()
+                    if tag and tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']:
+                        is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', tag, re.I))
+                        label = f"{tag} - Audio Description" if is_ad and "description" not in tag.lower() else (f"{tag} Dub" if "dub" not in tag.lower() and not is_ad else tag)
+                        dub_obj = {"subject_id": sid_str, "lang_name": label, "language": tag}
+                        if "dubs" not in existing:
+                            existing["dubs"] = []
+                        if not any(d.get("subject_id") == sid_str for d in existing["dubs"]):
+                            existing["dubs"].append(dub_obj)
+                        app_cache.set(f"dub_parent:{sid_str}", existing["subject_id"], ttl=7200)
+
                 # If current has a cleaner title (no brackets), swap title
                 if "[" not in raw_title and "(" not in raw_title and ("[" in existing["title"] or "(" in existing["title"]):
+                    old_sid = existing["subject_id"]
+                    old_title = existing["title"]
                     existing["title"] = raw_title
-                    existing["subject_id"] = str(sub.get("subjectId"))
+                    existing["subject_id"] = sid_str
+                    # Old title had dub tag, add it to dubs
+                    old_match = re.search(r'\[(.*?)\]|\((.*?)\)', old_title)
+                    if old_match:
+                        old_tag = (old_match.group(1) or old_match.group(2) or '').strip()
+                        if old_tag and old_tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']:
+                            is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', old_tag, re.I))
+                            old_label = f"{old_tag} - Audio Description" if is_ad and "description" not in old_tag.lower() else (f"{old_tag} Dub" if "dub" not in old_tag.lower() and not is_ad else old_tag)
+                            if "dubs" not in existing:
+                                existing["dubs"] = []
+                            if not any(d.get("subject_id") == old_sid for d in existing["dubs"]):
+                                existing["dubs"].append({"subject_id": old_sid, "lang_name": old_label, "language": old_tag})
+                            app_cache.set(f"dub_parent:{old_sid}", sid_str, ttl=7200)
                 continue
 
             is_cs = False
@@ -734,6 +764,15 @@ class MovieBoxEngine:
                 if "encore" in query.lower() or "endgame" in query.lower() or "avengers" in query.lower():
                     disp_title = "Avengers: Endgame (Encore Edition)"
 
+            entry_dubs = []
+            init_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
+            if init_match:
+                init_tag = (init_match.group(1) or init_match.group(2) or '').strip()
+                if init_tag and init_tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']:
+                    is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', init_tag, re.I))
+                    init_label = f"{init_tag} - Audio Description" if is_ad and "description" not in init_tag.lower() else (f"{init_tag} Dub" if "dub" not in init_tag.lower() and not is_ad else init_tag)
+                    entry_dubs.append({"subject_id": sid_str, "lang_name": init_label, "language": init_tag})
+
             entry = {
                 "subject_id": sid_str,
                 "title": disp_title,
@@ -745,7 +784,8 @@ class MovieBoxEngine:
                 "genre": sub.get("genre"),
                 "cover": sub.get("cover", {}).get("url") if isinstance(sub.get("cover"), dict) else None,
                 "detail_path": sub.get("detailPath"),
-                "language": sub.get("language")
+                "language": sub.get("language"),
+                "dubs": entry_dubs
             }
             seen_canonical[canonical_key] = entry
             results.append(entry)
@@ -785,39 +825,43 @@ class MovieBoxEngine:
             if d.get("subject_id") and d["subject_id"] != main_id:
                 app_cache.set(f"dub_parent:{d['subject_id']}", main_id, ttl=7200)
 
-        # If this item itself is a dub with no child dubs, look up parent's dubs
+        # If no child dubs found in API response, find sibling dubs via parent link or clean title search
         if not dubs:
             parent_id = app_cache.get(f"dub_parent:{subject_id}")
-            if not parent_id:
-                # No cached parent — try to find the original by searching the clean title
-                raw_title = data.get("title") or ""
-                # Strip language/dub bracket tags like [Hindi], (English), [Tamil]
-                clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
-                if clean_title and clean_title.lower() != raw_title.lower():
-                    # This title had a dub tag — search for the clean version
-                    try:
-                        search_results = self.search(clean_title, page=1, per_page=10)
-                        rel_date = str(data.get("releaseDate") or "")[:4]
-                        subject_type = data.get("subjectType")
-                        for r in search_results:
-                            r_sid = str(r.get("subject_id") or "")
-                            if r_sid and r_sid != main_id:
-                                # Prefer same type and similar year
-                                r_year = str(r.get("release_date") or "")[:4]
-                                r_type = r.get("subject_type")
-                                if (not rel_date or not r_year or abs(int(rel_date or 0) - int(r_year or 0)) <= 1) and \
-                                   (not subject_type or not r_type or subject_type == r_type):
-                                    parent_id = r_sid
-                                    app_cache.set(f"dub_parent:{main_id}", parent_id, ttl=7200)
-                                    break
-                    except Exception:
-                        pass
+            raw_title = data.get("title") or ""
+            clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
+            
+            # Search for clean title to harvest all sibling dubs from search results
+            if clean_title:
+                try:
+                    search_results = self.search(clean_title, page=1, per_page=15)
+                    rel_date = str(data.get("releaseDate") or "")[:4]
+                    subject_type = data.get("subjectType")
+                    for r in search_results:
+                        r_sid = str(r.get("subject_id") or "")
+                        if not r_sid or r_sid == main_id:
+                            continue
+                        r_year = str(r.get("release_date") or "")[:4]
+                        r_type = r.get("subject_type")
+                        if (not rel_date or not r_year or abs(int(rel_date or 0) - int(r_year or 0)) <= 1) and \
+                           (not subject_type or not r_type or subject_type == r_type):
+                            # Sibling dubs found
+                            for d in r.get("dubs", []):
+                                if not any(existing_d.get("subject_id") == d.get("subject_id") for existing_d in dubs):
+                                    dubs.append(d)
+                            if not parent_id and ("[" not in r.get("title", "") and "(" not in r.get("title", "")):
+                                parent_id = r_sid
+                except Exception:
+                    pass
+
             if parent_id and parent_id != subject_id:
                 try:
                     p_details = self.get_details(parent_id)
-                    dubs = p_details.get("dubs", [])
-                    original_subject_id = parent_id  # The parent is the original
-                    # Cache this child → parent link
+                    p_dubs = p_details.get("dubs", [])
+                    for pd in p_dubs:
+                        if not any(d.get("subject_id") == pd.get("subject_id") for d in dubs):
+                            dubs.append(pd)
+                    original_subject_id = parent_id
                     app_cache.set(f"dub_parent:{main_id}", parent_id, ttl=7200)
                 except Exception:
                     pass
@@ -1172,8 +1216,8 @@ class MovieBoxEngine:
             s.get("size_mb", 0)
         ), reverse=True)
         if streams:
-            # Cache for 20 minutes (CDN signed URLs are valid ~20-30 minutes)
-            app_cache.set(cache_key, streams, ttl=1200)
+            # Cache for 5 minutes (prevents stale/expired CDN signed tokens causing playback buffering)
+            app_cache.set(cache_key, streams, ttl=300)
         return streams
 
     def get_curated_feed(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -1410,7 +1454,6 @@ class MovieBoxEngine:
                 sparse_tasks.append(("cartoons", kw))
 
         if sparse_tasks:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
             def _fetch_kw(category, kw):
                 try:
                     return category, kw, self.search(kw, per_page=8)
@@ -1634,8 +1677,8 @@ def get_stream_proxy_client() -> httpx.AsyncClient:
     return _STREAM_PROXY_CLIENT
 
 _WORKING_REFERERS: Dict[str, str] = {
-    "bcdnxw.hakunaymatata.com": "https://movieboxonline.net/",
-    "hakunaymatata.com": "https://movieboxonline.net/"
+    "bcdnxw.hakunaymatata.com": "https://movie-box.co/",
+    "hakunaymatata.com": "https://movie-box.co/"
 }
 
 # Cache of direct-accessible CDN URLs (tested in last 5 min)
@@ -1656,7 +1699,7 @@ async def resolve_stream_url(url: str = Query(...), referer: Optional[str] = Non
     if cached:
         return {"direct_url": cached, "referer": referer or _WORKING_REFERERS.get(url_domain, ""), "ok": True}
 
-    best_ref = referer or _WORKING_REFERERS.get(url_domain) or "https://movieboxonline.net/"
+    best_ref = referer or _WORKING_REFERERS.get(url_domain) or "https://movie-box.co/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": best_ref,
@@ -1696,9 +1739,9 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
         candidate_refs.append(referer)
 
     if "hakunaymatata.com" in url or "hakunaymatata.com" in url_domain:
-        candidate_refs.extend(["https://sflix.film/", "https://movieboxonline.net/", "https://movie-box.co/", "https://123moviesfree.club/", "https://moviebox.ph/"])
+        candidate_refs.extend(["https://movie-box.co/", "https://movieboxonline.net/", "https://sflix.film/", "https://123moviesfree.club/", "https://moviebox.ph/"])
     else:
-        candidate_refs.extend(["https://sflix.film/", "https://movieboxonline.net/", "https://movie-box.co/", "https://api3.aoneroom.com/"])
+        candidate_refs.extend(["https://movie-box.co/", "https://movieboxonline.net/", "https://sflix.film/", "https://api3.aoneroom.com/"])
 
     seen_refs = set()
     unique_refs = []
@@ -1763,7 +1806,6 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
     safe_fn = re.sub(r'[^a-zA-Z0-9_\-\. ]', '_', raw_fn).strip()
     if not safe_fn.lower().endswith(".mp4"):
         safe_fn += ".mp4"
-    from urllib.parse import quote
     encoded_fn = quote(safe_fn)
 
     if download:
@@ -1832,7 +1874,6 @@ async def proxy_online_caption(url: str = Query(...)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch online subtitle: {str(e)}")
 
-    import gzip
     try:
         content = gzip.decompress(raw_bytes).decode("utf-8", errors="replace")
     except Exception:
@@ -1850,7 +1891,6 @@ def _unwrap_proxy_url(cover: str) -> str:
         if cover.startswith("/api/image?url=") or cover.startswith("/api/proxy/image?url="):
             # Extract the url= query param value
             try:
-                from urllib.parse import urlparse, parse_qs
                 parsed = urlparse(cover if cover.startswith("http") else f"http://x{cover}")
                 url_param = parse_qs(parsed.query).get("url", [None])[0]
                 if url_param:
@@ -1860,7 +1900,6 @@ def _unwrap_proxy_url(cover: str) -> str:
                 break
         elif "movieverse.click/api/image?url=" in cover or "movieverse.click/api/proxy/image?url=" in cover:
             try:
-                from urllib.parse import urlparse, parse_qs
                 parsed = urlparse(cover)
                 url_param = parse_qs(parsed.query).get("url", [None])[0]
                 if url_param:
@@ -1944,6 +1983,49 @@ async def proxy_image(url: str = Query(...)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Image proxy error: {str(e)}")
 
+def _search_cinemeta_fallback(query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    clean_q = re.sub(r'\[.*?\]|\(.*?\)', '', query).strip()
+    if not clean_q or len(clean_q) < 2:
+        return []
+    results = []
+    seen_ids = set()
+    encoded = urllib.parse.quote(clean_q)
+    for cat in ("series", "movie"):
+        try:
+            url = f"https://v3-cinemeta.strem.io/catalog/{cat}/top/search={encoded}.json"
+            r = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            if r.status_code == 200:
+                metas = r.json().get("metas", []) or []
+                for m in metas:
+                    mid = m.get("id") or m.get("imdb_id")
+                    if not mid or mid in seen_ids:
+                        continue
+                    seen_ids.add(mid)
+                    m_type = "TV Series" if (cat == "series" or m.get("type") == "series") else "Movie"
+                    m_subj_type = 2 if m_type == "TV Series" else 1
+                    y = str(m.get("year") or m.get("releaseInfo") or "")[:4]
+                    g = m.get("genres", [])
+                    g_str = ", ".join(g) if isinstance(g, list) else str(m.get("genre", "") or "")
+                    results.append({
+                        "subject_id": str(mid),
+                        "title": m.get("name") or clean_q,
+                        "type": m_type,
+                        "subject_type": m_subj_type,
+                        "release_date": y,
+                        "coming_soon": False,
+                        "imdb_rating": str(m.get("imdbRating") or ""),
+                        "genre": g_str,
+                        "cover": normalize_cover(m.get("poster")),
+                        "detail_path": None,
+                        "language": "English",
+                        "imdb_id": str(mid)
+                    })
+                    if len(results) >= limit:
+                        return results
+        except Exception:
+            pass
+    return results
+
 @app.get("/search")
 def search(q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20):
     if is_adult_query(q):
@@ -1954,16 +2036,24 @@ def search(q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20)
         for r in results:
             if r.get("cover"):
                 r["cover"] = normalize_cover(r["cover"])
+        if not results:
+            results = _search_cinemeta_fallback(q, safe_per_page)
         return {"query": q, "page": page, "results": results}
     except Exception:
-        return {"query": q, "page": page, "results": []}
+        results = _search_cinemeta_fallback(q, safe_per_page)
+        return {"query": q, "page": page, "results": results}
 
 @app.get("/search/suggest")
 def search_suggest(q: str = Query(..., min_length=1)):
     if is_adult_query(q):
         return {"suggestions": []}
     # Return real subject search matches with genuine posters, types, and valid subject IDs
-    real_results = engine.search(q, per_page=8)
+    try:
+        real_results = engine.search(q, per_page=8)
+    except Exception:
+        real_results = []
+    if not real_results:
+        real_results = _search_cinemeta_fallback(q, 8)
     suggestions = []
     seen_ids = set()
     for item in real_results:
@@ -2009,6 +2099,42 @@ def get_detail(subject_id: str, title: Optional[str] = Query(None), _bust: Optio
     except Exception as e:
         print(f"[get_detail] upstream failed for {subject_id}: {e}")
         res = None
+
+    if not res or not res.get("title"):
+        if subject_id.startswith("tt"):
+            for cat in ("movie", "series"):
+                try:
+                    c_url = f"https://v3-cinemeta.strem.io/meta/{cat}/{subject_id}.json"
+                    c_resp = httpx.get(c_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                    if c_resp.status_code == 200:
+                        c_meta = c_resp.json().get("meta", {})
+                        if c_meta and c_meta.get("name"):
+                            m_is_ser = (cat == "series" or c_meta.get("type") == "series")
+                            c_genres = c_meta.get("genres", [])
+                            res = {
+                                "subject_id": subject_id,
+                                "original_subject_id": subject_id,
+                                "imdb_id": subject_id,
+                                "title": c_meta.get("name"),
+                                "subject_type": 2 if m_is_ser else 1,
+                                "type": "TV Series" if m_is_ser else "Movie",
+                                "description": c_meta.get("description") or f"Watch {c_meta.get('name')} in HD online streaming.",
+                                "release_date": str(c_meta.get("year") or c_meta.get("releaseInfo") or "2026")[:4],
+                                "coming_soon": False,
+                                "duration": c_meta.get("runtime", "2h"),
+                                "duration_formatted": c_meta.get("runtime", "2h"),
+                                "imdb_rating": str(c_meta.get("imdbRating") or "7.5"),
+                                "genre": ", ".join(c_genres) if isinstance(c_genres, list) else str(c_meta.get("genre", "Drama")),
+                                "cover": normalize_cover(c_meta.get("poster")),
+                                "backdrop": normalize_cover(c_meta.get("background") or c_meta.get("poster")),
+                                "detail_path": None,
+                                "dubs": [],
+                                "seasons": []
+                            }
+                            app_cache.set(f"details:{subject_id}", res, ttl=86400)
+                            break
+                except Exception:
+                    pass
 
     if not res or not res.get("title"):
         # Graceful fallback to feed card cache or client-provided title
@@ -3302,16 +3428,25 @@ def get_home():
     cached = app_cache.get(cache_key)
     if cached:
         return cached
-    url = f"{API_BASE}/home?host=moviebox.ph"
-    try:
-        resp = engine.session.get(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://moviebox.ph/"}, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            app_cache.set(cache_key, data, ttl=300)
-            return data
-        return {"data": {}, "status": "error", "code": resp.status_code}
-    except Exception as e:
-        return {"data": {}, "status": "error", "message": str(e)}
+    # Try multiple known web hosts in order of reliability
+    host_pairs = [
+        ("movieboxhd.net", "https://movieboxhd.net/"),
+        ("movieboxonline.net", "https://movieboxonline.net/"),
+        ("sflix.film", "https://sflix.film/"),
+        ("movie-box.co", "https://movie-box.co/"),
+    ]
+    for host, referer in host_pairs:
+        try:
+            url = f"{API_BASE}/home?host={host}"
+            resp = engine.session.get(url, headers={"User-Agent": WEB_USER_AGENT, "Referer": referer}, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("data"):
+                    app_cache.set(cache_key, data, ttl=300)
+                    return data
+        except Exception:
+            continue
+    return {"data": {}, "status": "error", "message": "All upstream home endpoints failed"}
 
 @app.get("/api/ads/config")
 def get_ads_config():
