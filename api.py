@@ -372,6 +372,9 @@ def build_auth_headers(method: str, url: str, body: str | None = None, token: st
         "x-tr-signature": generate_x_tr_signature(method, accept, content_type, url, body, ts, use_alt_key),
         "x-client-info": generate_client_info(dev_id),
         "x-client-status": "0",
+        "x-forwarded-for": "154.208.51.69",
+        "x-real-ip": "154.208.51.69",
+        "client-ip": "154.208.51.69",
     }
     if token:
         headers["authorization"] = f"Bearer {token}"
@@ -776,7 +779,7 @@ class MovieBoxEngine:
         ]
         
         # Cache parent mapping for each child dub
-        main_id = str(data.get("subjectId"))
+        main_id = str(data.get("subjectId") or subject_id or "")
         original_subject_id = main_id  # Will be updated if this item is itself a dub
         for d in dubs:
             if d.get("subject_id") and d["subject_id"] != main_id:
@@ -897,12 +900,14 @@ class MovieBoxEngine:
             "trailer_url": trailer_url,
             "detail_path": detail_path,
             "dubs": dubs,
-            "seasons": self.get_episodes(main_id) if data.get("subjectType") != 1 else []
+            "seasons": self.get_episodes(main_id) if (data.get("subjectType") and data.get("subjectType") != 1 and main_id and main_id != "None") else []
         }
         app_cache.set(cache_key, res, ttl=1800)
         return res
 
     def get_episodes(self, subject_id: str) -> List[Dict[str, Any]]:
+        if not subject_id or subject_id == "None":
+            return []
         cache_key = f"episodes:{subject_id}"
         cached = app_cache.get(cache_key)
         if cached is not None:
@@ -2486,7 +2491,7 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
             if is_ser and se == 0 and ep == 0:
                 local_se, local_ep = 1, 1
                 try:
-                    s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path))
+                    s1_streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=1, episode=1, detail_path=detail_path, client_ip=client_ip))
                     if s1_streams:
                         streams = s1_streams
                 except Exception:
