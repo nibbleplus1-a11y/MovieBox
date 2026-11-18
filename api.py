@@ -2778,14 +2778,25 @@ async def get_journal(secret: Optional[str] = Query(None), lines: int = 60):
 
 
 @app.get("/api/admin/debug-upstream")
-def debug_upstream(secret: Optional[str] = Query(None)):
+def debug_upstream(
+    request: Request,
+    secret: Optional[str] = Query(None),
+    subject_id: Optional[str] = Query(None),
+    detail_path: Optional[str] = Query(None),
+):
     expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
     if not secret or not secrets.compare_digest(secret, expected):
         raise HTTPException(status_code=403, detail="Unauthorized")
     
     diag = {}
-    sid = "5196212192642848184"
-    dpath = "premada-oorali-hindi-8u7eMAPHQb6"
+    sid = subject_id or "5196212192642848184"
+    dpath = detail_path or "premada-oorali-hindi-8u7eMAPHQb6"
+    client_ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for") or (request.client.host if request.client else "154.208.51.69")
+    if "," in client_ip:
+        client_ip = client_ip.split(",")[0].strip()
+    diag["client_ip"] = client_ip
+    diag["sid"] = sid
+    diag["dpath"] = dpath
     
     # 1. Test token
     try:
@@ -2804,9 +2815,10 @@ def debug_upstream(secret: Optional[str] = Query(None)):
     except Exception as se:
         diag["get_streams_error"] = str(se)
 
-    # 3. Test direct web domains using engine.session (httpx) WITH token
+    # 3. Test direct web domains using engine.session (httpx) WITH token, WITHOUT token, and WITH X-Forwarded-For
     web_httpx = {}
     web_httpx_notoken = {}
+    web_httpx_xff = {}
     domains = [
         "https://123moviesfree.club",
         "https://movie-box.co",
@@ -2841,6 +2853,22 @@ def debug_upstream(secret: Optional[str] = Query(None)):
         except Exception as e0:
             web_httpx_notoken[dom] = {"error": str(e0)}
 
+        # Test with X-Forwarded-For (client residential IP)
+        headers_xff = dict(headers_notok)
+        headers_xff["X-Forwarded-For"] = client_ip
+        headers_xff["X-Real-IP"] = client_ip
+        try:
+            r_xff = engine.session.get(play_url, headers=headers_xff, timeout=5)
+            data_xff = r_xff.json() if r_xff.status_code == 200 else {}
+            st_xff = (data_xff.get("data") or {}).get("streams", [])
+            web_httpx_xff[dom] = {
+                "status": r_xff.status_code,
+                "streams": len(st_xff),
+                "body_preview": r_xff.text[:150]
+            }
+        except Exception as e_xff:
+            web_httpx_xff[dom] = {"error": str(e_xff)}
+
         headers = dict(headers_notok)
         if t:
             headers["Authorization"] = f"Bearer {t}"
@@ -2860,6 +2888,7 @@ def debug_upstream(secret: Optional[str] = Query(None)):
             web_httpx[dom] = {"error": str(he), "elapsed": round(time.time() - t0, 3)}
     diag["web_httpx"] = web_httpx
     diag["web_httpx_notoken"] = web_httpx_notoken
+    diag["web_httpx_xff"] = web_httpx_xff
 
     # 4. Test with curl_cffi if available
     if cr:
