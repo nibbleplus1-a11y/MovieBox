@@ -477,14 +477,6 @@ export function usePlayerState() {
         if (cleanTrack) {
           setActiveAudioTrackIndex(cleanTrack.id);
           sendVideoCommand(`if(window.setAudioTrack) window.setAudioTrack(${cleanTrack.id});`);
-        } else if (!useIframe && fallbackServers.length > 0) {
-          // Switch to clean cloud server with dialogue-only soundtrack
-          const cleanSrv = fallbackServers[0];
-          setSelectedServer(cleanSrv.id);
-          setIframeServerName(cleanSrv.name || cleanSrv.id);
-          setUseIframe(true);
-          setStreamUrl(cleanSrv.url);
-          setIsPlaying(true);
         }
       } else {
         // User wants to ENABLE Audio Description:

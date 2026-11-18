@@ -1737,35 +1737,28 @@ function initPlyr() {
             }
         }
 
-        // Auto-switch to backup servers if direct fails or stalls
-        if (activeFallbackServers && activeFallbackServers.length > 0) {
-            let nextServer = null;
-            if (currentSelectedServer === 'direct') {
-                nextServer = activeFallbackServers[0];
-            } else {
-                const curIdx = activeFallbackServers.findIndex(s => s.id === currentSelectedServer);
-                if (curIdx >= 0 && curIdx + 1 < activeFallbackServers.length) {
-                    nextServer = activeFallbackServers[curIdx + 1];
-                }
-            }
-            if (nextServer) {
+        // If on an iframe server and it fails, cycle to next iframe server
+        if (currentSelectedServer !== 'direct' && activeFallbackServers && activeFallbackServers.length > 0) {
+            const curIdx = activeFallbackServers.findIndex(s => s.id === currentSelectedServer);
+            if (curIdx >= 0 && curIdx + 1 < activeFallbackServers.length) {
+                const nextServer = activeFallbackServers[curIdx + 1];
                 const srvName = nextServer.name.split('(')[1]?.replace(')', '') || nextServer.name;
-                showToast(`Auto-switching to ${srvName}…`, 'info');
+                showToast(`Switching to ${srvName}…`, 'info');
                 changePlayerServer(nextServer.id);
                 return;
             }
         }
 
-        // Alternative MP4 streams fallback
+        // S1 Direct fallback: try alternative MP4 resolution
         const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd') && s.url !== currentPlayingStream?.url);
         if (playableStreams.length > 0) {
             const altStream = playableStreams[0];
-            showToast(`Auto-switching to mirror (${altStream.quality || 'Alt'})…`, 'warning');
+            showToast(`S1 Direct: Switching to ${altStream.quality || 'Alt'} quality…`, 'info');
             setTimeout(() => changePlayerQuality(encodeURIComponent(JSON.stringify(altStream))), 350);
             return;
         }
 
-        // All options exhausted — re-fetch fresh streams from API with cache-bust
+        // Re-fetch fresh streams for S1 Direct with cache-bust
         try {
             const freshData = await fetch(`/api/stream/${currentPlayingSubjectId}?se=${currentSeason}&ep=${currentEpisode}&_bust=${Date.now()}`).then(r => r.json());
             if (freshData.fallback_servers && freshData.fallback_servers.length > 0) {
@@ -1780,15 +1773,21 @@ function initPlyr() {
                 showToast('Fresh stream URLs loaded.', 'success');
                 return;
             }
-            if (activeFallbackServers && activeFallbackServers.length > 0) {
-                changePlayerServer(activeFallbackServers[0].id);
-                return;
-            }
         } catch {}
-        showToast('All streaming options exhausted. Please select another server from the top bar.', 'error');
+        showToast('Stream buffer interrupted. Click a backup server or reload to continue.', 'warning');
     };
 
     video.addEventListener('error', () => {
+        if (currentSelectedServer === 'direct' && currentPlayingStream) {
+            const proxyUrl = getProxyStreamUrl(currentPlayingStream);
+            if (video.src !== proxyUrl) {
+                console.log('[MovieVerse] Direct CDN error, switching to proxy stream');
+                video.src = proxyUrl;
+                video.load();
+                video.play().catch(() => {});
+                return;
+            }
+        }
         window.triggerAutoStreamFallback('error');
     });
 
@@ -2067,14 +2066,15 @@ function renderInPlayerServerDropdown() {
     dd.innerHTML = servers.map(s => {
         const isActive = s.id === currentSelectedServer;
         const isDirect = s.id === 'direct';
-        const icon = isDirect ? '⚡' : '☁';
-        const label = s.name.replace('Server ', 'S').replace(' (Direct 1080p)', ' Direct').replace(' (', ' – ').replace(')', '');
+        const label = isDirect
+            ? '⚡ S1 Direct (1080p Ultra HD)'
+            : '☁ ' + s.name.replace('Server ', 'S').replace(' (', ' – ').replace(')', '');
         const statusDot = s.status === 'healthy'
             ? '<span style="color:#22c55e;font-size:10px;">●</span>'
             : s.status === 'failed'
             ? '<span style="color:#ef4444;font-size:10px;">●</span>'
             : '<span style="color:#f59e0b;font-size:10px;">●</span>';
-        return `<button class="server-opt-btn${isActive ? ' active' : ''}" onclick="toggleInPlayerServerDropdown(null); changePlayerServer('${s.id}')">${statusDot} ${icon} ${label}${isActive ? ' ✓' : ''}</button>`;
+        return `<button class="server-opt-btn${isActive ? ' active' : ''}" onclick="toggleInPlayerServerDropdown(null); changePlayerServer('${s.id}')">${statusDot} ${label}${isActive ? ' ✓' : ''}</button>`;
     }).join('');
 }
 
@@ -3126,14 +3126,8 @@ window.toggleAudioDescription = function() {
     window._isAdAudioEnabled = !window._isAdAudioEnabled;
     if (!window._isAdAudioEnabled) {
         showToast('Audio Description Disabled: Clean Audio', 'info');
-        if (currentSelectedServer === 'direct' && activeFallbackServers && activeFallbackServers.length > 0) {
-            changePlayerServer(activeFallbackServers[0].id);
-        }
     } else {
         showToast('Audio Description Enabled', 'info');
-        if (currentSelectedServer !== 'direct') {
-            changePlayerServer('direct');
-        }
     }
     renderSettingsAudioList(activeDubsList);
 };

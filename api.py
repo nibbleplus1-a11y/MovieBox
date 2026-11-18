@@ -2142,31 +2142,31 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
         e = max(1, episode)
         return [
             {
-                "name": "Server 1 (VidSrc HD)",
+                "name": "Server 2 (VidSrc HD)",
                 "id": "vidsrcto",
                 "type": "iframe",
                 "url": f"https://vidsrc.to/embed/tv/{clean_id}/{s}/{e}",
             },
             {
-                "name": "Server 2 (AutoEmbed Fast)",
+                "name": "Server 3 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
             },
             {
-                "name": "Server 3 (MultiEmbed Global)",
+                "name": "Server 4 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
             },
             {
-                "name": "Server 4 (2Embed Cinema)",
+                "name": "Server 5 (2Embed Cinema)",
                 "id": "twoembed",
                 "type": "iframe",
                 "url": f"https://www.2embed.cc/embedtv/{clean_id}&s={s}&e={e}",
             },
             {
-                "name": "Server 5 (VidLink Pro)",
+                "name": "Server 6 (VidLink Pro)",
                 "id": "vidlink",
                 "type": "iframe",
                 "url": f"https://vidlink.pro/tv/{clean_id}/{s}/{e}",
@@ -2175,31 +2175,31 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
     else:
         return [
             {
-                "name": "Server 1 (VidSrc HD)",
+                "name": "Server 2 (VidSrc HD)",
                 "id": "vidsrcto",
                 "type": "iframe",
                 "url": f"https://vidsrc.to/embed/movie/{clean_id}",
             },
             {
-                "name": "Server 2 (AutoEmbed Fast)",
+                "name": "Server 3 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/movie/imdb/{clean_id}",
             },
             {
-                "name": "Server 3 (MultiEmbed Global)",
+                "name": "Server 4 (MultiEmbed Global)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}",
             },
             {
-                "name": "Server 4 (2Embed Cinema)",
+                "name": "Server 5 (2Embed Cinema)",
                 "id": "twoembed",
                 "type": "iframe",
                 "url": f"https://www.2embed.cc/embed/{clean_id}",
             },
             {
-                "name": "Server 5 (VidLink Pro)",
+                "name": "Server 6 (VidLink Pro)",
                 "id": "vidlink",
                 "type": "iframe",
                 "url": f"https://vidlink.pro/movie/{clean_id}",
