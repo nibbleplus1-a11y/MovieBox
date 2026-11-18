@@ -902,7 +902,8 @@ class MovieBoxEngine:
             "dubs": dubs,
             "seasons": self.get_episodes(main_id) if (data.get("subjectType") and data.get("subjectType") != 1 and main_id and main_id != "None") else []
         }
-        app_cache.set(cache_key, res, ttl=1800)
+        if res.get("title"):
+            app_cache.set(cache_key, res, ttl=1800)
         return res
 
     def get_episodes(self, subject_id: str) -> List[Dict[str, Any]]:
@@ -1998,9 +1999,11 @@ def _format_runtime(dur_val: Any) -> Optional[str]:
 
 @app.get("/detail/{subject_id}")
 @app.get("/api/detail/{subject_id}")
-def get_detail(subject_id: str, title: Optional[str] = Query(None)):
+def get_detail(subject_id: str, title: Optional[str] = Query(None), _bust: Optional[str] = Query(None)):
     if not subject_id or subject_id == "None":
         raise HTTPException(status_code=400, detail="Invalid subject ID")
+    if _bust:
+        app_cache.delete(f"details:{subject_id}")
     try:
         res = engine.get_details(subject_id)
     except Exception as e:
