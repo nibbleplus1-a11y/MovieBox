@@ -2846,6 +2846,13 @@ def debug_upstream(
     except Exception as de:
         diag["get_details_error"] = str(de)
 
+    # 2.6 Test search
+    try:
+        s_res = engine.search("Avatar")
+        diag["search_avatar"] = [{"id": s.get("subject_id"), "title": s.get("title")} for s in s_res[:3]]
+    except Exception as s_err:
+        diag["search_error"] = str(s_err)
+
     # 3. Test direct web domains using engine.session (httpx) WITH token, WITHOUT token, and WITH X-Forwarded-For
     web_httpx = {}
     web_httpx_notoken = {}
