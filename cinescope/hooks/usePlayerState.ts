@@ -510,34 +510,24 @@ export function usePlayerState() {
 
   const switchServer = (serverId: string) => {
     if (serverId === 'direct') {
+      setSelectedServer('direct');
+      setUseIframe(false);
+      setIframeServerName('');
       if (activeStream) {
-        setSelectedServer('direct');
-        setUseIframe(false);
-        setIframeServerName('');
-        const ref = activeStream.headers?.Referer || 'https://movieboxonline.net/';
+        const ref = activeStream.headers?.Referer || 'https://sflix.film/';
         setStreamReferer(ref);
         setStreamUrl(activeStream.url);
         setIsPlaying(true);
       } else if (playableStreams && playableStreams.length > 0) {
         const first = playableStreams[0];
         setActiveStream(first);
-        setSelectedServer('direct');
-        setUseIframe(false);
-        setIframeServerName('');
-        const ref = first.headers?.Referer || 'https://movieboxonline.net/';
+        const ref = first.headers?.Referer || 'https://sflix.film/';
         setStreamReferer(ref);
         setStreamUrl(first.url);
         setIsPlaying(true);
       } else {
-        // Fall back to Server 1 from Cloud Servers (e.g. Game of Thrones)
-        const fallback = streamData?.fallback_servers?.[0];
-        if (fallback) {
-          setSelectedServer(fallback.id);
-          setIframeServerName(fallback.name || fallback.id);
-          setUseIframe(true);
-          setStreamUrl(fallback.url);
-          setIsPlaying(true);
-        }
+        // Re-resolve S1 Direct stream natively
+        loadStreams(currentId, currentSeason, currentEpisode);
       }
     } else {
       const srv = streamData?.fallback_servers?.find(s => s.id === serverId);

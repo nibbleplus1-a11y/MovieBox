@@ -2905,7 +2905,7 @@ async function quickPlay(subjectId, title, startTime = 0) {
             currentSelectedServer = 'direct';
 
             if (chipsWrap) chipsWrap.innerHTML = `<span class="probe-chip healthy"><span class="chip-dot"></span>Direct ${bestStream.quality || '1080p'} ✓</span>`;
-            _testedServersList = [{ id: 'direct', name: 'Server 1 (Direct 1080p)', status: 'healthy', latency_ms: 0, type: 'direct', stream_meta: bestStream }];
+            _testedServersList = [{ id: 'direct', name: '⚡ S1 Direct (1080p Ultra HD)', status: 'healthy', latency_ms: 0, type: 'direct', stream_meta: bestStream }];
             renderSettingsServerList(_testedServersList, 'direct');
 
             playInCinemaModal(encodeURIComponent(JSON.stringify(bestStream)), startTime);
@@ -5281,7 +5281,7 @@ async function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0)
             const streamToPlay = playableStreams.length > 0 ? playableStreams[0] : activeStreamList[0];
             currentSelectedServer = 'direct';
 
-            _testedServersList = [{ id: 'direct', name: 'Server 1 (Direct 1080p)', status: 'healthy', latency_ms: 0, type: 'direct', stream_meta: streamToPlay }];
+            _testedServersList = [{ id: 'direct', name: '⚡ S1 Direct (1080p Ultra HD)', status: 'healthy', latency_ms: 0, type: 'direct', stream_meta: streamToPlay }];
             renderSettingsServerList(_testedServersList, 'direct');
 
             playInCinemaModal(encodeURIComponent(JSON.stringify(streamToPlay)), seekTime);

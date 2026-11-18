@@ -370,10 +370,10 @@ export const PlayerBottomSheet: React.FC<PlayerBottomSheetProps> = ({
                           !useIframe && styles.sheetRowTextSelected,
                         ]}
                       >
-                        Server 1 (Primary Direct / Cloud HD)
+                        ⚡ S1 Direct (1080p Ultra HD)
                       </Text>
                       <Text style={[styles.sheetRowSub, { color: '#10b981' }]}>
-                        {playableStreams.length > 0 ? 'Fastest · Native Ultra HD' : 'Direct Stream (if available)'}
+                        Native Player · Direct CDN · Fast
                       </Text>
                     </View>
                     {!useIframe && (
