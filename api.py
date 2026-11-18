@@ -2848,8 +2848,10 @@ def debug_upstream(
 
     # 2.6 Test search
     try:
-        s_res = engine.search("Avatar")
-        diag["search_avatar"] = [{"id": s.get("subject_id"), "title": s.get("title")} for s in s_res[:3]]
+        raw_s = engine.api_request("POST", "/wefeed-mobile-bff/subject-api/search", body_dict={"keyword": "Avatar", "page": 1, "perPage": 10})
+        diag["raw_search_code"] = raw_s.get("code")
+        diag["raw_search_msg"] = raw_s.get("message")
+        diag["raw_search_items_len"] = len((raw_s.get("data") or {}).get("items") or [])
     except Exception as s_err:
         diag["search_error"] = str(s_err)
 
