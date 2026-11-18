@@ -2663,22 +2663,35 @@ async function _loadFallbackServersInBackground(subjectId, title, year, isSeries
 async function clientResolveDirectStreams(subjectId, season = 0, episode = 0, detailPath = '', token = '') {
     if (!subjectId) return [];
 
-    let authToken = token;
-    if (!authToken) {
-        try {
-            const tRes = await fetch('/api/token').then(r => r.json());
-            if (tRes && tRes.token) authToken = tRes.token;
-        } catch {}
-    }
-
+    // Prioritize domains with proven full-CORS (Access-Control-Allow-Origin: *) support
     const candidateDomains = [
-        'https://123moviesfree.club',
-        'https://movie-box.co',
+        'https://sflix.film',
         'https://movieboxonline.net',
-        'https://h5-api.aoneroom.com'
+        'https://movie-box.co',
+        'https://h5-api.aoneroom.com',
+        'https://123moviesfree.club'
     ];
 
-    const dPath = detailPath || (activeMediaMeta && activeMediaMeta.detail_path) || '';
+    let dPath = detailPath || (activeMediaMeta && activeMediaMeta.detail_path) || '';
+    if (!dPath) {
+        // Try to read detail_path from DOM card if available
+        const cardEl = document.getElementById('card-' + subjectId);
+        if (cardEl && cardEl.dataset && cardEl.dataset.detailPath) {
+            dPath = cardEl.dataset.detailPath;
+        }
+    }
+    if (!dPath && activeMediaMeta && activeMediaMeta.title) {
+        // Quick 1-item search to discover detail_path in under 150ms
+        try {
+            const cleanT = activeMediaMeta.title.replace(/\[.*?\]|\(.*?\)/g, '').trim();
+            const sRes = await fetch(`/search?q=${encodeURIComponent(cleanT)}&per_page=1`).then(r => r.json());
+            const first = (sRes.results || [])[0];
+            if (first && first.detail_path) {
+                dPath = first.detail_path;
+                if (activeMediaMeta) activeMediaMeta.detail_path = dPath;
+            }
+        } catch {}
+    }
 
     for (const domain of candidateDomains) {
         try {
@@ -2689,7 +2702,6 @@ async function clientResolveDirectStreams(subjectId, season = 0, episode = 0, de
                 'x-request-lang': 'en',
                 'x-source': 'moviebox'
             };
-            if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 4500);
@@ -2720,7 +2732,7 @@ async function clientResolveDirectStreams(subjectId, season = 0, episode = 0, de
                             size_mb: st.size ? Math.round(st.size / (1024 * 1024)) : 0,
                             codec: st.codecName || 'h264',
                             headers: {
-                                Referer: 'https://movieboxonline.net/',
+                                Referer: `${domain}/`,
                                 Origin: domain
                             }
                         });

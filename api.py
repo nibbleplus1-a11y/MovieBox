@@ -265,11 +265,11 @@ BOOTSTRAP_HOST = "https://apig.inmoviebox.com"
 BOOTSTRAP_URL = f"{BOOTSTRAP_HOST}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
 
 WEB_DOMAINS = [
-    "https://123moviesfree.club",
-    "https://movie-box.co",
-    "https://movieboxonline.net",
     "https://sflix.film",
+    "https://movieboxonline.net",
+    "https://movie-box.co",
     "https://h5-api.aoneroom.com",
+    "https://123moviesfree.club",
     "https://netnaija.film",
     "https://movieboxhd.net",
 ]
@@ -961,7 +961,12 @@ class MovieBoxEngine:
                 return []
             web_streams = []
             try:
-                token = self.bootstrap_token()
+                token = ""
+                try:
+                    token = self.bootstrap_token()
+                except Exception:
+                    token = ""
+
                 def _fetch_domain(domain: str):
                     play_url = (
                         f"{domain}/wefeed-h5api-bff/subject/play?"
@@ -976,12 +981,21 @@ class MovieBoxEngine:
                         "x-client-info": '{"timezone":"Asia/Calcutta"}',
                         "x-request-lang": "en",
                         "x-source": "moviebox",
-                        "Authorization": f"Bearer {token}",
                     }
                     try:
-                        r = self.session.get(play_url, headers=headers, timeout=4)
+                        # Attempt 1: Without token (bypasses IP-bound token 406 rejections)
+                        r = self.session.get(play_url, headers=headers, timeout=5)
                         if r.status_code == 200:
-                            return domain, r.json().get("data", {})
+                            data = r.json().get("data", {})
+                            if (data.get("streams") or data.get("dash")):
+                                return domain, data
+                        # Attempt 2: With token if attempt 1 returned no streams
+                        if token:
+                            headers_auth = dict(headers)
+                            headers_auth["Authorization"] = f"Bearer {token}"
+                            r2 = self.session.get(play_url, headers=headers_auth, timeout=5)
+                            if r2.status_code == 200:
+                                return domain, r2.json().get("data", {})
                     except Exception:
                         pass
                     return domain, None
@@ -1670,9 +1684,9 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
         candidate_refs.append(referer)
 
     if "hakunaymatata.com" in url or "hakunaymatata.com" in url_domain:
-        candidate_refs.extend(["https://movieboxonline.net/", "https://123moviesfree.club/", "https://movie-box.co/", "https://moviebox.ph/"])
+        candidate_refs.extend(["https://sflix.film/", "https://movieboxonline.net/", "https://movie-box.co/", "https://123moviesfree.club/", "https://moviebox.ph/"])
     else:
-        candidate_refs.extend(["https://movieboxonline.net/", "https://movie-box.co/", "https://api3.aoneroom.com/"])
+        candidate_refs.extend(["https://sflix.film/", "https://movieboxonline.net/", "https://movie-box.co/", "https://api3.aoneroom.com/"])
 
     seen_refs = set()
     unique_refs = []

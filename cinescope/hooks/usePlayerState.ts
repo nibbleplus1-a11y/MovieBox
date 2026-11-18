@@ -238,7 +238,58 @@ export function usePlayerState() {
       if (loadTokenRef.current !== token) return; // stale — discard
       setStreamData(data);
 
-      const playable = (data.streams || []).filter(isPlayableStream);
+      let playable = (data.streams || []).filter(isPlayableStream);
+      if (playable.length === 0) {
+        // Direct stream resolution from web CDN (bypasses datacenter VPS block on phone)
+        const dPath = detailPath || data.detail_path || '';
+        const clientCandidateDomains = ['https://sflix.film', 'https://movieboxonline.net', 'https://movie-box.co'];
+        for (const dom of clientCandidateDomains) {
+          try {
+            const playUrl = `${dom}/wefeed-h5api-bff/subject/play?subjectId=${subjectId}&se=${se}&ep=${ep}&detailPath=${encodeURIComponent(dPath)}&streamSignType=1&supportCodecs[hevc]=1&supportCodecs[h264]=1`;
+            const cRes = await fetch(playUrl, {
+              headers: {
+                'Accept': 'application/json',
+                'x-client-info': '{"timezone":"Asia/Calcutta"}',
+                'x-request-lang': 'en',
+                'x-source': 'moviebox'
+              }
+            });
+            if (cRes.ok) {
+              const cJson = await cRes.json();
+              const cRaw = cJson.data?.streams || [];
+              if (cRaw.length > 0) {
+                const cParsed: StreamSource[] = [];
+                for (const st of cRaw) {
+                  if (!st.url) continue;
+                  const resStr = String(st.resolutions || '1080');
+                  let qVal = 0;
+                  for (const q of [2160, 1440, 1080, 720, 480, 360]) {
+                    if (resStr.includes(String(q))) { qVal = q; break; }
+                  }
+                  cParsed.push({
+                    source: `Web CDN (${dom.replace('https://', '')})`,
+                    format: st.format || 'MP4',
+                    quality: `${qVal || 1080}p`,
+                    quality_value: qVal || 1080,
+                    resolution_tag: `${qVal || 1080}p`,
+                    url: st.url,
+                    size_mb: st.size ? Math.round(st.size / (1024 * 1024)) : 0,
+                    codec: st.codecName || 'h264',
+                    headers: { Referer: `${dom}/` }
+                  });
+                }
+                if (cParsed.length > 0) {
+                  cParsed.sort((a, b) => (b.quality_value || 0) - (a.quality_value || 0));
+                  data.streams = cParsed;
+                  playable = cParsed;
+                  break;
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+
       if (playable.length > 0) {
         // High quality first (1080p -> 720p -> 480p)
         const best = playable[0];
@@ -246,8 +297,8 @@ export function usePlayerState() {
         setSelectedServer('direct');
         setUseIframe(false);
         setIframeServerName('');
-        const rawRef = best.headers?.Referer || 'https://movieboxonline.net/';
-        const ref = rawRef.includes('aoneroom.com') ? 'https://movieboxonline.net/' : rawRef;
+        const rawRef = best.headers?.Referer || 'https://sflix.film/';
+        const ref = rawRef.includes('aoneroom.com') ? 'https://sflix.film/' : rawRef;
         setStreamReferer(ref);
         // Play directly from ultra-fast CDN edge (starts in < 500ms instead of 40s VPS proxy bottleneck!)
         setStreamUrl(best.url);
