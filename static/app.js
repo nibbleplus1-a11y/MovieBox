@@ -1286,13 +1286,7 @@ async function switchAudioDub(dubSubjectId, langName) {
             if (activeMediaMeta) activeMediaMeta.title = updatedTitle;
             safeText('inPlayerTitle', updatedTitle);
 
-            const newSrc = getEffectiveStreamUrl(streamToPlay);
-            setCinemaVideoSource(newSrc, streamToPlay, updatedTitle);
-
-            // Guaranteed timestamp resume using polling + readiness listeners
-            if (resumeTime > 0) {
-                safelyResumePlaybackAt(resumeTime);
-            }
+            tryDirectThenProxy(streamToPlay, updatedTitle, resumeTime);
 
             // Update all badges & selectors smoothly
             safeText('inPlayerDubBadge', `${langName} ▾`);
@@ -2448,11 +2442,13 @@ function playNextEpisodeImmediately() {
 // Tracks whether direct CDN worked for the current session.
 let _directStreamWorked = false;
 let _directStreamFailed = false;
+let _streamRefreshInProgress = false;
 
 function getProxyStreamUrl(stream) {
     if (!stream || !stream.url) return '';
     const sidParam = currentPlayingSubjectId ? `&subject_id=${encodeURIComponent(currentPlayingSubjectId)}` : '';
-    const ref = (stream.headers && stream.headers.Referer) ? stream.headers.Referer : 'https://movieboxonline.net/';
+    // Always use movie-box.co as Referer — the hakunaymatata CDN whitelists it
+    const ref = 'https://movie-box.co/';
     return `/api/proxy/stream?url=${encodeURIComponent(stream.url)}&referer=${encodeURIComponent(ref)}${sidParam}`;
 }
 
@@ -2463,81 +2459,153 @@ function getEffectiveStreamUrl(stream) {
 }
 
 /**
- * Tries to play stream directly from CDN (fast, no VPS bottleneck).
- * On CORS/network error, automatically falls back to the VPS proxy.
- * If direct CDN starts playing but then errors, switches to proxy mid-playback.
+ * Re-resolves fresh signed stream URLs client-side, bypassing stale VPS cache.
+ * Called when proxy returns 429/502 (expired signed URLs) or video stalls.
+ */
+async function _resolveAndReplayFreshStream(seekToTime = 0) {
+    if (_streamRefreshInProgress) return;
+    _streamRefreshInProgress = true;
+    showBuffering('Refreshing stream links…');
+    try {
+        const sid = currentPlayingSubjectId;
+        const se = currentSeason || 0;
+        const ep = currentEpisode || 0;
+        const dPath = (activeMediaMeta && activeMediaMeta.detail_path) ? activeMediaMeta.detail_path : '';
+
+        // Bust the server-side cache so fresh signed URLs are returned
+        const bustUrl = `/api/stream/${sid}?se=${se}&ep=${ep}${dPath ? '&detail_path=' + encodeURIComponent(dPath) : ''}&_bust=${Date.now()}`;
+        const freshData = await fetch(bustUrl).then(r => r.json()).catch(() => null);
+        const rawFresh = (freshData && freshData.streams) ? freshData.streams.filter(s => !isNoticeStream(s)) : [];
+
+        if (rawFresh.length > 0) {
+            activeStreamList = rawFresh;
+            const playable = rawFresh.filter(s => s.format !== 'DASH' && !s.url.includes('.mpd'));
+            const best = playable.find(s => (s.quality === '1080p' || s.quality === '720p') && (!s.codec || s.codec.toLowerCase().includes('h264')))
+                || playable.find(s => s.quality === '1080p')
+                || playable.find(s => s.quality === '720p')
+                || (playable.length > 0 ? playable[0] : rawFresh[0]);
+            currentPlayingStream = best;
+            const proxyUrl = getProxyStreamUrl(best);
+            console.log('[MovieVerse] Fresh stream resolved via server cache-bust:', best.quality, best.url.slice(0, 60));
+            setCinemaVideoSource(proxyUrl, best, activeMediaMeta?.title);
+            _doSeekAfterPlay(seekToTime);
+            hideBuffering();
+            showToast('Stream refreshed ✓', 'success');
+            return;
+        }
+
+        // Fallback: resolve fresh URLs directly from CDN via browser (no VPS)
+        const clientStreams = await clientResolveDirectStreams(sid, se, ep, dPath);
+        if (clientStreams && clientStreams.length > 0) {
+            activeStreamList = clientStreams;
+            const best = clientStreams[0];
+            currentPlayingStream = best;
+            const proxyUrl = getProxyStreamUrl(best);
+            console.log('[MovieVerse] Fresh stream resolved via client:', best.quality, best.url.slice(0, 60));
+            setCinemaVideoSource(proxyUrl, best, activeMediaMeta?.title);
+            _doSeekAfterPlay(seekToTime);
+            hideBuffering();
+            showToast('Stream refreshed ✓', 'success');
+            return;
+        }
+
+        // All resolution attempts failed — show buffering action buttons
+        hideBuffering();
+        const actions = document.getElementById('videoBufferingActions');
+        if (actions) actions.style.display = 'flex';
+        showToast('Stream refresh failed — try a backup server', 'warning');
+    } catch (err) {
+        console.warn('[MovieVerse] Stream refresh error:', err);
+        hideBuffering();
+    } finally {
+        _streamRefreshInProgress = false;
+    }
+}
+
+/**
+ * Tries to play stream via VPS proxy (required for hakunaymatata CDN Referer spoofing).
+ * On proxy error or 10s stall with no progress, re-resolves fresh signed URLs automatically.
  */
 async function tryDirectThenProxy(stream, titleText, seekToTime = 0) {
     if (!stream || !stream.url) return;
 
-    const ref = (stream.headers && stream.headers.Referer) ? stream.headers.Referer : 'https://123moviesfree.club/';
     const directUrl = stream.url;
     const proxyUrl = getProxyStreamUrl(stream);
     const video = getCinemaVideoElement();
 
-    // If URL requires specific Referer header (e.g. hakunaymatata), browser <video>
-    // cannot send spoofed referers and gets 429/403. Go straight to proxy for instant playback.
-    if (_directStreamFailed || directUrl.includes('hakunaymatata.com')) {
+    // hakunaymatata CDN requires a whitelisted Referer (movie-box.co)
+    // The browser <video> element sends the page URL as Referer, which is NOT whitelisted.
+    // So we ALWAYS go through the VPS proxy for hakunaymatata streams.
+    // If the proxy fails (expired token → 429), _resolveAndReplayFreshStream fetches new signed URLs.
+    if (directUrl.includes('hakunaymatata.com') || _directStreamFailed) {
+        console.log('[MovieVerse] Routing via proxy (hakunaymatata/CDN requires Referer spoofing)');
         setCinemaVideoSource(proxyUrl, stream, titleText);
-        _doSeekAfterPlay(seekToTime);
-        return;
-    }
 
-    // Instant start: bypass blocking 3.5s pre-flight check so playback begins immediately
-    let directOk = true;
-
-    if (directOk) {
-        console.log('[MovieVerse] Attempting direct CDN stream (bypassing VPS proxy):', directUrl);
-        _directStreamWorked = false;  // Will be set true on first successful timeupdate
-
-        // Set direct URL — video element doesn't require CORS headers for MP4
-        setCinemaVideoSource(directUrl, stream, titleText);
-
-        // Install one-time error handler: if direct CDN fails on the <video> element, 
-        // immediately fall back to proxy without needing user action
+        // Install stall detector: if no progress within 12s → refresh stream URLs
         if (video) {
-            const onDirectError = () => {
-                if (_directStreamWorked) return; // Already played successfully, don't fallback
-                console.warn('[MovieVerse] Direct CDN stream failed on <video> — falling back to proxy');
-                _directStreamFailed = true;
-                const resumeTime = video.currentTime || seekToTime || 0;
-                setCinemaVideoSource(proxyUrl, stream, titleText);
-                if (resumeTime > 0) {
-                    video.addEventListener('canplay', () => { video.currentTime = resumeTime; }, { once: true });
+            let _proxyPlaybackStarted = false;
+            const _proxyPlayTimer = setTimeout(() => {
+                if (!_proxyPlaybackStarted && currentPlayingStream === stream) {
+                    console.warn('[MovieVerse] Proxy stream stalled after 12s — refreshing signed URLs');
+                    _resolveAndReplayFreshStream(seekToTime);
+                }
+            }, 12000);
+
+            const _onProxyProgress = () => {
+                _proxyPlaybackStarted = true;
+                clearTimeout(_proxyPlayTimer);
+                video.removeEventListener('timeupdate', _onProxyProgress);
+            };
+            video.addEventListener('timeupdate', _onProxyProgress);
+
+            // On hard video error → refresh
+            const _onProxyError = () => {
+                clearTimeout(_proxyPlayTimer);
+                video.removeEventListener('timeupdate', _onProxyProgress);
+                if (!_proxyPlaybackStarted && currentPlayingStream === stream) {
+                    console.warn('[MovieVerse] Proxy stream video error — refreshing signed URLs');
+                    _resolveAndReplayFreshStream(seekToTime);
                 }
             };
-            video.addEventListener('error', onDirectError, { once: true });
-
-            // Mark as "worked" once we see actual playback progress — prevent fallback after that
-            const onFirstPlay = () => {
-                _directStreamWorked = true;
-                video.removeEventListener('error', onDirectError);
-                showToast('⚡ High-speed direct stream', 'info');
-            };
-            video.addEventListener('timeupdate', onFirstPlay, { once: true });
+            video.addEventListener('error', _onProxyError, { once: true });
         }
 
         _doSeekAfterPlay(seekToTime);
         return;
     }
 
-    // Fall back to proxy
-    _directStreamFailed = true;
-    setCinemaVideoSource(proxyUrl, stream, titleText);
+    // Non-hakunaymatata CDN: try direct first, fall back to proxy on error
+    console.log('[MovieVerse] Attempting direct CDN stream:', directUrl.slice(0, 60));
+    _directStreamWorked = false;
+    setCinemaVideoSource(directUrl, stream, titleText);
+
+    if (video) {
+        const onDirectError = () => {
+            if (_directStreamWorked) return;
+            console.warn('[MovieVerse] Direct CDN failed — falling back to proxy');
+            _directStreamFailed = true;
+            const resumeTime = video.currentTime || seekToTime || 0;
+            setCinemaVideoSource(proxyUrl, stream, titleText);
+            if (resumeTime > 0) {
+                video.addEventListener('canplay', () => { video.currentTime = resumeTime; }, { once: true });
+            }
+        };
+        video.addEventListener('error', onDirectError, { once: true });
+
+        const onFirstPlay = () => {
+            _directStreamWorked = true;
+            video.removeEventListener('error', onDirectError);
+            showToast('⚡ High-speed direct stream', 'info');
+        };
+        video.addEventListener('timeupdate', onFirstPlay, { once: true });
+    }
+
     _doSeekAfterPlay(seekToTime);
 }
 
 function _doSeekAfterPlay(seekToTime) {
     if (seekToTime > 0) {
-        const video = getCinemaVideoElement();
-        const doSeek = () => {
-            if (plyrInstance) plyrInstance.currentTime = seekToTime;
-            else if (video) video.currentTime = seekToTime;
-        };
-        if (video) {
-            video.addEventListener('canplay', doSeek, { once: true });
-        }
-        setTimeout(doSeek, 1500);
+        safelyResumePlaybackAt(seekToTime);
     }
 }
 
@@ -2547,9 +2615,7 @@ function switchToDirectMode() {
     if (modeSelect) modeSelect.value = 'direct';
     if (currentPlayingStream) {
         const t = plyrInstance ? plyrInstance.currentTime : 0;
-        const src = getEffectiveStreamUrl(currentPlayingStream);
-        setCinemaVideoSource(src, currentPlayingStream, activeMediaMeta?.title);
-        setTimeout(() => { if (plyrInstance) { plyrInstance.currentTime = t; plyrInstance.play().catch(() => {}); } }, 500);
+        tryDirectThenProxy(currentPlayingStream, activeMediaMeta?.title, t);
     }
 }
 
@@ -3590,10 +3656,7 @@ function setupPlaybackWatchdog(video) {
             showBuffering('Reconnecting S1 Direct stream…');
             const resumeSec = Math.floor(video.currentTime || _lastObservedTime || 0);
             setTimeout(() => {
-                setCinemaVideoSource(getEffectiveStreamUrl(currentPlayingStream), currentPlayingStream, activeMediaMeta?.title);
-                if (resumeSec > 0) video.currentTime = resumeSec;
-                video.play().catch(() => {});
-                hideBuffering();
+                _resolveAndReplayFreshStream(resumeSec);
             }, 1000);
         }
     });
@@ -3722,9 +3785,8 @@ function changePlayerServer(serverId) {
         safeText('settingsValServer', 'Server 1 (Direct)');
 
         if (currentPlayingStream) {
-            setCinemaVideoSource(getEffectiveStreamUrl(currentPlayingStream), currentPlayingStream, activeMediaMeta?.title);
-        }
-        if (video) {
+            tryDirectThenProxy(currentPlayingStream, activeMediaMeta?.title, resumeSec);
+        } else if (video) {
             if (resumeSec > 0) video.currentTime = resumeSec;
             video.play().catch(() => {});
         }
@@ -4041,9 +4103,9 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
     }
 
     // Set video source and load via unified player engine (HLS.js / Plyr / HTML5)
+    // Uses tryDirectThenProxy: routes hakunaymatata via proxy, auto-refreshes on stall
     if (stream) {
-        const src = getEffectiveStreamUrl(stream);
-        setCinemaVideoSource(src, stream, titleText);
+        tryDirectThenProxy(stream, titleText, seekToTime);
     }
 
     modal.style.display = 'flex';
@@ -4178,9 +4240,7 @@ function changePlaybackMode(mode) {
     currentPlaybackMode = mode;
     if (currentPlayingStream) {
         const t = plyrInstance ? plyrInstance.currentTime : 0;
-        const src = getEffectiveStreamUrl(currentPlayingStream);
-        setCinemaVideoSource(src, currentPlayingStream, activeMediaMeta?.title);
-        setTimeout(() => { if (plyrInstance) { plyrInstance.currentTime = t; plyrInstance.play().catch(() => {}); } }, 300);
+        tryDirectThenProxy(currentPlayingStream, activeMediaMeta?.title, t);
         showToast(`Route: ${mode === 'proxy' ? 'Fast Proxy' : 'Direct CDN'}`);
     }
 }
@@ -4194,12 +4254,7 @@ function changePlayerQuality(encodedStream) {
                : (video && isFinite(video.currentTime)) ? video.currentTime : 0;
     currentPlayingStream = stream;
 
-    if (t > 0) {
-        safelyResumePlaybackAt(t);
-    }
-
-    const src = getEffectiveStreamUrl(stream);
-    setCinemaVideoSource(src, stream, activeMediaMeta?.title);
+    tryDirectThenProxy(stream, activeMediaMeta?.title, t);
     safeText('playerQualityTag', stream.quality || '1080p');
     safeText('inPlayerQualityBadge', stream.quality || '1080p');
     safeText('inPlayerCurrentQualityText', `Quality: ${stream.quality || '1080p'}`);
@@ -4313,6 +4368,9 @@ function changePlayerSubtitle(subUrl) {
     }
 
     if (!subUrl) {
+        if (hlsInstance) {
+            try { hlsInstance.subtitleTrack = -1; } catch {}
+        }
         _activeSubtitleTrack = null;
         if (overlay) {
             overlay.innerHTML = '';
@@ -4334,6 +4392,15 @@ function changePlayerSubtitle(subUrl) {
 
     safeText('settingsValSubs', displayLabel);
     safeText('inPlayerCurrentSubText', `Subtitles: ${displayLabel}`);
+
+    if (subUrl.startsWith('hls://')) {
+        const trackIdx = parseInt(subUrl.replace('hls://', ''), 10);
+        if (hlsInstance && !isNaN(trackIdx)) {
+            hlsInstance.subtitleTrack = trackIdx;
+            showToast(`Subtitles active: ${displayLabel}`, 'success');
+            return;
+        }
+    }
 
     const finalTrackUrl = (subUrl.startsWith('blob:') || subUrl.startsWith('/api/proxy/online-caption'))
         ? subUrl
@@ -4631,6 +4698,8 @@ function closePlayerModal() {
     }
 
     // Reset stream state so next open is fresh
+    _streamRefreshInProgress = false;
+    _directStreamFailed = false;
     currentPlayingStream = null;
     currentPlayingSubjectId = null;
     currentSeason = 0;

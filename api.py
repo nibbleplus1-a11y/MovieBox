@@ -1216,8 +1216,8 @@ class MovieBoxEngine:
             s.get("size_mb", 0)
         ), reverse=True)
         if streams:
-            # Cache for 5 minutes (prevents stale/expired CDN signed tokens causing playback buffering)
-            app_cache.set(cache_key, streams, ttl=300)
+            # Cache for 4 minutes (prevents stale/expired CDN signed tokens causing playback buffering)
+            app_cache.set(cache_key, streams, ttl=240)
         return streams
 
     def get_curated_feed(self) -> Dict[str, List[Dict[str, Any]]]:
@@ -1782,8 +1782,20 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
     if resp is None or resp.status_code in (429, 403):
         if subject_id:
             app_cache.delete_prefix(f"streams:{subject_id}:")
-        err_msg = "Upstream CDN rate limit (429). Fresh URLs loaded — please try again." if (resp and resp.status_code == 429) else "Upstream CDN blocked request (403)."
-        raise HTTPException(status_code=resp.status_code if resp else 502, detail=err_msg)
+        # Return 503 with special header so the browser JS triggers stream URL re-resolution
+        # (not 429 — browsers block retries on 429, but 503 fires the video 'error' event cleanly)
+        err_msg = "Stream token expired — fresh URLs loaded, retrying automatically." if (resp and resp.status_code == 429) else "CDN blocked (403) — please try another server."
+        return Response(
+            content=json.dumps({"detail": err_msg}),
+            status_code=503,
+            headers={
+                "Content-Type": "application/json",
+                "X-Stream-Expired": "1",
+                "Retry-After": "2",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Expose-Headers": "X-Stream-Expired",
+            }
+        )
 
     response_headers = {
         "Access-Control-Allow-Origin": "*",
