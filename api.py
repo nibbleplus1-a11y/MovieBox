@@ -2835,6 +2835,17 @@ def debug_upstream(
     except Exception as se:
         diag["get_streams_error"] = str(se)
 
+    # 2.5 Test get_details
+    try:
+        det = engine.get_details(sid)
+        diag["get_details"] = {
+            "title": det.get("title"),
+            "detail_path": det.get("detail_path"),
+            "type": det.get("type"),
+        }
+    except Exception as de:
+        diag["get_details_error"] = str(de)
+
     # 3. Test direct web domains using engine.session (httpx) WITH token, WITHOUT token, and WITH X-Forwarded-For
     web_httpx = {}
     web_httpx_notoken = {}
