@@ -699,6 +699,10 @@ class MovieBoxEngine:
             if not raw_title:
                 continue
 
+            sid_str = str(sub.get("subjectId") or "")
+            if not sid_str:
+                continue
+
             # --- Filter fake/unreleased UGC uploads (e.g. Salaar 2, salar 3 fan-made YouTube rips) ---
             if _is_ugc_fake_upload(sub):
                 continue
@@ -758,7 +762,6 @@ class MovieBoxEngine:
                     pass
 
             disp_title = raw_title
-            sid_str = str(sub.get("subjectId"))
             # If search query or item is Avengers Endgame, brand as Encore Edition
             if sid_str == "4191963760367656968" or clean_base in ("avengers: endgame", "avengers endgame"):
                 if "encore" in query.lower() or "endgame" in query.lower() or "avengers" in query.lower():
@@ -812,7 +815,9 @@ class MovieBoxEngine:
             {
                 "subject_id": str(d.get("subjectId")),
                 "lang_name": d.get("lanName") or d.get("language") or "Dub",
-                "language": d.get("language"),
+                "language": d.get("lanCode") or d.get("language") or d.get("lanName"),
+                "original": bool(d.get("original")),
+                "type": d.get("type", 0)
             }
             for d in raw_dubs
             if isinstance(d, dict)
@@ -825,31 +830,60 @@ class MovieBoxEngine:
             if d.get("subject_id") and d["subject_id"] != main_id:
                 app_cache.set(f"dub_parent:{d['subject_id']}", main_id, ttl=7200)
 
-        # If no child dubs found in API response, find sibling dubs via parent link or clean title search
-        if not dubs:
+        raw_title = data.get("title") or ""
+        clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
+        self_has_bracket = bool(re.search(r'\[.+?\]|\(.+?\)', raw_title))
+
+        # If detail_path missing, derive slug from clean title
+        if not detail_path and clean_title:
+            detail_path = re.sub(r'[^a-z0-9]+', '-', clean_title.lower()).strip('-')
+
+        # Always harvest sibling dubs via parent link or clean title search if dubs list is incomplete,
+        # or if the current item has a bracket title, or if fewer than 2 dubs exist
+        if len(dubs) <= 1 or self_has_bracket:
             parent_id = app_cache.get(f"dub_parent:{subject_id}")
-            raw_title = data.get("title") or ""
-            clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
-            
-            # Search for clean title to harvest all sibling dubs from search results
+            rel_date = str(data.get("releaseDate") or "")[:4]
+            subject_type = data.get("subjectType")
+
+            # Broad search: fetch up to 20 results for the base title to harvest all dub siblings
             if clean_title:
                 try:
-                    search_results = self.search(clean_title, page=1, per_page=15)
-                    rel_date = str(data.get("releaseDate") or "")[:4]
-                    subject_type = data.get("subjectType")
+                    search_results = self.search(clean_title, page=1, per_page=20)
                     for r in search_results:
                         r_sid = str(r.get("subject_id") or "")
                         if not r_sid or r_sid == main_id:
                             continue
                         r_year = str(r.get("release_date") or "")[:4]
                         r_type = r.get("subject_type")
-                        if (not rel_date or not r_year or abs(int(rel_date or 0) - int(r_year or 0)) <= 1) and \
-                           (not subject_type or not r_type or subject_type == r_type):
-                            # Sibling dubs found
+                        # Year tolerance: allow 0-1 year difference to cover multi-year series
+                        try:
+                            year_ok = (not rel_date or not r_year or abs(int(rel_date) - int(r_year)) <= 1)
+                        except Exception:
+                            year_ok = True
+                        type_ok = (not subject_type or not r_type or subject_type == r_type)
+                        if year_ok and type_ok:
+                            # Collect any dub objects discovered during search dedup
                             for d in r.get("dubs", []):
                                 if not any(existing_d.get("subject_id") == d.get("subject_id") for existing_d in dubs):
                                     dubs.append(d)
-                            if not parent_id and ("[" not in r.get("title", "") and "(" not in r.get("title", "")):
+                            r_title = r.get("title", "")
+                            r_has_bracket = bool(re.search(r'\[.+?\]|\(.+?\)', r_title))
+                            # This sibling itself is a dub variant — add it as a dub entry
+                            if r_has_bracket:
+                                lang_match = re.search(r'\[(.+?)\]|\((.+?)\)', r_title)
+                                lang_tag = (lang_match.group(1) or lang_match.group(2) or '').strip() if lang_match else ''
+                                if lang_tag and lang_tag.lower() not in ('1080p', '720p', '480p', 'cam', 'hd', 'rip'):
+                                    is_ad = bool(re.search(r'description|descriptive|\[ad\]|visual', lang_tag, re.I))
+                                    label = f"{lang_tag} - Audio Description" if is_ad and 'description' not in lang_tag.lower() \
+                                        else (f"{lang_tag} Dub" if 'dub' not in lang_tag.lower() and not is_ad else lang_tag)
+                                    if not any(d.get("subject_id") == r_sid for d in dubs):
+                                        dubs.append({"subject_id": r_sid, "lang_name": label, "language": lang_tag})
+                                    app_cache.set(f"dub_parent:{r_sid}", main_id, ttl=7200)
+                            # Clean-title result without brackets → this is the original; set as parent
+                            if not r_has_bracket and not parent_id and self_has_bracket:
+                                parent_id = r_sid
+                            elif not r_has_bracket and not parent_id:
+                                # Even without self having bracket, track the cleanest result as potential parent
                                 parent_id = r_sid
                 except Exception:
                     pass
@@ -865,6 +899,30 @@ class MovieBoxEngine:
                     app_cache.set(f"dub_parent:{main_id}", parent_id, ttl=7200)
                 except Exception:
                     pass
+
+            # If this subject itself has a bracket tag but we didn't add it to dubs yet, add self
+            if self_has_bracket:
+                self_lang_match = re.search(r'\[(.+?)\]|\((.+?)\)', raw_title)
+                self_lang = (self_lang_match.group(1) or self_lang_match.group(2) or '').strip() if self_lang_match else ''
+                if self_lang and self_lang.lower() not in ('1080p', '720p', '480p', 'cam', 'hd', 'rip'):
+                    if not any(d.get("subject_id") == main_id for d in dubs):
+                        is_ad = bool(re.search(r'description|descriptive|\[ad\]|visual', self_lang, re.I))
+                        label = f"{self_lang} - Audio Description" if is_ad and 'description' not in self_lang.lower() \
+                            else (f"{self_lang} Dub" if 'dub' not in self_lang.lower() and not is_ad else self_lang)
+                        dubs.insert(0, {"subject_id": main_id, "lang_name": label, "language": self_lang})
+
+        # Ensure Original Audio entry exists in dubs list if dubs are present
+        if dubs:
+            has_orig_entry = any(bool(d.get("original")) or str(d.get("subject_id")) == original_subject_id for d in dubs)
+            if not has_orig_entry and original_subject_id:
+                orig_lang = data.get("language") or "en"
+                dubs.insert(0, {
+                    "subject_id": original_subject_id,
+                    "lang_name": "Original Audio",
+                    "language": orig_lang,
+                    "original": True,
+                    "type": 0
+                })
 
         # Extract director and cast from staffList
         staff_list = data.get("staffList") or []
@@ -944,6 +1002,7 @@ class MovieBoxEngine:
             "trailer_url": trailer_url,
             "detail_path": detail_path,
             "dubs": dubs,
+            "original_subject_id": original_subject_id,
             "seasons": self.get_episodes(main_id) if (data.get("subjectType") and data.get("subjectType") != 1 and main_id and main_id != "None") else []
         }
         if res.get("title"):
@@ -1275,7 +1334,52 @@ class MovieBoxEngine:
         _global_seen_ids: set = set()
         _global_seen_base: dict = {}  # base_title -> subject_id of first occurrence
 
-        # Attempt 1: Fetch operating list from primary domain
+        # Primary source: Native mobile ranking lists for regional sections (Bollywood & South Indian)
+        native_rank_cats = [
+            ("bollywood", "414907768299210008"),
+            ("south_indian", "3859721901924910512")
+        ]
+        def _fetch_rank(t_key, c_type):
+            try:
+                res = self.api_request("GET", f"/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType={c_type}&page=1&perPage=24")
+                return t_key, res.get("data", {}).get("subjects", [])
+            except Exception:
+                return t_key, []
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            rank_futures = [pool.submit(_fetch_rank, tk, ct) for tk, ct in native_rank_cats]
+            for fut in as_completed(rank_futures):
+                try:
+                    target_key, subs = fut.result()
+                    for s in subs:
+                        if not s or s.get("subjectType") == 6 or is_adult_content(s):
+                            continue
+                        stype = s.get("subjectType")
+                        cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
+                        raw_title = s.get("title") or ""
+                        sid = str(s.get("subjectId"))
+                        base = _base_title(raw_title)
+                        already_in = any(x["subject_id"] == sid or _base_title(x.get("title") or "") == base for x in feed[target_key])
+                        if not already_in:
+                            item = {
+                                "title": raw_title,
+                                "subject_id": sid,
+                                "subject_type": stype,
+                                "detail_path": s.get("detailPath"),
+                                "cover": cover_url,
+                                "rating": s.get("imdbRatingValue") or "N/A",
+                                "genre": s.get("genre"),
+                                "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
+                                "type": classify_content_type(stype, raw_title)
+                            }
+                            feed[target_key].append(item)
+                            if sid not in _global_seen_ids:
+                                _global_seen_ids.add(sid)
+                                _global_seen_base[base] = sid
+                except Exception:
+                    pass
+
+        # Attempt 2: Fetch operating list from web domains (if available)
         operating_lists = []
         for domain_host in ["movieboxhd.net", "movieboxonline.net", "sflix.film"]:
             try:
@@ -1419,27 +1523,30 @@ class MovieBoxEngine:
 
         # Parallel backfill for rich shelves using ThreadPoolExecutor
         sparse_tasks = []
+        if len(feed["trending"]) < 30:
+            for kw in ["Dune", "Deadpool & Wolverine", "Inside Out 2", "Oppenheimer", "The Substance", "Civil War", "The Wild Robot", "Gladiator 2", "Smile 2", "Moana 2", "Terrifier 3", "Alien Romulus", "Barbie", "Poor Things", "Challengers", "Nosferatu"]:
+                sparse_tasks.append(("trending", kw))
+        if len(feed["cinema"]) < 30:
+            for kw in ["Inside Out 2", "Deadpool & Wolverine", "Dune", "Furiosa", "Kingdom of the Planet of the Apes", "Twisters", "Alien Romulus", "Beetlejuice", "Venom", "Moana 2", "Wicked", "Gladiator 2", "Captain America", "A Minecraft Movie", "Superman"]:
+                sparse_tasks.append(("cinema", kw))
+        if len(feed["hollywood"]) < 35:
+            for kw in ["Avengers: Endgame", "Avengers: Infinity War", "The Dark Knight", "Inception", "Interstellar", "Spider-Man", "Oppenheimer", "Deadpool", "Gladiator", "Dune", "Avatar", "John Wick", "Mission Impossible", "Fast and Furious", "Black Panther", "Iron Man", "Captain America", "Thor", "Pulp Fiction", "The Matrix"]:
+                sparse_tasks.append(("hollywood", kw))
+        if len(feed["series"]) < 35:
+            for kw in ["The Lord of the Rings: The Rings of Power", "House of the Dragon", "Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys", "Fallout", "Severance", "The Last of Us", "Shogun", "The Penguin", "Squid Game", "Loki", "Wednesday", "Reacher", "Peaky Blinders", "Better Call Saul", "Succession", "The Bear", "Yellowstone"]:
+                sparse_tasks.append(("series", kw))
+        if len(feed["anime"]) < 40:
+            for kw in ["Solo Leveling", "Jujutsu Kaisen", "Attack on Titan", "Demon Slayer", "Chainsaw Man", "Bleach", "One Piece", "Naruto", "Dragon Ball", "Death Note", "Fullmetal Alchemist", "Spy x Family", "Vinland Saga", "Hunter x Hunter", "Frieren", "Kaiju No. 8", "Dan Da Dan", "Tokyo Ghoul", "Cyberpunk: Edgerunners"]:
+                sparse_tasks.append(("anime", kw))
         if len(feed["bollywood"]) < 30:
             for kw in ["Kalki", "Jawan", "Animal", "Fighter", "Stree 2", "Pathaan", "Dunki", "Shaitaan", "Tiger 3", "Brahmastra", "War", "Dangal", "PK", "Bajrangi Bhaijaan", "Kabir Singh", "Sanju"]:
                 sparse_tasks.append(("bollywood", kw))
         if len(feed["south_indian"]) < 30:
             for kw in ["Pushpa", "Salaar", "Devara", "Leo", "KGF", "RRR", "Baahubali", "Vikram", "Kantara", "Jailer", "Master", "HanuMan", "Dasara", "Varisu"]:
                 sparse_tasks.append(("south_indian", kw))
-        if len(feed["cinema"]) < 25:
-            for kw in ["Inside Out 2", "Deadpool & Wolverine", "Dune", "Furiosa", "Kingdom of the Planet of the Apes", "Twisters", "Alien Romulus", "Beetlejuice", "Venom", "Moana 2", "Wicked", "Gladiator 2"]:
-                sparse_tasks.append(("cinema", kw))
-        if len(feed["hollywood"]) < 30:
-            for kw in ["Avengers: Endgame", "Avengers: Infinity War", "Avengers", "Batman", "Spider-Man", "Oppenheimer", "Deadpool", "Gladiator", "Dune", "Avatar", "John Wick", "Mission Impossible", "Fast and Furious", "Black Panther", "Iron Man", "Captain America", "Thor"]:
-                sparse_tasks.append(("hollywood", kw))
-        if len(feed["series"]) < 30:
-            for kw in ["Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys", "Peaky Blinders", "Succession", "The Last of Us", "Severance", "House of the Dragon", "Fallout", "Squid Game", "Loki", "Wednesday", "Reacher", "The Witcher", "Money Heist"]:
-                sparse_tasks.append(("series", kw))
         if len(feed["asian_drama"]) < 25:
             for kw in ["Queen of Tears", "Squid Game", "Crash Landing on You", "All of Us Are Dead", "The Glory", "Goblin", "Vincenzo", "Descendants of the Sun", "Alchemy of Souls", "Business Proposal", "Itaewon Class"]:
                 sparse_tasks.append(("asian_drama", kw))
-        if len(feed["anime"]) < 35:
-            for kw in ["Attack on Titan", "Demon Slayer", "Jujutsu Kaisen", "One Piece", "Naruto", "Dragon Ball", "Bleach", "My Hero Academia", "Chainsaw Man", "Solo Leveling", "Vinland Saga", "Black Clover", "Spy x Family", "Hunter x Hunter", "Fullmetal Alchemist", "Death Note", "Tokyo Ghoul"]:
-                sparse_tasks.append(("anime", kw))
         # Backfill anime_movies
         if len(feed["anime_movies"]) < 25:
             for kw in ["Spirited Away", "Your Name", "Princess Mononoke", "Howl's Moving Castle", "My Neighbor Totoro", "The Boy and the Heron", "Ghost in the Shell", "Weathering With You", "Suzume", "A Silent Voice"]:
@@ -1615,16 +1722,16 @@ class MovieBoxEngine:
             except Exception:
                 pass
 
-        try:
-            res_id = stream_id or "0"
-            url = f"/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId={subject_id}&resourceId={res_id}&episode={episode}"
-            data = self.api_request("GET", url).get("data", {})
-            ext = data if isinstance(data, list) else data.get("extCaptions") or data.get("captions") or []
-            for s in ext:
-                if isinstance(s, dict):
-                    _add_sub(s)
-        except Exception:
-            pass
+        if stream_id and str(stream_id) != "0":
+            try:
+                url = f"/wefeed-mobile-bff/subject-api/get-ext-captions?subjectId={subject_id}&resourceId={stream_id}&episode={episode}"
+                data = self.api_request("GET", url).get("data", {})
+                ext = data if isinstance(data, list) else data.get("extCaptions") or data.get("captions") or []
+                for s in ext:
+                    if isinstance(s, dict):
+                        _add_sub(s)
+            except Exception:
+                pass
 
         # Sibling Dub Fallback: If no subtitles were found for this subject, check sibling dubs
         if not subs:
@@ -2227,6 +2334,32 @@ def get_episodes(subject_id: str):
         return {"subject_id": subject_id, "seasons": []}
     return {"subject_id": subject_id, "seasons": engine.get_episodes(subject_id)}
 
+def _normalize_title_str(s: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', (s or "").lower())
+
+def is_title_match(target_title: str, candidate_title: str) -> bool:
+    if not target_title or not candidate_title:
+        return False
+    n_target = _normalize_title_str(target_title)
+    n_cand = _normalize_title_str(candidate_title)
+    if n_target == n_cand:
+        return True
+    if n_target in n_cand or n_cand in n_target:
+        if min(len(n_target), len(n_cand)) / max(len(n_target), len(n_cand)) >= 0.7:
+            return True
+    w_target = set(re.sub(r'[^a-z0-9 ]', '', target_title.lower()).split())
+    w_cand = set(re.sub(r'[^a-z0-9 ]', '', candidate_title.lower()).split())
+    if not w_target or not w_cand:
+        return False
+    intersection = w_target & w_cand
+    union = w_target | w_cand
+    jaccard = len(intersection) / len(union)
+    if jaccard >= 0.5:
+        return True
+    if w_target.issubset(w_cand) and len(w_target) / len(w_cand) >= 0.6:
+        return True
+    return False
+
 def resolve_imdb_id(title: str, year: Optional[str] = None, is_series: bool = False) -> Optional[str]:
     if not title:
         return None
@@ -2236,29 +2369,7 @@ def resolve_imdb_id(title: str, year: Optional[str] = None, is_series: bool = Fa
     if cached is not None:
         return cached
 
-    # Attempt 1: Cinemeta
-    cat = "series" if is_series else "movie"
-    try:
-        url = f"https://v3-cinemeta.strem.io/catalog/{cat}/top/search={urllib.parse.quote(clean_title)}.json"
-        r = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
-        metas = r.json().get("metas", [])
-        if metas:
-            if year:
-                for m in metas:
-                    m_year = str(m.get("year") or m.get("releaseInfo") or "")
-                    if year in m_year:
-                        imdb_id = m.get("imdb_id") or m.get("id")
-                        if imdb_id:
-                            app_cache.set(cache_key, imdb_id, ttl=86400)
-                            return imdb_id
-            imdb_id = metas[0].get("imdb_id") or metas[0].get("id")
-            if imdb_id:
-                app_cache.set(cache_key, imdb_id, ttl=86400)
-                return imdb_id
-    except Exception:
-        pass
-
-    # Attempt 2: Official IMDb Suggestion API (handles titles like Tulsa King, etc.)
+    # Attempt 1: Official IMDb Suggestion API with strict title matching (higher accuracy than Cinemeta)
     try:
         q_slug = re.sub(r'[^a-zA-Z0-9 ]', '', clean_title).strip().lower()
         if q_slug:
@@ -2268,16 +2379,44 @@ def resolve_imdb_id(title: str, year: Optional[str] = None, is_series: bool = Fa
             data = r.json().get("d", [])
             for item in data:
                 it_id = item.get("id")
-                if it_id and it_id.startswith("tt"):
+                it_title = item.get("l") or ""
+                if it_id and it_id.startswith("tt") and is_title_match(clean_title, it_title):
                     it_year = str(item.get("y", ""))
                     if year and it_year and year != it_year and len(data) > 1:
                         continue
                     app_cache.set(cache_key, it_id, ttl=86400)
                     return it_id
-            if data and data[0].get("id") and data[0]["id"].startswith("tt"):
-                it_id = data[0]["id"]
-                app_cache.set(cache_key, it_id, ttl=86400)
-                return it_id
+            # Second pass: check without year filter if title matches
+            for item in data:
+                it_id = item.get("id")
+                it_title = item.get("l") or ""
+                if it_id and it_id.startswith("tt") and is_title_match(clean_title, it_title):
+                    app_cache.set(cache_key, it_id, ttl=86400)
+                    return it_id
+    except Exception:
+        pass
+
+    # Attempt 2: Cinemeta with title verification
+    cat = "series" if is_series else "movie"
+    try:
+        url = f"https://v3-cinemeta.strem.io/catalog/{cat}/top/search={urllib.parse.quote(clean_title)}.json"
+        r = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+        metas = r.json().get("metas", [])
+        if metas:
+            matching_metas = [m for m in metas if is_title_match(clean_title, m.get("name") or "")]
+            if matching_metas:
+                if year:
+                    for m in matching_metas:
+                        m_year = str(m.get("year") or m.get("releaseInfo") or "")
+                        if year in m_year:
+                            imdb_id = m.get("imdb_id") or m.get("id")
+                            if imdb_id:
+                                app_cache.set(cache_key, imdb_id, ttl=86400)
+                                return imdb_id
+                imdb_id = matching_metas[0].get("imdb_id") or matching_metas[0].get("id")
+                if imdb_id:
+                    app_cache.set(cache_key, imdb_id, ttl=86400)
+                    return imdb_id
     except Exception:
         pass
 
