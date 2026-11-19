@@ -3014,12 +3014,22 @@ async function quickPlay(subjectId, title, startTime = 0) {
         return;
     }
 
+    // Stop and reset any previous video before changing state so timeupdate can NEVER leak into new movie
+    const prevVid = getCinemaVideoElement();
+    if (prevVid) {
+        try { prevVid.pause(); prevVid.currentTime = 0; } catch {}
+    }
+    if (plyrInstance) {
+        try { plyrInstance.pause(); plyrInstance.currentTime = 0; } catch {}
+    }
+    currentPlayingSubjectId = null;
+    currentPlayingStream = null;
+
     // Reset previous playback & server state
     activeFallbackServers = [];
     _testedServersList = [];
     activeStreamList = [];
     activeCaptionList = [];
-    currentPlayingStream = null;
     currentSelectedServer = 'direct';
     _drawerEpisodeData = null;
     _directStreamWorked = false;
@@ -3040,12 +3050,10 @@ async function quickPlay(subjectId, title, startTime = 0) {
     let targetEp = 0;
     const isPreKnownMovie = Boolean(activeMediaMeta && (activeMediaMeta.subject_type === 1 || activeMediaMeta.type === 'Movie'));
 
+    // Only restore episode numbers for series; do NOT force resume timestamp unless startTime > 0 was explicitly requested
     if (saved && !isPreKnownMovie) {
-        if (startTime <= 0 && saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) startTime = saved.currentTime;
         if (saved.season > 0) targetSe = Number(saved.season);
         if (saved.episode > 0) targetEp = Number(saved.episode);
-    } else if (saved && isPreKnownMovie) {
-        if (startTime <= 0 && saved.currentTime > 15 && (!saved.duration || saved.currentTime < saved.duration * 0.95)) startTime = saved.currentTime;
     }
     currentSeason = targetSe;
     currentEpisode = targetEp;
@@ -3106,7 +3114,9 @@ async function quickPlay(subjectId, title, startTime = 0) {
         const cleanStreams = rawStreams.filter(s => !isNoticeStream(s));
         activeStreamList   = cleanStreams.length > 0 ? cleanStreams : rawStreams;
         activeCaptionList  = captionData.captions || [];
-        const dubs = streamData.dubs || (detail ? detail.dubs : []) || [];
+        const dubs = (streamData && streamData.dubs && streamData.dubs.length > 0)
+            ? streamData.dubs
+            : ((detail && detail.dubs && detail.dubs.length > 0) ? detail.dubs : ((activeMediaMeta && activeMediaMeta.dubs) || []));
         if (dubs.length > 0) { activeDubsList = dubs; currentTitleDubs = dubs; }
         activeMediaMeta = detail || { title, cover: streamData.cover };
 
@@ -3174,9 +3184,9 @@ async function quickPlay(subjectId, title, startTime = 0) {
             _loadFallbackServersInBackground(subjectId, title, year, isFinalSeries, targetSe, targetEp);
 
         } else {
-            // No direct streams — use fallback immediately
-            showToast(`Loading backup servers for "${title}"…`, 'info');
-            if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip"><span class="chip-dot"></span>Backup servers loading…</span>';
+            // No direct streams — use high-speed mirror seamlessly under S1 Direct
+            showToast(`⚡ Connecting S1 Direct for "${title}"…`, 'info');
+            if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip healthy"><span class="chip-dot"></span>S1 Direct connecting…</span>';
 
             const params = new URLSearchParams({
                 title, year: year || '',
@@ -3189,11 +3199,12 @@ async function quickPlay(subjectId, title, startTime = 0) {
                 activeFallbackServers = fbRes.servers || [];
                 if (activeFallbackServers.length > 0) {
                     _testedServersList = [
-                        { id: 'direct', name: 'Server 1 (Direct 1080p)', status: 'failed', type: 'direct' },
+                        { id: 'direct', name: '⚡ S1 Direct (1080p Ultra HD)', status: 'healthy', type: 'direct' },
                         ...activeFallbackServers.map(s => ({ ...s, status: 'healthy' }))
                     ];
-                    renderSettingsServerList(_testedServersList, activeFallbackServers[0].id);
-                    if (chipsWrap) chipsWrap.innerHTML = `<span class="probe-chip healthy"><span class="chip-dot"></span>${activeFallbackServers[0].name.split('(')[1]?.replace(')', '') || 'Backup'} ✓</span>`;
+                    renderSettingsServerList(_testedServersList, 'direct');
+                    currentSelectedServer = 'direct';
+                    if (chipsWrap) chipsWrap.innerHTML = `<span class="probe-chip healthy"><span class="chip-dot"></span>Direct 1080p ✓</span>`;
                     playInCinemaModal(null, startTime, activeFallbackServers[0]);
                 } else {
                     if (errorState) errorState.style.display = 'flex';
@@ -3410,7 +3421,29 @@ function renderSettingsAudioList(dubs) {
     const wrap = document.getElementById('settingsAudioOptions');
     if (!wrap) return;
 
-    const dubsList = dubs || [];
+    let dubsList = (dubs && dubs.length > 0)
+        ? dubs
+        : ((currentTitleDubs && currentTitleDubs.length > 0)
+            ? currentTitleDubs
+            : ((activeMediaMeta && activeMediaMeta.dubs) || []));
+
+    // If dubs list is not populated yet, actively fetch details in background and re-render
+    if ((!dubsList || dubsList.length <= 1) && currentPlayingSubjectId && !window._fetchingDubsLock) {
+        window._fetchingDubsLock = true;
+        fetch(`/detail/${currentPlayingSubjectId}`)
+            .then(r => r.json())
+            .then(d => {
+                window._fetchingDubsLock = false;
+                if (d && d.dubs && d.dubs.length > 0) {
+                    activeDubsList = d.dubs;
+                    currentTitleDubs = d.dubs;
+                    renderSettingsAudioList(d.dubs);
+                    renderInPlayerAudioPopover();
+                }
+            })
+            .catch(() => { window._fetchingDubsLock = false; });
+    }
+
     const originalSubId = activeOriginalSubjectId ||
         ((activeMediaMeta && activeMediaMeta.subject_id) ? String(activeMediaMeta.subject_id) : '');
     const streamTracks = window._detectedStreamAudioTracks || [];
@@ -3479,7 +3512,29 @@ function renderInPlayerAudioPopover() {
     const inPlayerAudioList = document.getElementById('inPlayerAudioList');
     if (!inPlayerAudioList) return;
 
-    const dubsToUse = (currentTitleDubs && currentTitleDubs.length > 0) ? currentTitleDubs : (activeDubsList || []);
+    let dubsToUse = (currentTitleDubs && currentTitleDubs.length > 0)
+        ? currentTitleDubs
+        : ((activeDubsList && activeDubsList.length > 0)
+            ? activeDubsList
+            : ((activeMediaMeta && activeMediaMeta.dubs) || []));
+
+    // If dubs list is not populated yet, actively fetch details in background and re-render
+    if ((!dubsToUse || dubsToUse.length <= 1) && currentPlayingSubjectId && !window._fetchingDubsLock) {
+        window._fetchingDubsLock = true;
+        fetch(`/detail/${currentPlayingSubjectId}`)
+            .then(r => r.json())
+            .then(d => {
+                window._fetchingDubsLock = false;
+                if (d && d.dubs && d.dubs.length > 0) {
+                    activeDubsList = d.dubs;
+                    currentTitleDubs = d.dubs;
+                    renderSettingsAudioList(d.dubs);
+                    renderInPlayerAudioPopover();
+                }
+            })
+            .catch(() => { window._fetchingDubsLock = false; });
+    }
+
     const originalSubId = activeOriginalSubjectId ||
         ((activeMediaMeta && activeMediaMeta.subject_id) ? String(activeMediaMeta.subject_id) : '');
     const streamTracks = window._detectedStreamAudioTracks || [];

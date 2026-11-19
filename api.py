@@ -2704,9 +2704,12 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
         # For details: first check the card cache (populated by feed), only hit upstream if cache miss
         def _get_details_with_card_fallback(sid: str):
             try:
-                return engine.get_details(sid)
+                det = engine.get_details(sid)
+                if det and det.get("title"):
+                    return det
             except Exception:
-                return app_cache.get(f"card:{sid}") or None
+                pass
+            return app_cache.get(f"card:{sid}") or None
 
         streams_fut = loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=se, episode=ep, detail_path=detail_path, client_ip=client_ip))
         details_fut = loop.run_in_executor(_bg_executor, lambda: _get_details_with_card_fallback(subject_id))
@@ -2733,6 +2736,13 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
             if details and is_adult_content(details):
                 raise HTTPException(status_code=404, detail="Title not found")
             dubs = details.get("dubs", []) if details else []
+            if not dubs:
+                try:
+                    f_det = engine.get_details(subject_id)
+                    if f_det and f_det.get("dubs"):
+                        dubs = f_det.get("dubs", [])
+                except Exception:
+                    pass
             title = details.get("title") if details else None
             cover = details.get("cover") if details else None
             is_coming_soon = bool(details and details.get("coming_soon") and len(streams) == 0)
