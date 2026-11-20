@@ -527,9 +527,10 @@ def _is_ugc_fake_upload(sub: dict) -> bool:
     if _FAKE_SEQUEL_PATTERNS.search(title):
         return True
 
-    # Reject if post title reveals it's a trailer or YouTube rip
-    if post_title.startswith("trailer-") or "youtube-" in post_title:
-        return True
+    # Reject if post title reveals it's a trailer or YouTube rip (unless it is a verified item with resources, dubs, or a series)
+    if (post_title.startswith("trailer-") or "youtube-" in post_title):
+        if not sub.get("hasResource") and not sub.get("dubs") and sub.get("subjectType") != 2:
+            return True
 
     # Inspect resource detectors for Search-Youtube URLs or ugc-video.com source
     for rd in (sub.get("resourceDetectors") or []):
@@ -714,43 +715,27 @@ class MovieBoxEngine:
             rel_date = sub.get("releaseDate") or ""
             year_tag = str(rel_date)[:4] if rel_date else ""
             type_tag = str(sub.get("subjectType", 1))
-            canonical_key = f"{clean_base}:{year_tag}:{type_tag}"
+            
+            # Check for dub / language tag in raw title (e.g. [Hindi], (English), [Tamil])
+            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
+            tag = (lang_match.group(1) or lang_match.group(2) or '').strip() if lang_match else ''
+            norm_tag = tag.lower() if (tag and tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+            
+            # Per-dub canonical key: keeps distinct language dubs in search while deduplicating exact clones
+            canonical_key = f"{clean_base}:{year_tag}:{type_tag}:{norm_tag}"
 
-            # If we've already seen this movie/show with just an audio dub tag
+            # If we've already seen this exact title/dub version, deduplicate
             if canonical_key in seen_canonical:
                 existing = seen_canonical[canonical_key]
-                # Check if this item or existing item has an audio dub tag
-                lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
-                if lang_match:
-                    tag = (lang_match.group(1) or lang_match.group(2) or '').strip()
-                    if tag and tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']:
-                        is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', tag, re.I))
-                        label = f"{tag} - Audio Description" if is_ad and "description" not in tag.lower() else (f"{tag} Dub" if "dub" not in tag.lower() and not is_ad else tag)
-                        dub_obj = {"subject_id": sid_str, "lang_name": label, "language": tag}
-                        if "dubs" not in existing:
-                            existing["dubs"] = []
-                        if not any(d.get("subject_id") == sid_str for d in existing["dubs"]):
-                            existing["dubs"].append(dub_obj)
-                        app_cache.set(f"dub_parent:{sid_str}", existing["subject_id"], ttl=7200)
-
-                # If current has a cleaner title (no brackets), swap title
-                if "[" not in raw_title and "(" not in raw_title and ("[" in existing["title"] or "(" in existing["title"]):
-                    old_sid = existing["subject_id"]
-                    old_title = existing["title"]
-                    existing["title"] = raw_title
-                    existing["subject_id"] = sid_str
-                    # Old title had dub tag, add it to dubs
-                    old_match = re.search(r'\[(.*?)\]|\((.*?)\)', old_title)
-                    if old_match:
-                        old_tag = (old_match.group(1) or old_match.group(2) or '').strip()
-                        if old_tag and old_tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']:
-                            is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', old_tag, re.I))
-                            old_label = f"{old_tag} - Audio Description" if is_ad and "description" not in old_tag.lower() else (f"{old_tag} Dub" if "dub" not in old_tag.lower() and not is_ad else old_tag)
-                            if "dubs" not in existing:
-                                existing["dubs"] = []
-                            if not any(d.get("subject_id") == old_sid for d in existing["dubs"]):
-                                existing["dubs"].append({"subject_id": old_sid, "lang_name": old_label, "language": old_tag})
-                            app_cache.set(f"dub_parent:{old_sid}", sid_str, ttl=7200)
+                if tag and tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']:
+                    is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', tag, re.I))
+                    label = f"{tag} - Audio Description" if is_ad and "description" not in tag.lower() else (f"{tag} Dub" if "dub" not in tag.lower() and not is_ad else tag)
+                    dub_obj = {"subject_id": sid_str, "lang_name": label, "language": tag}
+                    if "dubs" not in existing:
+                        existing["dubs"] = []
+                    if not any(d.get("subject_id") == sid_str for d in existing["dubs"]):
+                        existing["dubs"].append(dub_obj)
+                    app_cache.set(f"dub_parent:{sid_str}", existing["subject_id"], ttl=7200)
                 continue
 
             is_cs = False
@@ -2433,67 +2418,79 @@ def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, e
         e = max(1, episode)
         return [
             {
-                "name": "Server 2 (VidSrc HD)",
-                "id": "vidsrcto",
-                "type": "iframe",
-                "url": f"https://vidsrc.to/embed/tv/{clean_id}/{s}/{e}",
-            },
-            {
-                "name": "Server 3 (AutoEmbed Fast)",
+                "name": "Server 2 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
             },
             {
-                "name": "Server 4 (MultiEmbed Global)",
+                "name": "Server 3 (MultiEmbed VIP)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
             },
             {
-                "name": "Server 5 (2Embed Cinema)",
+                "name": "Server 4 (VidSrc Mirror)",
+                "id": "vidsrcme",
+                "type": "iframe",
+                "url": f"https://vidsrc.me/embed/tv?imdb={clean_id}&season={s}&episode={e}",
+            },
+            {
+                "name": "Server 5 (SmashyStream)",
+                "id": "smashystream",
+                "type": "iframe",
+                "url": f"https://embed.smashystream.com/playere.php?imdb={clean_id}&season={s}&episode={e}",
+            },
+            {
+                "name": "Server 6 (2Embed Cinema)",
                 "id": "twoembed",
                 "type": "iframe",
                 "url": f"https://www.2embed.cc/embedtv/{clean_id}&s={s}&e={e}",
             },
             {
-                "name": "Server 6 (VidLink Pro)",
-                "id": "vidlink",
+                "name": "Server 7 (VidSrc Pro)",
+                "id": "vidsrcto",
                 "type": "iframe",
-                "url": f"https://vidlink.pro/tv/{clean_id}/{s}/{e}",
+                "url": f"https://vidsrc.to/embed/tv/{clean_id}/{s}/{e}",
             },
         ]
     else:
         return [
             {
-                "name": "Server 2 (VidSrc HD)",
-                "id": "vidsrcto",
-                "type": "iframe",
-                "url": f"https://vidsrc.to/embed/movie/{clean_id}",
-            },
-            {
-                "name": "Server 3 (AutoEmbed Fast)",
+                "name": "Server 2 (AutoEmbed Fast)",
                 "id": "autoembed",
                 "type": "iframe",
                 "url": f"https://autoembed.co/movie/imdb/{clean_id}",
             },
             {
-                "name": "Server 4 (MultiEmbed Global)",
+                "name": "Server 3 (MultiEmbed VIP)",
                 "id": "multiembed",
                 "type": "iframe",
                 "url": f"https://multiembed.mov/?video_id={clean_id}",
             },
             {
-                "name": "Server 5 (2Embed Cinema)",
+                "name": "Server 4 (VidSrc Mirror)",
+                "id": "vidsrcme",
+                "type": "iframe",
+                "url": f"https://vidsrc.me/embed/movie?imdb={clean_id}",
+            },
+            {
+                "name": "Server 5 (SmashyStream)",
+                "id": "smashystream",
+                "type": "iframe",
+                "url": f"https://embed.smashystream.com/playere.php?imdb={clean_id}",
+            },
+            {
+                "name": "Server 6 (2Embed Cinema)",
                 "id": "twoembed",
                 "type": "iframe",
                 "url": f"https://www.2embed.cc/embed/{clean_id}",
             },
             {
-                "name": "Server 6 (VidLink Pro)",
-                "id": "vidlink",
+                "name": "Server 7 (VidSrc Pro)",
+                "id": "vidsrcto",
                 "type": "iframe",
-                "url": f"https://vidlink.pro/movie/{clean_id}",
+                "url": f"https://vidsrc.to/embed/movie/{clean_id}",
             },
         ]
 

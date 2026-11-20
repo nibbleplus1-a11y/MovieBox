@@ -3030,10 +3030,13 @@ async function quickPlay(subjectId, title, startTime = 0) {
     _testedServersList = [];
     activeStreamList = [];
     activeCaptionList = [];
+    activeDubsList = [];
+    currentTitleDubs = [];
     currentSelectedServer = 'direct';
     _drawerEpisodeData = null;
     _directStreamWorked = false;
-    _directStreamFailed = false;  // Reset direct CDN test for each new title
+    _directStreamFailed = false;
+    window._fetchingDubsLock = false;  // Always reset dubs lock for every new title
 
     // Reset iframe immediately
     const iframe = document.getElementById('cinemaIframe');
@@ -3114,11 +3117,18 @@ async function quickPlay(subjectId, title, startTime = 0) {
         const cleanStreams = rawStreams.filter(s => !isNoticeStream(s));
         activeStreamList   = cleanStreams.length > 0 ? cleanStreams : rawStreams;
         activeCaptionList  = captionData.captions || [];
-        const dubs = (streamData && streamData.dubs && streamData.dubs.length > 0)
-            ? streamData.dubs
-            : ((detail && detail.dubs && detail.dubs.length > 0) ? detail.dubs : ((activeMediaMeta && activeMediaMeta.dubs) || []));
-        if (dubs.length > 0) { activeDubsList = dubs; currentTitleDubs = dubs; }
+
+        // Collect dubs from all sources — stream endpoint, detail fetch, existing meta
+        let dubs = [];
+        if (streamData && streamData.dubs && streamData.dubs.length > 0) dubs = streamData.dubs;
+        else if (detail && detail.dubs && detail.dubs.length > 0) dubs = detail.dubs;
+        activeDubsList = dubs;
+        currentTitleDubs = dubs;
         activeMediaMeta = detail || { title, cover: streamData.cover };
+        // Also collect pre-resolved fallback servers from stream endpoint (avoids a second API call)
+        if (streamData.fallback_servers && streamData.fallback_servers.length > 0) {
+            activeFallbackServers = streamData.fallback_servers;
+        }
 
         // Post-fetch strict type check
         const isDetectedSeries = Boolean(
@@ -3184,35 +3194,42 @@ async function quickPlay(subjectId, title, startTime = 0) {
             _loadFallbackServersInBackground(subjectId, title, year, isFinalSeries, targetSe, targetEp);
 
         } else {
-            // No direct streams — use high-speed mirror seamlessly under S1 Direct
-            showToast(`⚡ Connecting S1 Direct for "${title}"…`, 'info');
-            if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip healthy"><span class="chip-dot"></span>S1 Direct connecting…</span>';
+            // No direct streams — use the pre-resolved fallback_servers returned by the stream endpoint
+            // This avoids a second round-trip and immediately loads the best available server
+            showToast(`⚡ Connecting for "${title}"…`, 'info');
+            if (chipsWrap) chipsWrap.innerHTML = '<span class="probe-chip healthy"><span class="chip-dot"></span>Connecting…</span>';
 
-            const params = new URLSearchParams({
-                title, year: year || '',
-                is_series: isFinalSeries ? 'true' : 'false',
-                season: targetSe || 0, episode: targetEp || 0,
-                subject_id: subjectId || ''
-            });
-            try {
-                const fbRes = await fetch(`/api/fallback-sources?${params.toString()}`).then(r => r.json()).catch(() => ({ servers: [] }));
-                activeFallbackServers = fbRes.servers || [];
-                if (activeFallbackServers.length > 0) {
-                    _testedServersList = [
-                        { id: 'direct', name: '⚡ S1 Direct (1080p Ultra HD)', status: 'healthy', type: 'direct' },
-                        ...activeFallbackServers.map(s => ({ ...s, status: 'healthy' }))
-                    ];
-                    renderSettingsServerList(_testedServersList, 'direct');
-                    currentSelectedServer = 'direct';
-                    if (chipsWrap) chipsWrap.innerHTML = `<span class="probe-chip healthy"><span class="chip-dot"></span>Direct 1080p ✓</span>`;
-                    playInCinemaModal(null, startTime, activeFallbackServers[0]);
-                } else {
-                    if (errorState) errorState.style.display = 'flex';
-                    showToast(`No streams available for "${title}"`, 'error');
-                }
-            } catch {
+            // activeFallbackServers is already populated from streamData.fallback_servers above
+            // If not (cache miss), do one fallback-sources fetch now
+            if (!activeFallbackServers || activeFallbackServers.length === 0) {
+                try {
+                    const params = new URLSearchParams({
+                        title, year: year || '',
+                        is_series: isFinalSeries ? 'true' : 'false',
+                        season: targetSe || 0, episode: targetEp || 0,
+                        subject_id: subjectId || ''
+                    });
+                    const fbRes = await fetch(`/api/fallback-sources?${params.toString()}`).then(r => r.json()).catch(() => ({ servers: [] }));
+                    activeFallbackServers = fbRes.servers || [];
+                } catch { activeFallbackServers = []; }
+            }
+
+            if (activeFallbackServers.length > 0) {
+                _testedServersList = [
+                    { id: 'direct', name: '⚡ S1 Direct', status: 'failed', type: 'direct' },
+                    ...activeFallbackServers.map(s => ({ ...s, status: 'healthy' }))
+                ];
+                // Auto-pick first working fallback and label it in UI
+                const firstFb = activeFallbackServers[0];
+                renderSettingsServerList(_testedServersList, firstFb.id);
+                currentSelectedServer = firstFb.id;
+                const fbLabel = firstFb.name.replace('Server ', 'S').split('(')[0].trim();
+                if (chipsWrap) chipsWrap.innerHTML = `<span class="probe-chip healthy"><span class="chip-dot"></span>${fbLabel} ✓</span>`;
+                playInCinemaModal(null, startTime, firstFb);
+                _loadFallbackServersInBackground(subjectId, title, year, isFinalSeries, targetSe, targetEp);
+            } else {
                 if (errorState) errorState.style.display = 'flex';
-                showToast(`Failed to load backup servers for "${title}"`, 'error');
+                showToast(`No streams found for "${title}". Try a different title.`, 'error');
             }
         }
     } catch (err) {
@@ -3417,6 +3434,21 @@ function selectStreamAudioTrack(trackIndex, trackName) {
     showToast(`Audio Track: ${trackName || 'Switched'}`);
 }
 
+function _getAudioLangFlag(name) {
+    const n = (name || '').toLowerCase();
+    if (n.includes('hindi')) return '🇮🇳';
+    if (n.includes('tamil') || n.includes('telugu') || n.includes('bengali') || n.includes('malayalam') || n.includes('kannada') || n.includes('punjabi')) return '🇮🇳';
+    if (n.includes('japanese') || n.includes('ja')) return '🇯🇵';
+    if (n.includes('english') || n.includes('en')) return '🇺🇸';
+    if (n.includes('spanish') || n.includes('esla') || n.includes('es')) return '🇪🇸';
+    if (n.includes('portuguese') || n.includes('ptbr') || n.includes('pt')) return '🇧🇷';
+    if (n.includes('french') || n.includes('fr')) return '🇫🇷';
+    if (n.includes('german') || n.includes('de')) return '🇩🇪';
+    if (n.includes('korean') || n.includes('ko')) return '🇰🇷';
+    if (n.includes('chinese') || n.includes('zh')) return '🇨🇳';
+    return '🌐';
+}
+
 function renderSettingsAudioList(dubs) {
     const wrap = document.getElementById('settingsAudioOptions');
     if (!wrap) return;
@@ -3425,15 +3457,18 @@ function renderSettingsAudioList(dubs) {
         ? dubs
         : ((currentTitleDubs && currentTitleDubs.length > 0)
             ? currentTitleDubs
-            : ((activeMediaMeta && activeMediaMeta.dubs) || []));
+            : ((activeDubsList && activeDubsList.length > 0)
+                ? activeDubsList
+                : ((activeMediaMeta && activeMediaMeta.dubs) || [])));
 
-    // If dubs list is not populated yet, actively fetch details in background and re-render
-    if ((!dubsList || dubsList.length <= 1) && currentPlayingSubjectId && !window._fetchingDubsLock) {
-        window._fetchingDubsLock = true;
-        fetch(`/detail/${currentPlayingSubjectId}`)
+    // If dubs list is incomplete, fetch details in background using per-subject lock
+    const sid = currentPlayingSubjectId;
+    if ((!dubsList || dubsList.length <= 1) && sid && !window[`_dubsLock_${sid}`]) {
+        window[`_dubsLock_${sid}`] = true;
+        fetch(`/detail/${sid}`)
             .then(r => r.json())
             .then(d => {
-                window._fetchingDubsLock = false;
+                window[`_dubsLock_${sid}`] = false;
                 if (d && d.dubs && d.dubs.length > 0) {
                     activeDubsList = d.dubs;
                     currentTitleDubs = d.dubs;
@@ -3441,7 +3476,7 @@ function renderSettingsAudioList(dubs) {
                     renderInPlayerAudioPopover();
                 }
             })
-            .catch(() => { window._fetchingDubsLock = false; });
+            .catch(() => { window[`_dubsLock_${sid}`] = false; });
     }
 
     const originalSubId = activeOriginalSubjectId ||
@@ -3485,13 +3520,14 @@ function renderSettingsAudioList(dubs) {
             } else if (d.original && !name.toLowerCase().includes('original')) {
                 name = `${name} (Original)`;
             }
+            const flag = _getAudioLangFlag(name);
             if (isSel) {
                 safeText('settingsValAudio', name);
                 safeText('inPlayerDubBadge', `${name} ▾`);
             }
             html += `
                 <button class="settings-opt-item ${isSel ? 'active' : ''}" onclick="selectAudioFromGear('${d.subject_id}', '${escapeAttr(name)}')">
-                    <span>${isAD ? '🎙' : '🌐'} ${escapeHtml(name)}</span>
+                    <span>${isAD ? '🎙' : flag} ${escapeHtml(name)}</span>
                     ${isSel ? '<span style="color:#ff4d4f; font-weight:800;">✓</span>' : ''}
                 </button>
             `;
@@ -3518,13 +3554,14 @@ function renderInPlayerAudioPopover() {
             ? activeDubsList
             : ((activeMediaMeta && activeMediaMeta.dubs) || []));
 
-    // If dubs list is not populated yet, actively fetch details in background and re-render
-    if ((!dubsToUse || dubsToUse.length <= 1) && currentPlayingSubjectId && !window._fetchingDubsLock) {
-        window._fetchingDubsLock = true;
-        fetch(`/detail/${currentPlayingSubjectId}`)
+    // If dubs list is not populated yet, actively fetch details in background
+    const sid = currentPlayingSubjectId;
+    if ((!dubsToUse || dubsToUse.length <= 1) && sid && !window[`_dubsLock_${sid}`]) {
+        window[`_dubsLock_${sid}`] = true;
+        fetch(`/detail/${sid}`)
             .then(r => r.json())
             .then(d => {
-                window._fetchingDubsLock = false;
+                window[`_dubsLock_${sid}`] = false;
                 if (d && d.dubs && d.dubs.length > 0) {
                     activeDubsList = d.dubs;
                     currentTitleDubs = d.dubs;
@@ -3532,7 +3569,7 @@ function renderInPlayerAudioPopover() {
                     renderInPlayerAudioPopover();
                 }
             })
-            .catch(() => { window._fetchingDubsLock = false; });
+            .catch(() => { window[`_dubsLock_${sid}`] = false; });
     }
 
     const originalSubId = activeOriginalSubjectId ||
@@ -3568,8 +3605,9 @@ function renderInPlayerAudioPopover() {
             } else if (d.original && !name.toLowerCase().includes('original')) {
                 name = `${name} (Original)`;
             }
+            const flag = _getAudioLangFlag(name);
             html += `<button class="popover-item ${isSel ? 'active' : ''}" onclick="selectInPlayerAudio('${d.subject_id}', '${escapeAttr(name)}')">
-                <span>${isAD ? '🎙' : '🌐'} ${escapeHtml(name)}</span>
+                <span>${isAD ? '🎙' : flag} ${escapeHtml(name)}</span>
                 ${isSel ? '<span>✓</span>' : ''}
             </button>`;
         });
@@ -4060,6 +4098,24 @@ function changePlayerServer(serverId) {
             }
         }
         iframe.src = serverUrl;
+
+        // Auto-switch to next server if current server fails to load or times out
+        clearTimeout(window._iframeFallbackTimeout);
+        window._iframeFallbackTimeout = setTimeout(() => {
+            const fbList = (activeFallbackServers && activeFallbackServers.length > 0) ? activeFallbackServers : (_testedServersList || []);
+            const curIdx = fbList.findIndex(s => s.id === serverId);
+            if (curIdx >= 0 && curIdx + 1 < fbList.length) {
+                const nextSrv = fbList[curIdx + 1];
+                if (nextSrv && nextSrv.id !== 'direct') {
+                    showToast(`Server busy. Auto-switching to ${nextSrv.name}…`, 'info');
+                    changePlayerServer(nextSrv.id);
+                }
+            }
+        }, 12000);
+
+        iframe.onload = () => {
+            clearTimeout(window._iframeFallbackTimeout);
+        };
     }
 
     // In iframe mode, hide custom controls so embed players have full native interactive controls
@@ -4155,6 +4211,14 @@ function playInCinemaModal(encodedStream, seekToTime = 0, fallbackServer = null)
         modal.classList.add('active');
         document.body.style.overflow = 'hidden';
         renderPlayerSeriesRibbon();
+
+        // Populate audio dubs & server options for fallback server
+        const dubsToUse = (currentTitleDubs && currentTitleDubs.length > 0) ? currentTitleDubs : (activeDubsList || []);
+        renderSettingsAudioList(dubsToUse);
+        renderInPlayerAudioPopover();
+        renderSettingsServerList(_testedServersList, srv.id);
+        renderInPlayerServerDropdown();
+        renderPlayerServerPills();
 
         // Trigger pre-roll ad overlay if eligible
         if (typeof AdEngine !== 'undefined') {
