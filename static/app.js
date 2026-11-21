@@ -3434,6 +3434,20 @@ function selectStreamAudioTrack(trackIndex, trackName) {
     showToast(`Audio Track: ${trackName || 'Switched'}`);
 }
 
+function _cleanDubDisplayName(rawName) {
+    if (!rawName) return 'Audio Track';
+    let n = String(rawName).trim();
+    const low = n.toLowerCase();
+    if (low === 'esla' || low === 'esla dub' || low === 'es-la') return 'Spanish (Latin America)';
+    if (low === 'ptbr' || low === 'ptbr dub' || low === 'pt-br') return 'Portuguese (Brazil)';
+    if (low === 'en' || low === 'en dub' || low === 'eng') return 'English Dub';
+    if (low === 'ja' || low === 'ja dub' || low === 'jpn') return 'Japanese Original';
+    if (low === 'hi' || low === 'hi dub' || low === 'hin') return 'Hindi Dub';
+    if (low === 'ta' || low === 'tamil') return 'Tamil Dub';
+    if (low === 'te' || low === 'telugu') return 'Telugu Dub';
+    return n;
+}
+
 function _getAudioLangFlag(name) {
     const n = (name || '').toLowerCase();
     if (n.includes('hindi')) return '🇮🇳';
@@ -3461,19 +3475,33 @@ function renderSettingsAudioList(dubs) {
                 ? activeDubsList
                 : ((activeMediaMeta && activeMediaMeta.dubs) || [])));
 
-    // If dubs list is incomplete, fetch details in background using per-subject lock
+    // If dubs list is incomplete, fetch details or stream endpoint in background
     const sid = currentPlayingSubjectId;
     if ((!dubsList || dubsList.length <= 1) && sid && !window[`_dubsLock_${sid}`]) {
         window[`_dubsLock_${sid}`] = true;
         fetch(`/detail/${sid}`)
             .then(r => r.json())
             .then(d => {
-                window[`_dubsLock_${sid}`] = false;
                 if (d && d.dubs && d.dubs.length > 0) {
+                    window[`_dubsLock_${sid}`] = false;
                     activeDubsList = d.dubs;
                     currentTitleDubs = d.dubs;
                     renderSettingsAudioList(d.dubs);
                     renderInPlayerAudioPopover();
+                } else {
+                    // Secondary fallback: query /api/stream endpoint which resolves raw upstream dubs
+                    fetch(`/api/stream/${sid}?se=1&ep=1`)
+                        .then(r => r.json())
+                        .then(st => {
+                            window[`_dubsLock_${sid}`] = false;
+                            if (st && st.dubs && st.dubs.length > 0) {
+                                activeDubsList = st.dubs;
+                                currentTitleDubs = st.dubs;
+                                renderSettingsAudioList(st.dubs);
+                                renderInPlayerAudioPopover();
+                            }
+                        })
+                        .catch(() => { window[`_dubsLock_${sid}`] = false; });
                 }
             })
             .catch(() => { window[`_dubsLock_${sid}`] = false; });
@@ -3513,7 +3541,8 @@ function renderSettingsAudioList(dubs) {
         dubsList.forEach(d => {
             const isSel = (String(d.subject_id) === String(currentPlayingSubjectId)) ||
                 (!currentPlayingSubjectId && (d.original || String(d.subject_id) === String(originalSubId)));
-            let name = d.lang_name || d.language || 'Audio Track';
+            let rawName = d.lang_name || d.language || 'Audio Track';
+            let name = _cleanDubDisplayName(rawName);
             const isAD = /description|descriptive|\[ad\]|\(ad\)|visual/i.test(name);
             if (isAD && !name.toLowerCase().includes('audio description')) {
                 name = `${name} - Audio Description`;
@@ -3561,12 +3590,25 @@ function renderInPlayerAudioPopover() {
         fetch(`/detail/${sid}`)
             .then(r => r.json())
             .then(d => {
-                window[`_dubsLock_${sid}`] = false;
                 if (d && d.dubs && d.dubs.length > 0) {
+                    window[`_dubsLock_${sid}`] = false;
                     activeDubsList = d.dubs;
                     currentTitleDubs = d.dubs;
                     renderSettingsAudioList(d.dubs);
                     renderInPlayerAudioPopover();
+                } else {
+                    fetch(`/api/stream/${sid}?se=1&ep=1`)
+                        .then(r => r.json())
+                        .then(st => {
+                            window[`_dubsLock_${sid}`] = false;
+                            if (st && st.dubs && st.dubs.length > 0) {
+                                activeDubsList = st.dubs;
+                                currentTitleDubs = st.dubs;
+                                renderSettingsAudioList(st.dubs);
+                                renderInPlayerAudioPopover();
+                            }
+                        })
+                        .catch(() => { window[`_dubsLock_${sid}`] = false; });
                 }
             })
             .catch(() => { window[`_dubsLock_${sid}`] = false; });
@@ -3598,7 +3640,8 @@ function renderInPlayerAudioPopover() {
         dubsToUse.forEach(d => {
             const isSel = (String(d.subject_id) === String(currentPlayingSubjectId)) ||
                 (!currentPlayingSubjectId && (d.original || String(d.subject_id) === String(originalSubId)));
-            let name = d.lang_name || d.language || 'Audio Track';
+            let rawName = d.lang_name || d.language || 'Audio Track';
+            let name = _cleanDubDisplayName(rawName);
             const isAD = /description|descriptive|\[ad\]|\(ad\)|visual/i.test(name);
             if (isAD && !name.toLowerCase().includes('audio description')) {
                 name = `${name} - Audio Description`;

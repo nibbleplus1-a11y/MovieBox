@@ -988,8 +988,13 @@ class MovieBoxEngine:
             "detail_path": detail_path,
             "dubs": dubs,
             "original_subject_id": original_subject_id,
-            "seasons": self.get_episodes(main_id) if (data.get("subjectType") and data.get("subjectType") != 1 and main_id and main_id != "None") else []
+            "seasons": []
         }
+        if data.get("subjectType") and data.get("subjectType") != 1 and main_id and main_id != "None":
+            try:
+                res["seasons"] = self.get_episodes(main_id)
+            except Exception:
+                res["seasons"] = []
         if res.get("title"):
             app_cache.set(cache_key, res, ttl=1800)
         return res
@@ -1426,20 +1431,23 @@ class MovieBoxEngine:
                     base = _base_title(raw_title)
                     year_tag = item["year"]
 
-                    # Per-shelf dedup: skip if same subject_id OR same base title+year already in shelf
+                    # Per-shelf dedup: skip if exact subject_id or exact same language version already in shelf
+                    lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
+                    tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
+                    norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+                    item_key = f"{base}:{year_tag}:{norm_tag}"
+
                     is_shelf_dup = any(
                         (x["subject_id"] == sid) or
-                        (_base_title(x.get("title") or "") == base and x.get("year") == year_tag)
+                        (f"{_base_title(x.get('title') or '')}:{x.get('year')}:{norm_tag}" == item_key)
                         for x in feed[target_key]
                     )
-                    # Language-variant dedup: skip Hindi/English dubs if original already in shelf
-                    is_lang_dup = base in _global_seen_base and _global_seen_base[base] != sid and target_key in ["trending", "cinema", "hollywood"]
 
-                    if not is_shelf_dup and not is_lang_dup:
+                    if not is_shelf_dup:
                         feed[target_key].append(item)
                         if sid not in _global_seen_ids:
                             _global_seen_ids.add(sid)
-                            _global_seen_base[base] = sid
+                            _global_seen_base[item_key] = sid
                         # Also populate anime sub-shelves
                         if target_key == "anime":
                             # Skip Indian films that share anime names
@@ -2735,9 +2743,19 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
             dubs = details.get("dubs", []) if details else []
             if not dubs:
                 try:
-                    f_det = engine.get_details(subject_id)
-                    if f_det and f_det.get("dubs"):
-                        dubs = f_det.get("dubs", [])
+                    raw_sub = engine.api_request("GET", f"/wefeed-mobile-bff/subject-api/get?subjectId={subject_id}")
+                    raw_dubs = raw_sub.get("data", {}).get("dubs", [])
+                    if raw_dubs:
+                        dubs = [
+                            {
+                                "subject_id": str(d.get("subjectId")),
+                                "lang_name": d.get("lanName") or d.get("language") or "Dub",
+                                "language": d.get("lanCode") or d.get("language") or d.get("lanName"),
+                                "original": bool(d.get("original")),
+                                "type": d.get("type", 0)
+                            }
+                            for d in raw_dubs if isinstance(d, dict)
+                        ]
                 except Exception:
                     pass
             title = details.get("title") if details else None
@@ -3374,13 +3392,17 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
             if it.get("subject_type") == 2 or it.get("type") in ["Series", "TV Series"]:
                 continue
             raw_t = it.get("title") or ""
-            clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip()
-            if it["subject_id"] not in seen and clean_name.lower() not in seen:
+            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
+            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_t)
+            tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
+            norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+            dedup_key = f"{clean_base}:{norm_tag}"
+            if it["subject_id"] not in seen and dedup_key not in seen:
                 seen.add(it["subject_id"])
-                seen.add(clean_name.lower())
+                seen.add(dedup_key)
                 c = dict(it)
                 c["raw_title"] = raw_t
-                c["title"] = clean_name
+                c["title"] = raw_t
                 c["type"] = "Movie"
                 curated_pool.append(c)
 
@@ -3422,15 +3444,19 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
             if not s.get("title"):
                 continue
             sid = str(s.get("subjectId"))
-            clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', s.get("title") or '').strip()
-            clean_key = clean_title.lower()
-            if sid not in seen and clean_key not in seen:
+            raw_t = s.get("title") or ""
+            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
+            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_t)
+            tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
+            norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+            dedup_key = f"{clean_base}:{norm_tag}"
+            if sid not in seen and dedup_key not in seen:
                 seen.add(sid)
-                seen.add(clean_key)
+                seen.add(dedup_key)
                 cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
                 items.append({
-                    "title": clean_title,
-                    "raw_title": s.get("title"),
+                    "title": raw_t,
+                    "raw_title": raw_t,
                     "subject_id": sid,
                     "subject_type": 1,
                     "detail_path": s.get("detailPath"),
@@ -3478,13 +3504,17 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
             if it.get("subject_type") == 1 or it.get("type") == "Movie":
                 continue
             raw_t = it.get("title") or ""
-            clean_name = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip()
-            if it["subject_id"] not in seen and clean_name.lower() not in seen:
+            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
+            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_t)
+            tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
+            norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+            dedup_key = f"{clean_base}:{norm_tag}"
+            if it["subject_id"] not in seen and dedup_key not in seen:
                 seen.add(it["subject_id"])
-                seen.add(clean_name.lower())
+                seen.add(dedup_key)
                 c = dict(it)
                 c["raw_title"] = raw_t
-                c["title"] = clean_name
+                c["title"] = raw_t
                 c["type"] = "TV Series"
                 curated_series.append(c)
 
@@ -3538,15 +3568,19 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
             if not s.get("title"):
                 continue
             sid = str(s.get("subjectId"))
-            clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', s.get("title") or '').strip()
-            clean_key = clean_title.lower()
-            if sid not in seen and clean_key not in seen:
+            raw_t = s.get("title") or ""
+            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
+            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_t)
+            tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
+            norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+            dedup_key = f"{clean_base}:{norm_tag}"
+            if sid not in seen and dedup_key not in seen:
                 seen.add(sid)
-                seen.add(clean_key)
+                seen.add(dedup_key)
                 cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
                 items.append({
-                    "title": clean_title,
-                    "raw_title": s.get("title"),
+                    "title": raw_t,
+                    "raw_title": raw_t,
                     "subject_id": sid,
                     "subject_type": 2,
                     "detail_path": s.get("detailPath"),
