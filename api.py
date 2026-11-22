@@ -2885,8 +2885,16 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
         if title and not is_coming_soon:
             cache_key_imdb = f"imdb_id:{re.sub(r'[\[\(].*?[\]\)]', '', str(title)).strip()}:{det_release or ''}:{is_ser}"
             imdb_id = app_cache.get(cache_key_imdb)
+            # Fast path A: subject_id IS already an IMDb tt ID (Cinemeta results on geo-blocked VPS)
+            if not imdb_id and subject_id.startswith("tt"):
+                imdb_id = subject_id
+                app_cache.set(cache_key_imdb, imdb_id, ttl=86400)
+            # Fast path B: details already carries the imdb_id (from Cinemeta detail fetch)
+            if not imdb_id and details and str(details.get("imdb_id", "")).startswith("tt"):
+                imdb_id = details["imdb_id"]
+                app_cache.set(cache_key_imdb, imdb_id, ttl=86400)
             if imdb_id:
-                # Cache hit — build servers immediately
+                # Cache hit or fast path — build servers immediately
                 fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
             elif len(streams) == 0:
                 # Primary stream unavailable: resolve IMDB synchronously so backup servers work immediately!
