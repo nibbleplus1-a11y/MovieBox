@@ -752,14 +752,13 @@ class MovieBoxEngine:
 
             disp_title = raw_title
             # If item is the specific Encore edition or explicitly searched with "encore"
-            if not init_match and (sid_str == "4191963760367656968" or clean_base in ("avengers: endgame", "avengers endgame")):
+            if not lang_match and (sid_str == "4191963760367656968" or clean_base in ("avengers: endgame", "avengers endgame")):
                 if "encore" in query.lower():
                     disp_title = "Avengers: Endgame (Encore Edition)"
 
             entry_dubs = []
-            init_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
-            if init_match:
-                init_tag = (init_match.group(1) or init_match.group(2) or '').strip()
+            if lang_match:
+                init_tag = (lang_match.group(1) or lang_match.group(2) or '').strip()
                 if init_tag and init_tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']:
                     is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', init_tag, re.I))
                     init_label = f"{init_tag} - Audio Description" if is_ad and "description" not in init_tag.lower() else (f"{init_tag} Dub" if "dub" not in init_tag.lower() and not is_ad else init_tag)
