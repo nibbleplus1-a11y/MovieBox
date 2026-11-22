@@ -653,8 +653,8 @@ class MovieBoxEngine:
                 if resp.status_code == 200:
                     return resp.json()
                 if resp.status_code == 406:
-                    # Upstream MovieBox API returns 406 for "find no content" (item not found / no resources)
-                    return {"code": 406, "data": {}}
+                    print(f"[api_request] {full_url} returned 406, trying next host...", flush=True)
+                    continue
                 print(f"[api_request] {full_url} returned {resp.status_code}: {resp.text[:200]}", flush=True)
             except Exception as e:
                 print(f"[api_request] {full_url} exception: {e}", flush=True)
@@ -665,18 +665,22 @@ class MovieBoxEngine:
             self.bootstrap_token(force=True)
             return self.api_request(method, path_or_url, body_dict, use_token, retry_auth=False)
 
+        if last_resp is not None and last_resp.status_code == 406:
+            return {"code": 406, "data": {}}
+
         status_code = last_resp.status_code if last_resp else 502
         raise HTTPException(status_code=502, detail=f"API returned HTTP {status_code}")
 
-    def search(self, query: str, page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
+    def search(self, query: str, page: int = 1, per_page: int = 20, force_refresh: bool = False) -> List[Dict[str, Any]]:
         safe_per_page = min(max(1, int(per_page or 20)), 20)
         if is_adult_query(query):
             return []
 
         cache_key = f"search:{query}:{page}:{safe_per_page}"
-        cached = app_cache.get(cache_key)
-        if cached is not None:
-            return cached
+        if not force_refresh:
+            cached = app_cache.get(cache_key)
+            if cached is not None:
+                return cached
         payload = {"keyword": query, "page": page, "perPage": safe_per_page}
         url = "/wefeed-mobile-bff/subject-api/search"
         try:
@@ -2118,19 +2122,23 @@ def _search_cinemeta_fallback(query: str, limit: int = 20) -> List[Dict[str, Any
     return results
 
 @app.get("/search")
-def search(q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20):
+def search(q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20, _bust: Optional[str] = Query(None)):
     if is_adult_query(q):
         return {"query": q, "page": page, "results": []}
     safe_per_page = min(max(1, int(per_page or 20)), 20)
+    if _bust:
+        app_cache.delete(f"search:{q}:{page}:{safe_per_page}")
+        app_cache.delete_prefix(f"search:{q}")
     try:
-        results = engine.search(q, page=page, per_page=safe_per_page)
+        results = engine.search(q, page=page, per_page=safe_per_page, force_refresh=bool(_bust))
         for r in results:
             if r.get("cover"):
                 r["cover"] = normalize_cover(r["cover"])
         if not results:
             results = _search_cinemeta_fallback(q, safe_per_page)
         return {"query": q, "page": page, "results": results}
-    except Exception:
+    except Exception as e:
+        print(f"[search] engine.search error for '{q}': {e}", flush=True)
         results = _search_cinemeta_fallback(q, safe_per_page)
         return {"query": q, "page": page, "results": results}
 
