@@ -362,9 +362,13 @@ def generate_x_tr_signature(method: str, accept: str | None, content_type: str |
     sig_b64 = base64.b64encode(digest).decode("ascii")
     return f"{timestamp}|2|{sig_b64}"
 
-def build_auth_headers(method: str, url: str, body: str | None = None, token: str | None = None, device_id: str | None = None, use_alt_key: bool = False, content_type: str = "application/json", accept: str = "application/json") -> Dict[str, str]:
+_VPS_IP = "154.208.51.69"
+
+def build_auth_headers(method: str, url: str, body: str | None = None, token: str | None = None, device_id: str | None = None, use_alt_key: bool = False, content_type: str = "application/json", accept: str = "application/json", client_ip: str | None = None) -> Dict[str, str]:
     ts = int(time.time() * 1000)
     dev_id = device_id or generate_device_id()
+    # Use real user IP when available so upstream geo-serves correct regional content
+    forwarded_ip = client_ip or _VPS_IP
     headers = {
         "user-agent": MODERN_USER_AGENT,
         "accept": accept,
@@ -374,9 +378,9 @@ def build_auth_headers(method: str, url: str, body: str | None = None, token: st
         "x-tr-signature": generate_x_tr_signature(method, accept, content_type, url, body, ts, use_alt_key),
         "x-client-info": generate_client_info(dev_id),
         "x-client-status": "0",
-        "x-forwarded-for": "154.208.51.69",
-        "x-real-ip": "154.208.51.69",
-        "client-ip": "154.208.51.69",
+        "x-forwarded-for": forwarded_ip,
+        "x-real-ip": forwarded_ip,
+        "client-ip": forwarded_ip,
     }
     if token:
         headers["authorization"] = f"Bearer {token}"
@@ -623,7 +627,7 @@ class MovieBoxEngine:
         self.bearer_token = token
         return token
 
-    def api_request(self, method: str, path_or_url: str, body_dict: Optional[Dict[str, Any]] = None, use_token: bool = True, retry_auth: bool = True) -> Dict[str, Any]:
+    def api_request(self, method: str, path_or_url: str, body_dict: Optional[Dict[str, Any]] = None, use_token: bool = True, retry_auth: bool = True, client_ip: Optional[str] = None) -> Dict[str, Any]:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
             hosts_to_try = [""]
         else:
@@ -642,6 +646,7 @@ class MovieBoxEngine:
                 body=body_str,
                 token=self.bearer_token if use_token else None,
                 device_id=self.device_id,
+                client_ip=client_ip,
             )
             data_bytes = body_str.encode("utf-8") if body_str is not None else None
             try:
@@ -663,7 +668,7 @@ class MovieBoxEngine:
         if last_resp is not None and last_resp.status_code in (400, 401, 403, 441) and retry_auth:
             print(f"[api_request] status {last_resp.status_code} - re-bootstrapping token and retrying", flush=True)
             self.bootstrap_token(force=True)
-            return self.api_request(method, path_or_url, body_dict, use_token, retry_auth=False)
+            return self.api_request(method, path_or_url, body_dict, use_token, retry_auth=False, client_ip=client_ip)
 
         if last_resp is not None and last_resp.status_code == 406:
             return {"code": 406, "data": {}}
@@ -671,7 +676,7 @@ class MovieBoxEngine:
         status_code = last_resp.status_code if last_resp else 502
         raise HTTPException(status_code=502, detail=f"API returned HTTP {status_code}")
 
-    def search(self, query: str, page: int = 1, per_page: int = 20, force_refresh: bool = False) -> List[Dict[str, Any]]:
+    def search(self, query: str, page: int = 1, per_page: int = 20, force_refresh: bool = False, client_ip: Optional[str] = None) -> List[Dict[str, Any]]:
         safe_per_page = min(max(1, int(per_page or 20)), 20)
         if is_adult_query(query):
             return []
@@ -690,15 +695,15 @@ class MovieBoxEngine:
         )
         payload = {"keyword": query, "page": page, "perPage": safe_per_page}
         url = "/wefeed-mobile-bff/subject-api/search"
-        raw_resp = self.api_request("POST", url, body_dict=payload)
+        raw_resp = self.api_request("POST", url, body_dict=payload, client_ip=client_ip)
         data = raw_resp.get("data", {})
         # If all hosts 406'd and query contains a language keyword, retry with base title
         if raw_resp.get("code") == 406 and _LANG_KW.search(query):
             base_query = _LANG_KW.sub("", query).strip()
             base_query = re.sub(r'\s{2,}', ' ', base_query).strip(" :-,")
             if base_query and base_query.lower() != query.lower():
-                print(f"[search] 406 on '{query}', retrying with base query '{base_query}'", flush=True)
-                retry_resp = self.api_request("POST", url, body_dict={"keyword": base_query, "page": page, "perPage": safe_per_page})
+                print(f"[search] 406 on '{query}' (ip={client_ip}), retrying base query '{base_query}'", flush=True)
+                retry_resp = self.api_request("POST", url, body_dict={"keyword": base_query, "page": page, "perPage": safe_per_page}, client_ip=client_ip)
                 data = retry_resp.get("data", {}) or {}
         raw_items = data.get("items", []) or data.get("list", [])
         results = []
@@ -2131,15 +2136,22 @@ def _search_cinemeta_fallback(query: str, limit: int = 20) -> List[Dict[str, Any
     return results
 
 @app.get("/search")
-def search(q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20, _bust: Optional[str] = Query(None)):
+def search(request: Request, q: str = Query(..., min_length=1), page: int = 1, per_page: int = 20, _bust: Optional[str] = Query(None)):
     if is_adult_query(q):
         return {"query": q, "page": page, "results": []}
     safe_per_page = min(max(1, int(per_page or 20)), 20)
+    # Extract real user IP to pass upstream (so geo-restricted content e.g. Hindi serves correctly)
+    client_ip = (
+        request.headers.get("cf-connecting-ip")
+        or request.headers.get("x-real-ip")
+        or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        or (request.client.host if request.client else None)
+    ) or _VPS_IP
     if _bust:
         app_cache.delete(f"search:{q}:{page}:{safe_per_page}")
         app_cache.delete_prefix(f"search:{q}")
     try:
-        results = engine.search(q, page=page, per_page=safe_per_page, force_refresh=bool(_bust))
+        results = engine.search(q, page=page, per_page=safe_per_page, force_refresh=bool(_bust), client_ip=client_ip)
         for r in results:
             if r.get("cover"):
                 r["cover"] = normalize_cover(r["cover"])
