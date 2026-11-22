@@ -547,13 +547,19 @@ def _is_ugc_fake_upload(sub: dict) -> bool:
         if "ugc-video" in r_src or "youtube-" in r_link or "search-youtube" in r_dl:
             return True
 
-    # Reject movies with 0 duration, no staff list, no description — usually stubs or trailers
-    if (sub.get("subjectType") == 1  # movie type
+    # Detail payloads include duration and staff. Search cards usually do not, and
+    # language versions are often those lighter cards. Only drop an empty movie when
+    # the title says it is a trailer, or the card has no artwork to play.
+    if (sub.get("subjectType") == 1
             and int(sub.get("durationSeconds") or 0) == 0
             and not sub.get("duration")
             and not sub.get("staffList")
             and not sub.get("description")):
-        return True
+        title_low = title.lower()
+        if "trailer" in title_low or "teaser" in title_low:
+            return True
+        if not (sub.get("cover") or sub.get("detailPath") or sub.get("hasResource") or sub.get("dubs")):
+            return True
 
     return False
 
@@ -597,6 +603,63 @@ def classify_content_type(subject_type: Optional[int], title: Optional[str] = No
 
     # Default is Movie (vast majority of unclassified cinema items are movies)
     return "Movie"
+
+# Language versions are separate subjects (separate videos), not tracks on one file.
+# Titles usually look like "Avengers: Endgame (2019) [Hindi]" — the first bracket is
+# often a year or edition, so audio identity has to be read from a later group or a
+# bare language word ("Avengers Endgame Hindi").
+_AUDIO_LANG_RE = re.compile(
+    r'\b(hindi|english|tamil|telugu|kannada|malayalam|bengali|marathi|punjabi|gujarati|urdu|'
+    r'odia|assamese|maithili|sanskrit|spanish|french|german|japanese|korean|chinese|arabic|'
+    r'portuguese|russian|italian|turkish|thai|indonesian|vietnamese|dual|dubbed|multi)\b',
+    re.IGNORECASE,
+)
+_NON_AUDIO_TAG_RE = re.compile(
+    r'^(?:\d{3,4}p|cam|hd|rip|hdr|dv|web-?dl|bluray|blu-ray|dvdrip|uncut|extended|'
+    r'theatrical|remastered|director\'?s?\s*cut|encore(?:\s*edition)?|imax|'
+    r'special\s*edition|\d{4})$',
+    re.IGNORECASE,
+)
+
+def _audio_label_from_title(title: str) -> str:
+    """Return the language/dub tag from a title, skipping year and quality brackets."""
+    if not title:
+        return ""
+    for a, b in re.findall(r'\[([^\[\]]+)\]|\(([^()]*)\)', title):
+        tag = (a or b or "").strip()
+        if not tag or _NON_AUDIO_TAG_RE.match(tag):
+            continue
+        if _AUDIO_LANG_RE.search(tag) or re.search(r'\bdub\b', tag, re.IGNORECASE):
+            return tag
+    bare = re.sub(r'\[.*?\]|\(.*?\)', ' ', title)
+    match = _AUDIO_LANG_RE.search(bare)
+    return match.group(1) if match else ""
+
+def _audio_base_title(title: str) -> str:
+    """Title with brackets and language words removed, for comparing sibling dubs."""
+    base = re.sub(r'\[.*?\]|\(.*?\)', ' ', title or "")
+    base = _AUDIO_LANG_RE.sub(" ", base)
+    base = re.sub(r'\b(dub|audio)\b', ' ', base, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', base).strip().lower()
+
+def _dub_display_label(tag: str) -> str:
+    is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', tag, re.IGNORECASE))
+    if is_ad and "description" not in tag.lower():
+        return f"{tag} - Audio Description"
+    if "dub" not in tag.lower() and not is_ad:
+        return f"{tag} Dub"
+    return tag
+
+def _append_dub(dubs: List[Dict[str, Any]], subject_id: str, tag: str) -> None:
+    if not subject_id or not tag:
+        return
+    if any(str(d.get("subject_id")) == str(subject_id) for d in dubs):
+        return
+    dubs.append({
+        "subject_id": str(subject_id),
+        "lang_name": _dub_display_label(tag),
+        "language": tag,
+    })
 
 class MovieBoxEngine:
     _instance = None
@@ -737,7 +800,7 @@ class MovieBoxEngine:
         raise HTTPException(status_code=502, detail=f"API returned HTTP {status_code}")
 
     def search(self, query: str, page: int = 1, per_page: int = 20, force_refresh: bool = False, client_ip: Optional[str] = None) -> List[Dict[str, Any]]:
-        safe_per_page = min(max(1, int(per_page or 20)), 20)
+        safe_per_page = min(max(1, int(per_page or 20)), 40)
         if is_adult_query(query):
             return []
 
@@ -746,20 +809,13 @@ class MovieBoxEngine:
             cached = app_cache.get(cache_key)
             if cached is not None:
                 return cached
-        # Language keywords that MovieBox upstream may not handle on non-IN IPs
-        _LANG_KW = re.compile(
-            r'\b(hindi|english|tamil|telugu|kannada|malayalam|bengali|marathi|punjabi|gujarati|urdu|'
-            r'odia|assamese|maithili|sanskrit|spanish|french|german|japanese|korean|chinese|arabic|'
-            r'portuguese|russian|italian|turkish|thai|indonesian|vietnamese|dual|dubbed|dub|multi)\b',
-            re.IGNORECASE
-        )
         payload = {"keyword": query, "page": page, "perPage": safe_per_page}
         url = "/wefeed-mobile-bff/subject-api/search"
         raw_resp = self.api_request("POST", url, body_dict=payload, client_ip=client_ip)
         data = raw_resp.get("data", {})
         # If all hosts 406'd and query contains a language keyword, retry with base title
-        if raw_resp.get("code") == 406 and _LANG_KW.search(query):
-            base_query = _LANG_KW.sub("", query).strip()
+        if raw_resp.get("code") == 406 and _AUDIO_LANG_RE.search(query):
+            base_query = _AUDIO_LANG_RE.sub("", query).strip()
             base_query = re.sub(r'\s{2,}', ' ', base_query).strip(" :-,")
             if base_query and base_query.lower() != query.lower():
                 print(f"[search] 406 on '{query}' (ip={client_ip}), retrying base query '{base_query}'", flush=True)
@@ -770,8 +826,8 @@ class MovieBoxEngine:
         if not raw_items:
             print(f"[search] Native search empty or 406 for '{query}', falling back to H5 web search", flush=True)
             h5_items = self.search_h5(query, page=page, per_page=safe_per_page)
-            if not h5_items and _LANG_KW.search(query):
-                base_query = _LANG_KW.sub("", query).strip()
+            if not h5_items and _AUDIO_LANG_RE.search(query):
+                base_query = _AUDIO_LANG_RE.sub("", query).strip()
                 base_query = re.sub(r'\s{2,}', ' ', base_query).strip(" :-,")
                 if base_query and base_query.lower() != query.lower():
                     h5_items = self.search_h5(base_query, page=page, per_page=safe_per_page)
@@ -798,33 +854,30 @@ class MovieBoxEngine:
             if _is_ugc_fake_upload(sub):
                 continue
 
-            # Strip language/dub bracket tags like [Hindi], (English), [Tamil]
-            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title)
-            clean_base = re.sub(r'\s+', ' ', clean_base).strip().lower()
+            # Base title ignores year/quality brackets AND language words, so
+            # "Avengers (2019)" and "Avengers (2019) [Hindi]" compare as the same film.
+            # The language tag is kept in the key so each audio version stays its own result.
+            clean_base = _audio_base_title(raw_title)
+            audio_tag = _audio_label_from_title(raw_title)
+            if not audio_tag:
+                lang_field = str(sub.get("language") or sub.get("lanName") or "").strip()
+                if lang_field and _AUDIO_LANG_RE.search(lang_field):
+                    audio_tag = lang_field
 
             rel_date = sub.get("releaseDate") or ""
             year_tag = str(rel_date)[:4] if rel_date else ""
             type_tag = str(sub.get("subjectType", 1))
-            
-            # Check for dub / language tag in raw title (e.g. [Hindi], (English), [Tamil])
-            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
-            tag = (lang_match.group(1) or lang_match.group(2) or '').strip() if lang_match else ''
-            norm_tag = tag.lower() if (tag and tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
-            
-            # Per-dub canonical key: keeps distinct language dubs in search while deduplicating exact clones
+            norm_tag = audio_tag.lower() if audio_tag else "orig"
             canonical_key = f"{clean_base}:{year_tag}:{type_tag}:{norm_tag}"
 
-            # If we've already seen this exact title/dub version, deduplicate
+            # Same film, same language, same year: fold the clone onto the first card.
+            # A different language has a different key and is returned on its own.
             if canonical_key in seen_canonical:
                 existing = seen_canonical[canonical_key]
-                if tag and tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']:
-                    is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', tag, re.I))
-                    label = f"{tag} - Audio Description" if is_ad and "description" not in tag.lower() else (f"{tag} Dub" if "dub" not in tag.lower() and not is_ad else tag)
-                    dub_obj = {"subject_id": sid_str, "lang_name": label, "language": tag}
+                if audio_tag:
                     if "dubs" not in existing:
                         existing["dubs"] = []
-                    if not any(d.get("subject_id") == sid_str for d in existing["dubs"]):
-                        existing["dubs"].append(dub_obj)
+                    _append_dub(existing["dubs"], sid_str, audio_tag)
                     app_cache.set(f"dub_parent:{sid_str}", existing["subject_id"], ttl=7200)
                 continue
 
