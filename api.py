@@ -653,7 +653,7 @@ class MovieBoxEngine:
                 if resp.status_code == 200:
                     return resp.json()
                 if resp.status_code == 406:
-                    print(f"[api_request] {full_url} returned 406, trying next host...", flush=True)
+                    print(f"[api_request] {full_url} returned 406: {resp.text[:300]}, trying next host...", flush=True)
                     continue
                 print(f"[api_request] {full_url} returned {resp.status_code}: {resp.text[:200]}", flush=True)
             except Exception as e:
