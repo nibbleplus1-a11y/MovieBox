@@ -2787,6 +2787,48 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
         # Concurrently fetch streams and details in thread pool for 2x faster stream load time
         # For details: first check the card cache (populated by feed), only hit upstream if cache miss
         def _get_details_with_card_fallback(sid: str):
+            # Check details cache first (fastest path)
+            cached_det = app_cache.get(f"details:{sid}")
+            if cached_det and cached_det.get("title"):
+                return cached_det
+            # For IMDb tt* IDs (Cinemeta search results on geo-blocked VPS),
+            # skip the native API (which returns 400 for non-numeric subject IDs)
+            # and go straight to Cinemeta for metadata.
+            if sid.startswith("tt"):
+                for cat in ("movie", "series"):
+                    try:
+                        c_url = f"https://v3-cinemeta.strem.io/meta/{cat}/{sid}.json"
+                        c_resp = httpx.get(c_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                        if c_resp.status_code == 200:
+                            c_meta = c_resp.json().get("meta", {})
+                            if c_meta and c_meta.get("name"):
+                                m_is_ser = (cat == "series" or c_meta.get("type") == "series")
+                                c_genres = c_meta.get("genres", [])
+                                det = {
+                                    "subject_id": sid,
+                                    "original_subject_id": sid,
+                                    "imdb_id": sid,
+                                    "title": c_meta.get("name"),
+                                    "subject_type": 2 if m_is_ser else 1,
+                                    "type": "TV Series" if m_is_ser else "Movie",
+                                    "description": c_meta.get("description") or f"Watch {c_meta.get('name')} in HD online streaming.",
+                                    "release_date": str(c_meta.get("year") or c_meta.get("releaseInfo") or "2026")[:4],
+                                    "coming_soon": False,
+                                    "duration": c_meta.get("runtime", "2h"),
+                                    "duration_formatted": c_meta.get("runtime", "2h"),
+                                    "imdb_rating": str(c_meta.get("imdbRating") or "7.5"),
+                                    "genre": ", ".join(c_genres) if isinstance(c_genres, list) else str(c_meta.get("genre", "Drama")),
+                                    "cover": normalize_cover(c_meta.get("poster")),
+                                    "backdrop": normalize_cover(c_meta.get("background") or c_meta.get("poster")),
+                                    "detail_path": None,
+                                    "dubs": [],
+                                    "seasons": []
+                                }
+                                app_cache.set(f"details:{sid}", det, ttl=86400)
+                                return det
+                    except Exception:
+                        pass
+                return app_cache.get(f"card:{sid}") or None
             try:
                 det = engine.get_details(sid)
                 if det and det.get("title"):
