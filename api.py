@@ -603,6 +603,7 @@ class MovieBoxEngine:
     def __init__(self):
         self.device_id = generate_device_id()
         self.bearer_token: Optional[str] = None
+        self.web_token: Optional[str] = None
         # Always use httpx.Client for native mobile API requests so browser pseudo-headers are not injected
         self.session = httpx.Client(timeout=25, follow_redirects=True)
 
@@ -626,6 +627,59 @@ class MovieBoxEngine:
             raise HTTPException(status_code=502, detail="Empty token in upstream header")
         self.bearer_token = token
         return token
+
+    def bootstrap_web_token(self, force: bool = False) -> Optional[str]:
+        if self.web_token and not force:
+            return self.web_token
+        ts = int(time.time())
+        rev = str(ts)[::-1].encode("utf-8")
+        client_token = f"{ts},{md5_hex(rev)}"
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": WEB_USER_AGENT,
+            "X-Client-Info": '{"timezone":"Asia/Calcutta"}',
+            "X-Request-Lang": "en",
+            "X-Client-Token": client_token,
+        }
+        for host in ["movie-box.co", "movieboxonline.net", "sflix.film"]:
+            try:
+                r = self.session.get(f"https://h5-api.aoneroom.com/wefeed-h5api-bff/home?host={host}", headers=headers, timeout=10)
+                if r.status_code == 200:
+                    x_user = r.headers.get("x-user")
+                    if x_user:
+                        self.web_token = json.loads(x_user).get("token")
+                        return self.web_token
+            except Exception:
+                pass
+        return None
+
+    def search_h5(self, query: str, page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
+        token = self.bootstrap_web_token()
+        if not token:
+            return []
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": WEB_USER_AGENT,
+            "X-Client-Info": '{"timezone":"Asia/Calcutta"}',
+            "X-Request-Lang": "en",
+            "Authorization": f"Bearer {token}",
+        }
+        body = {"keyword": query, "page": page, "perPage": per_page, "subjectType": 0}
+        for endpoint in [
+            "https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/search",
+            "https://movie-box.co/wefeed-h5api-bff/subject/search",
+        ]:
+            try:
+                r = self.session.post(endpoint, headers=headers, json=body, timeout=12)
+                if r.status_code == 200:
+                    data = r.json().get("data", {})
+                    items = data.get("items") or data.get("list") or []
+                    if items:
+                        return items
+            except Exception:
+                pass
+        return []
 
     def api_request(self, method: str, path_or_url: str, body_dict: Optional[Dict[str, Any]] = None, use_token: bool = True, retry_auth: bool = True, client_ip: Optional[str] = None) -> Dict[str, Any]:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
@@ -706,6 +760,17 @@ class MovieBoxEngine:
                 retry_resp = self.api_request("POST", url, body_dict={"keyword": base_query, "page": page, "perPage": safe_per_page}, client_ip=client_ip)
                 data = retry_resp.get("data", {}) or {}
         raw_items = data.get("items", []) or data.get("list", [])
+        # If native mobile API failed or returned 0 results (e.g. 406 geo-block on datacenter/VPS IPs), fallback to H5 web search API
+        if not raw_items:
+            print(f"[search] Native search empty or 406 for '{query}', falling back to H5 web search", flush=True)
+            h5_items = self.search_h5(query, page=page, per_page=safe_per_page)
+            if not h5_items and _LANG_KW.search(query):
+                base_query = _LANG_KW.sub("", query).strip()
+                base_query = re.sub(r'\s{2,}', ' ', base_query).strip(" :-,")
+                if base_query and base_query.lower() != query.lower():
+                    h5_items = self.search_h5(base_query, page=page, per_page=safe_per_page)
+            if h5_items:
+                raw_items = h5_items
         results = []
         seen_canonical = {}
 
