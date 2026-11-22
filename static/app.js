@@ -904,6 +904,7 @@ function createMediaCardHtml(item) {
             <div class="card-body">
                 <h3 class="card-title" title="${escapeHtml(fullTitle)}">
                     ${escapeHtml(cleanTitle)}
+                    ${dubBadgeText ? `<span class="card-badge-audio">${escapeHtml(dubBadgeText)}</span>` : ''}
                     ${isComingSoon ? `<span class="badge-text-coming-soon">Coming Soon</span>` : ''}
                 </h3>
                 <div class="card-meta">

@@ -257,13 +257,13 @@ MODERN_USER_AGENT = "com.community.mbox.in/50020130 (Linux; U; Android 14; en_IN
 WEB_USER_AGENT = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36"
 API_BASE = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
 NATIVE_API_HOSTS = [
-    "https://apig.inmoviebox.com",
-    "https://api-in.inmoviebox.com",
     "https://api3.aoneroom.com",
     "https://api.aoneroom.com",
+    "https://apig.inmoviebox.com",
+    "https://api-in.inmoviebox.com",
 ]
 NATIVE_API_BASE = NATIVE_API_HOSTS[0]
-BOOTSTRAP_HOST = "https://apig.inmoviebox.com"
+BOOTSTRAP_HOST = "https://api3.aoneroom.com"
 BOOTSTRAP_URL = f"{BOOTSTRAP_HOST}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
 
 WEB_DOMAINS = [
@@ -747,9 +747,9 @@ class MovieBoxEngine:
                     pass
 
             disp_title = raw_title
-            # If search query or item is Avengers Endgame, brand as Encore Edition
-            if sid_str == "4191963760367656968" or clean_base in ("avengers: endgame", "avengers endgame"):
-                if "encore" in query.lower() or "endgame" in query.lower() or "avengers" in query.lower():
+            # If item is the specific Encore edition or explicitly searched with "encore"
+            if not init_match and (sid_str == "4191963760367656968" or clean_base in ("avengers: endgame", "avengers endgame")):
+                if "encore" in query.lower():
                     disp_title = "Avengers: Endgame (Encore Edition)"
 
             entry_dubs = []
