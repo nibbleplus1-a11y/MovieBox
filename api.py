@@ -1315,14 +1315,8 @@ class MovieBoxEngine:
             "paw patrol", "bluey"
         }
 
-        # Helper: strip language/dub tags to get canonical base title for dedup
-        _LANG_STRIP_RE = re.compile(r'\s*[\[\(]\s*(hindi|english|tamil|telugu|korean|japanese|dubbed?|sub|dual audio|multi audio|original)[\]\)]\s*', re.IGNORECASE)
-        def _base_title(t):
-            return _LANG_STRIP_RE.sub('', re.sub(r'\[.*?\]|\(.*?\)', '', t or '')).strip().lower()
-
-        # Cross-section dedup: track base titles seen globally to avoid showing same content twice
+        # Cross-section dedup: track subject_ids seen globally (dubs have different IDs, so all pass)
         _global_seen_ids: set = set()
-        _global_seen_base: dict = {}  # base_title -> subject_id of first occurrence
 
         # Primary source: Native mobile ranking lists for regional sections (Bollywood & South Indian)
         native_rank_cats = [
@@ -1348,8 +1342,8 @@ class MovieBoxEngine:
                         cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
                         raw_title = s.get("title") or ""
                         sid = str(s.get("subjectId"))
-                        base = _base_title(raw_title)
-                        already_in = any(x["subject_id"] == sid or _base_title(x.get("title") or "") == base for x in feed[target_key])
+                        # Dedup by subject_id only — dubbed releases have distinct IDs and must all show
+                        already_in = any(x["subject_id"] == sid for x in feed[target_key])
                         if not already_in:
                             item = {
                                 "title": raw_title,
@@ -1363,9 +1357,7 @@ class MovieBoxEngine:
                                 "type": classify_content_type(stype, raw_title)
                             }
                             feed[target_key].append(item)
-                            if sid not in _global_seen_ids:
-                                _global_seen_ids.add(sid)
-                                _global_seen_base[base] = sid
+                            _global_seen_ids.add(sid)
                 except Exception:
                     pass
 
@@ -1428,28 +1420,16 @@ class MovieBoxEngine:
                         "type": classify_content_type(stype, raw_title)
                     }
                     sid = item["subject_id"]
-                    base = _base_title(raw_title)
-                    year_tag = item["year"]
 
-                    # Per-shelf dedup: skip if exact subject_id or exact same language version already in shelf
-                    lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
-                    tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
-                    norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
-                    item_key = f"{base}:{year_tag}:{norm_tag}"
-
-                    is_shelf_dup = any(
-                        (x["subject_id"] == sid) or
-                        (f"{_base_title(x.get('title') or '')}:{x.get('year')}:{norm_tag}" == item_key)
-                        for x in feed[target_key]
-                    )
+                    # Dedup by subject_id only — dubbed releases have distinct IDs and must all show
+                    is_shelf_dup = any(x["subject_id"] == sid for x in feed[target_key])
 
                     if not is_shelf_dup:
                         feed[target_key].append(item)
-                        if sid not in _global_seen_ids:
-                            _global_seen_ids.add(sid)
-                            _global_seen_base[item_key] = sid
+                        _global_seen_ids.add(sid)
                         # Also populate anime sub-shelves
                         if target_key == "anime":
+                            base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip().lower()
                             # Skip Indian films that share anime names
                             if any(ib in base for ib in _INDIAN_FILMS_BLOCKLIST if len(ib) > 4):
                                 feed[target_key].pop()  # remove what was just added
@@ -1505,10 +1485,9 @@ class MovieBoxEngine:
                             "type": classify_content_type(s.get("subjectType"), raw_title)
                         }
                         sid = item["subject_id"]
-                        base = _base_title(raw_title)
                         for k in ["trending", "cinema", "hollywood"]:
-                            # Only add if not already in that shelf AND not a language dup of existing item
-                            already_in = any(x["subject_id"] == sid or _base_title(x.get("title") or "") == base for x in feed[k])
+                            # Dedup by subject_id only — allow distinct dubs through
+                            already_in = any(x["subject_id"] == sid for x in feed[k])
                             if len(feed[k]) < 12 and not already_in:
                                 feed[k].append(item)
             except Exception:
@@ -1572,8 +1551,8 @@ class MovieBoxEngine:
                             # Skip coming_soon entries (unreleased titles) in feed shelves
                             if it.get("coming_soon"):
                                 continue
-                            base = _base_title(it.get("title") or "")
-                            already_in = any(_base_title(x.get("title") or "") == base or x["subject_id"] == sid for x in feed[cat])
+                            # Dedup by subject_id only — dubbed releases have distinct IDs
+                            already_in = any(x["subject_id"] == sid for x in feed[cat])
                             if not already_in and len(feed[cat]) < 36:
                                 feed[cat].append(it)
                                 # Backfill anime sub-shelves too
@@ -3081,8 +3060,13 @@ async def trigger_server_deploy(secret: Optional[str] = Query(None)):
     loop = asyncio.get_event_loop()
     res = await loop.run_in_executor(_bg_executor, _pull_and_restart)
     app_cache.delete("feed:home_curated")
+    app_cache.delete("feed:hero_daily_trending")
     app_cache.delete_prefix("feed:")
     app_cache.delete_prefix("streams:")
+    app_cache.delete_prefix("details:")
+    app_cache.delete_prefix("search:")
+    app_cache.delete_prefix("movies:")
+    app_cache.delete_prefix("tv:")
     return {"status": "success", "message": "Deployed latest GitHub commit", "log": res}
 
 
@@ -3328,11 +3312,15 @@ def get_hero_trending():
     candidates = feed.get("trending", []) + feed.get("new_releases", []) + feed.get("hollywood", [])
     for it in candidates:
         sid = it.get("subject_id")
-        raw_title = it.get("title") or ""
+        raw_title = it.get("raw_title") or it.get("title") or ""
         clean = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
-        if not clean or clean.lower() in seen:
+        lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
+        tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
+        norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+        dedup_key = f"{clean.lower()}:{norm_tag}"
+        if not clean or dedup_key in seen:
             continue
-        seen.add(clean.lower())
+        seen.add(dedup_key)
 
         backdrop = it.get("cover")
         rating = it.get("rating") or "7.5"
@@ -3340,13 +3328,14 @@ def get_hero_trending():
         genre = it.get("genre") or "Action, Cinema"
 
         slides.append({
-            "title": clean,
+            "title": raw_title,
             "raw_title": raw_title,
+            "clean_title": clean,
             "subject_id": sid,
             "rating": rating,
             "year": year,
             "genre": genre,
-            "desc": f"Watch {clean} in crystal-clear 1080p Ultra HD streaming with verified CDN mirrors, multi-language dubs, and interactive cinema controls.",
+            "desc": f"Watch {raw_title} in crystal-clear 1080p Ultra HD streaming with verified CDN mirrors, multi-language dubs, and interactive cinema controls.",
             "backdrop": backdrop,
             "cover": it.get("cover"),
             "type": it.get("type", "Movie")

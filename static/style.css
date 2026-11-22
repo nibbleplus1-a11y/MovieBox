@@ -11318,32 +11318,54 @@ kbd {
    ========================================================================== */
 
 .card-badge-audio {
-
     display: inline-block;
-
     margin-left: 6px;
-
     padding: 1px 6px;
-
     border-radius: 4px;
-
     font-size: 10px;
-
     font-weight: 700;
-
     text-transform: uppercase;
-
     letter-spacing: 0.3px;
-
     background: rgba(139, 92, 246, 0.25);
-
     color: #c4b5fd;
-
     border: 1px solid rgba(139, 92, 246, 0.4);
-
     vertical-align: middle;
-
 }
+
+.card-badge-dub {
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    background: linear-gradient(135deg, rgba(109, 40, 217, 0.95), rgba(76, 29, 149, 0.95));
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(167, 139, 250, 0.6);
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2.5px 7px;
+    border-radius: var(--r-full);
+    letter-spacing: 0.3px;
+    z-index: 2;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    max-width: calc(100% - 16px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+}
+
+.card-meta-dub {
+    color: #a78bfa;
+    font-weight: 600;
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
 
 
 

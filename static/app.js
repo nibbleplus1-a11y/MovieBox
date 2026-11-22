@@ -515,11 +515,12 @@ function renderHeroSlide(index) {
     if (backdrop && slide.backdrop) {
         backdrop.style.backgroundImage = `url('${slide.backdrop}')`;
     }
-    if (title) title.textContent = slide.title;
-    if (desc) desc.textContent = slide.desc || `Watch ${slide.title} in 1080p Ultra HD streaming with 5.1 surround dubs and full cinema controls.`;
+    const displayTitle = slide.raw_title || slide.title || '';
+    if (title) title.textContent = displayTitle;
+    if (desc) desc.textContent = slide.desc || `Watch ${displayTitle} in 1080p Ultra HD streaming with 5.1 surround dubs and full cinema controls.`;
     if (ratingBadge) ratingBadge.textContent = `★ ${slide.rating} IMDb`;
     if (genreBadge) genreBadge.textContent = slide.genre || 'Action • Cinema';
-    if (playBtn) playBtn.onclick = () => quickPlay(slide.subject_id, slide.title);
+    if (playBtn) playBtn.onclick = () => quickPlay(slide.subject_id, displayTitle);
     if (detailsBtn) detailsBtn.onclick = () => openDetailsModal(slide.subject_id);
 
     document.querySelectorAll('#heroDots .dot').forEach((d, i) => d.classList.toggle('active', i === index));
@@ -860,33 +861,33 @@ function createMediaCardHtml(item) {
 
     // Extract audio dub badge from title or raw_title (e.g., [Hindi], [English], [Dual])
     const rawTitle = item.raw_title || item.title || '';
-    let audioBadge = '';
+    let dubBadgeText = '';
     const langMatch = rawTitle.match(/\[(.*?)\]|\((.*?)\)/);
     if (langMatch) {
         const lang = (langMatch[1] || langMatch[2] || '').trim();
-        if (lang && !['1080p', '720p', 'cam', 'hd', 'rip', 'hindi dubbed'].includes(lang.toLowerCase())) {
-            audioBadge = `<span class="card-badge-audio">${escapeHtml(lang)}</span>`;
-        } else if (lang.toLowerCase().includes('hindi') || lang.toLowerCase().includes('dubbed')) {
-            audioBadge = `<span class="card-badge-audio">Hindi Dub</span>`;
+        if (lang && !['1080p', '720p', 'cam', 'hd', 'rip', '480p'].includes(lang.toLowerCase())) {
+            dubBadgeText = _cleanDubDisplayName(lang);
         }
     } else if (item.dubs && item.dubs.length > 1) {
-        const dubNames = item.dubs.map(d => (d.lang_name || d.language || '').replace(/\s*(?:dub|audio|description)/gi, '').trim()).filter(Boolean);
+        const dubNames = item.dubs.map(d => _cleanDubDisplayName(d.lang_name || d.language || '')).filter(Boolean);
         const uniqueDubs = [...new Set(dubNames)];
-        if (uniqueDubs.length > 0) {
-            audioBadge = `<span class="card-badge-audio" title="${uniqueDubs.join(', ')} Dubs">🎙 ${uniqueDubs.slice(0, 2).join('/')} Dub</span>`;
+        if (uniqueDubs.length > 1) {
+            dubBadgeText = `${uniqueDubs.length} Audios`;
         }
     }
     const cleanTitle = (item.title || 'Untitled').replace(/\[.*?\]|\(.*?\)/g, '').trim();
     const safeTitle = escapeAttr(cleanTitle || 'Untitled');
+    const fullTitle = rawTitle.trim() || cleanTitle || 'Untitled';
 
     const isComingSoon = Boolean(item.coming_soon || (item.release_date && item.release_date.slice(0, 10) > new Date().toISOString().slice(0, 10)));
 
     return `
         <div class="media-card" onclick="openDetailsModal('${safeId}')" id="card-${safeId}">
             <div class="poster-wrap">
-                <img class="card-poster" src="${poster}" alt="${escapeHtml(cleanTitle)}" loading="lazy" onerror="this.src='${fallback}'">
+                <img class="card-poster" src="${poster}" alt="${escapeHtml(fullTitle)}" loading="lazy" onerror="this.src='${fallback}'">
                 ${rating ? `<span class="card-badge-rating">★ ${rating}</span>` : ''}
                 <span class="card-badge-type">${type}</span>
+                ${dubBadgeText ? `<span class="card-badge-dub" title="${escapeAttr(dubBadgeText)}">🎙 ${escapeHtml(dubBadgeText)}</span>` : ''}
                 ${isComingSoon ? `<span class="card-badge-coming-soon">⏳ Coming Soon</span>` : ''}
                 ${isComingSoon ? `
                 <div class="card-overlay-btn" onclick="event.stopPropagation(); showToast('${safeTitle} is coming soon (not released yet)', 'info');">
@@ -901,13 +902,13 @@ function createMediaCardHtml(item) {
                 </div>`}
             </div>
             <div class="card-body">
-                <h3 class="card-title" title="${escapeHtml(cleanTitle)}">
+                <h3 class="card-title" title="${escapeHtml(fullTitle)}">
                     ${escapeHtml(cleanTitle)}
-                    ${audioBadge}
                     ${isComingSoon ? `<span class="badge-text-coming-soon">Coming Soon</span>` : ''}
                 </h3>
                 <div class="card-meta">
                     ${year ? `<span>${year}</span>` : ''}
+                    ${dubBadgeText ? `<span class="card-meta-dub" title="${escapeAttr(dubBadgeText)}">🎙 ${escapeHtml(dubBadgeText)}</span>` : ''}
                 </div>
             </div>
         </div>`;
