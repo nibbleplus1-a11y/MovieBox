@@ -681,15 +681,25 @@ class MovieBoxEngine:
             cached = app_cache.get(cache_key)
             if cached is not None:
                 return cached
+        # Language keywords that MovieBox upstream may not handle on non-IN IPs
+        _LANG_KW = re.compile(
+            r'\b(hindi|english|tamil|telugu|kannada|malayalam|bengali|marathi|punjabi|gujarati|urdu|'
+            r'odia|assamese|maithili|sanskrit|spanish|french|german|japanese|korean|chinese|arabic|'
+            r'portuguese|russian|italian|turkish|thai|indonesian|vietnamese|dual|dubbed|dub|multi)\b',
+            re.IGNORECASE
+        )
         payload = {"keyword": query, "page": page, "perPage": safe_per_page}
         url = "/wefeed-mobile-bff/subject-api/search"
-        try:
-            data = self.api_request("POST", url, body_dict=payload).get("data", {})
-        except Exception:
-            try:
-                data = self.api_request("POST", url, body_dict={"keyword": query, "page": page, "perPage": 10}).get("data", {})
-            except Exception:
-                data = {}
+        raw_resp = self.api_request("POST", url, body_dict=payload)
+        data = raw_resp.get("data", {})
+        # If all hosts 406'd and query contains a language keyword, retry with base title
+        if raw_resp.get("code") == 406 and _LANG_KW.search(query):
+            base_query = _LANG_KW.sub("", query).strip()
+            base_query = re.sub(r'\s{2,}', ' ', base_query).strip(" :-,")
+            if base_query and base_query.lower() != query.lower():
+                print(f"[search] 406 on '{query}', retrying with base query '{base_query}'", flush=True)
+                retry_resp = self.api_request("POST", url, body_dict={"keyword": base_query, "page": page, "perPage": safe_per_page})
+                data = retry_resp.get("data", {}) or {}
         raw_items = data.get("items", []) or data.get("list", [])
         results = []
         seen_canonical = {}
