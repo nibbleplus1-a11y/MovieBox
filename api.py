@@ -3244,6 +3244,24 @@ def debug_upstream(
     # 2.7 Test H5 web token and search
     try:
         diag["h5_token"] = bool(engine.bootstrap_web_token())
+        token = engine.bootstrap_web_token() or DEFAULT_WEB_TOKEN
+        h5_headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": WEB_USER_AGENT,
+            "X-Client-Info": '{"timezone":"Asia/Calcutta"}',
+            "X-Request-Lang": "en",
+            "Authorization": f"Bearer {token}",
+        }
+        h5_body = {"keyword": "Avatar", "page": 1, "perPage": 5, "subjectType": 0}
+        h5_resps = {}
+        for ep in ["https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/search", "https://movie-box.co/wefeed-h5api-bff/subject/search"]:
+            try:
+                r = engine.session.post(ep, headers=h5_headers, json=h5_body, timeout=8)
+                h5_resps[ep] = {"status": r.status_code, "text": r.text[:200]}
+            except Exception as e:
+                h5_resps[ep] = {"error": str(e)}
+        diag["h5_endpoints"] = h5_resps
         h5_items = engine.search_h5("Avatar", page=1, per_page=5)
         diag["h5_items_len"] = len(h5_items)
         if h5_items:
