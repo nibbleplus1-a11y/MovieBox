@@ -610,8 +610,11 @@ def classify_content_type(subject_type: Optional[int], title: Optional[str] = No
 # bare language word ("Avengers Endgame Hindi").
 _AUDIO_LANG_RE = re.compile(
     r'\b(hindi|english|tamil|telugu|kannada|malayalam|bengali|marathi|punjabi|gujarati|urdu|'
-    r'odia|assamese|maithili|sanskrit|spanish|french|german|japanese|korean|chinese|arabic|'
-    r'portuguese|russian|italian|turkish|thai|indonesian|vietnamese|dual|dubbed|multi)\b',
+    r'odia|assamese|maithili|sanskrit|spanish|spanishlatam|espanol|español|esla|espn|latino|castellano|'
+    r'portuguese|portugues|português|ptbr|french|german|japanese|korean|chinese|arabic|'
+    r'russian|italian|turkish|thai|indonesian|vietnamese|filipino|tagalog|persian|farsi|'
+    r'polish|dutch|swedish|greek|hebrew|czech|romanian|hungarian|ukrainian|'
+    r'dual|dubbed|dub|multi)\b',
     re.IGNORECASE,
 )
 _NON_AUDIO_TAG_RE = re.compile(
@@ -643,12 +646,46 @@ def _audio_base_title(title: str) -> str:
     return re.sub(r'\s+', ' ', base).strip().lower()
 
 def _dub_display_label(tag: str) -> str:
-    is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', tag, re.IGNORECASE))
-    if is_ad and "description" not in tag.lower():
-        return f"{tag} - Audio Description"
-    if "dub" not in tag.lower() and not is_ad:
-        return f"{tag} Dub"
-    return tag
+    if not tag:
+        return ""
+    t_clean = tag.strip()
+    t_lower = t_clean.lower()
+    is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', t_lower))
+    lang_name_map = {
+        "esla": "Spanish (Latin)",
+        "spanishlatam": "Spanish (Latin)",
+        "spanish latam": "Spanish (Latin)",
+        "espanol": "Spanish",
+        "español": "Spanish",
+        "espn": "Spanish",
+        "ptbr": "Portuguese (Brazil)",
+        "hin": "Hindi",
+        "tam": "Tamil",
+        "tel": "Telugu",
+        "kan": "Kannada",
+        "mal": "Malayalam",
+        "ben": "Bengali",
+        "mar": "Marathi",
+        "pun": "Punjabi",
+        "eng": "English",
+        "jpn": "Japanese",
+        "kor": "Korean",
+        "chi": "Chinese",
+        "rus": "Russian",
+        "ara": "Arabic",
+        "fre": "French",
+        "ger": "German",
+        "ita": "Italian",
+    }
+    base_t = re.sub(r'\s*dub(?:bed)?\s*', '', t_lower).strip()
+    if base_t in lang_name_map:
+        mapped = lang_name_map[base_t]
+        return f"{mapped} - Audio Description" if is_ad else f"{mapped} Dub"
+    if is_ad and "description" not in t_lower:
+        return f"{t_clean} - Audio Description"
+    if "dub" not in t_lower and not is_ad and "audio" not in t_lower:
+        return f"{t_clean.title()} Dub"
+    return t_clean.title() if "dub" in t_lower else t_clean
 
 def _append_dub(dubs: List[Dict[str, Any]], subject_id: str, tag: str) -> None:
     if not subject_id or not tag:
@@ -835,6 +872,7 @@ class MovieBoxEngine:
                 raw_items = h5_items
         results = []
         seen_canonical = {}
+        siblings_by_base = {}
 
         for item in raw_items:
             sub = item.get("subject", item)
@@ -860,15 +898,16 @@ class MovieBoxEngine:
             clean_base = _audio_base_title(raw_title)
             audio_tag = _audio_label_from_title(raw_title)
             if not audio_tag:
-                lang_field = str(sub.get("language") or sub.get("lanName") or "").strip()
-                if lang_field and _AUDIO_LANG_RE.search(lang_field):
-                    audio_tag = lang_field
+                lan_name = str(sub.get("lanName") or "").strip()
+                if lan_name and _AUDIO_LANG_RE.search(lan_name):
+                    audio_tag = lan_name
 
             rel_date = sub.get("releaseDate") or ""
             year_tag = str(rel_date)[:4] if rel_date else ""
             type_tag = str(sub.get("subjectType", 1))
             norm_tag = audio_tag.lower() if audio_tag else "orig"
             canonical_key = f"{clean_base}:{year_tag}:{type_tag}:{norm_tag}"
+            base_key = f"{clean_base}:{year_tag}:{type_tag}"
 
             # Same film, same language, same year: fold the clone onto the first card.
             # A different language has a different key and is returned on its own.
@@ -891,17 +930,13 @@ class MovieBoxEngine:
 
             disp_title = raw_title
             # If item is the specific Encore edition or explicitly searched with "encore"
-            if not lang_match and (sid_str == "4191963760367656968" or clean_base in ("avengers: endgame", "avengers endgame")):
+            if not audio_tag and (sid_str == "4191963760367656968" or clean_base in ("avengers: endgame", "avengers endgame")):
                 if "encore" in query.lower():
                     disp_title = "Avengers: Endgame (Encore Edition)"
 
             entry_dubs = []
-            if lang_match:
-                init_tag = (lang_match.group(1) or lang_match.group(2) or '').strip()
-                if init_tag and init_tag.lower() not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']:
-                    is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', init_tag, re.I))
-                    init_label = f"{init_tag} - Audio Description" if is_ad and "description" not in init_tag.lower() else (f"{init_tag} Dub" if "dub" not in init_tag.lower() and not is_ad else init_tag)
-                    entry_dubs.append({"subject_id": sid_str, "lang_name": init_label, "language": init_tag})
+            if audio_tag:
+                _append_dub(entry_dubs, sid_str, audio_tag)
 
             entry = {
                 "subject_id": sid_str,
@@ -918,11 +953,32 @@ class MovieBoxEngine:
                 "dubs": entry_dubs
             }
             seen_canonical[canonical_key] = entry
+            siblings_by_base.setdefault(base_key, []).append((entry, sid_str, audio_tag))
             results.append(entry)
             s_sid = entry.get("subject_id")
             s_dp = entry.get("detail_path")
             if s_sid and s_dp:
                 app_cache.set(f"detail_path:{s_sid}", s_dp, ttl=86400)
+
+        # Cross-populate dubs across siblings so every version knows all available languages
+        for base_key, sib_list in siblings_by_base.items():
+            if len(sib_list) > 1:
+                primary_entry, primary_sid, _ = next(((e, s, a) for e, s, a in sib_list if not a), sib_list[0])
+                for entry_item, s_id, s_audio in sib_list:
+                    if s_id != primary_sid:
+                        app_cache.set(f"dub_parent:{s_id}", primary_sid, ttl=7200)
+                    if "dubs" not in entry_item or not entry_item["dubs"]:
+                        entry_item["dubs"] = []
+                    if not any(d.get("subject_id") == primary_sid for d in entry_item["dubs"]):
+                        entry_item["dubs"].insert(0, {
+                            "subject_id": primary_sid,
+                            "lang_name": "Original Audio",
+                            "language": "Original",
+                            "original": True
+                        })
+                    for _, other_sid, other_audio in sib_list:
+                        if other_audio and not any(d.get("subject_id") == other_sid for d in entry_item["dubs"]):
+                            _append_dub(entry_item["dubs"], other_sid, other_audio)
 
         app_cache.set(cache_key, results, ttl=600)
         return results
@@ -958,16 +1014,17 @@ class MovieBoxEngine:
                 app_cache.set(f"dub_parent:{d['subject_id']}", main_id, ttl=7200)
 
         raw_title = data.get("title") or ""
-        clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
-        self_has_bracket = bool(re.search(r'\[.+?\]|\(.+?\)', raw_title))
+        clean_title = _audio_base_title(raw_title) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
+        self_audio_tag = _audio_label_from_title(raw_title)
+        self_has_audio = bool(self_audio_tag)
 
         # If detail_path missing, derive slug from clean title
         if not detail_path and clean_title:
             detail_path = re.sub(r'[^a-z0-9]+', '-', clean_title.lower()).strip('-')
 
         # Always harvest sibling dubs via parent link or clean title search if dubs list is incomplete,
-        # or if the current item has a bracket title, or if fewer than 2 dubs exist
-        if len(dubs) <= 1 or self_has_bracket:
+        # or if the current item has a language tag, or if fewer than 2 dubs exist
+        if len(dubs) <= 1 or self_has_audio:
             parent_id = app_cache.get(f"dub_parent:{subject_id}")
             rel_date = str(data.get("releaseDate") or "")[:4]
             subject_type = data.get("subjectType")
@@ -988,29 +1045,20 @@ class MovieBoxEngine:
                         except Exception:
                             year_ok = True
                         type_ok = (not subject_type or not r_type or subject_type == r_type)
-                        if year_ok and type_ok:
-                            # Collect any dub objects discovered during search dedup
+                        title_ok = not clean_title or (_audio_base_title(r.get("title") or "") == clean_title)
+                        if year_ok and type_ok and title_ok:
+                            # Collect any dub objects discovered during search
                             for d in r.get("dubs", []):
                                 if not any(existing_d.get("subject_id") == d.get("subject_id") for existing_d in dubs):
                                     dubs.append(d)
                             r_title = r.get("title", "")
-                            r_has_bracket = bool(re.search(r'\[.+?\]|\(.+?\)', r_title))
-                            # This sibling itself is a dub variant — add it as a dub entry
-                            if r_has_bracket:
-                                lang_match = re.search(r'\[(.+?)\]|\((.+?)\)', r_title)
-                                lang_tag = (lang_match.group(1) or lang_match.group(2) or '').strip() if lang_match else ''
-                                if lang_tag and lang_tag.lower() not in ('1080p', '720p', '480p', 'cam', 'hd', 'rip'):
-                                    is_ad = bool(re.search(r'description|descriptive|\[ad\]|visual', lang_tag, re.I))
-                                    label = f"{lang_tag} - Audio Description" if is_ad and 'description' not in lang_tag.lower() \
-                                        else (f"{lang_tag} Dub" if 'dub' not in lang_tag.lower() and not is_ad else lang_tag)
-                                    if not any(d.get("subject_id") == r_sid for d in dubs):
-                                        dubs.append({"subject_id": r_sid, "lang_name": label, "language": lang_tag})
-                                    app_cache.set(f"dub_parent:{r_sid}", main_id, ttl=7200)
-                            # Clean-title result without brackets → this is the original; set as parent
-                            if not r_has_bracket and not parent_id and self_has_bracket:
-                                parent_id = r_sid
-                            elif not r_has_bracket and not parent_id:
-                                # Even without self having bracket, track the cleanest result as potential parent
+                            r_audio_tag = _audio_label_from_title(r_title) or (r.get("language") if r.get("language") and _AUDIO_LANG_RE.fullmatch(str(r.get("language")).strip()) else None)
+                            # If this sibling is a dub variant, add it as a dub entry
+                            if r_audio_tag:
+                                _append_dub(dubs, r_sid, r_audio_tag)
+                                app_cache.set(f"dub_parent:{r_sid}", main_id, ttl=7200)
+                            elif not parent_id:
+                                # Clean-title result without language tag -> potential parent
                                 parent_id = r_sid
                 except Exception:
                     pass
@@ -1027,20 +1075,14 @@ class MovieBoxEngine:
                 except Exception:
                     pass
 
-            # If this subject itself has a bracket tag but we didn't add it to dubs yet, add self
-            if self_has_bracket:
-                self_lang_match = re.search(r'\[(.+?)\]|\((.+?)\)', raw_title)
-                self_lang = (self_lang_match.group(1) or self_lang_match.group(2) or '').strip() if self_lang_match else ''
-                if self_lang and self_lang.lower() not in ('1080p', '720p', '480p', 'cam', 'hd', 'rip'):
-                    if not any(d.get("subject_id") == main_id for d in dubs):
-                        is_ad = bool(re.search(r'description|descriptive|\[ad\]|visual', self_lang, re.I))
-                        label = f"{self_lang} - Audio Description" if is_ad and 'description' not in self_lang.lower() \
-                            else (f"{self_lang} Dub" if 'dub' not in self_lang.lower() and not is_ad else self_lang)
-                        dubs.insert(0, {"subject_id": main_id, "lang_name": label, "language": self_lang})
+            # If this subject itself is a dub variant, ensure it is added to dubs
+            if self_audio_tag:
+                if not any(d.get("subject_id") == main_id for d in dubs):
+                    _append_dub(dubs, main_id, self_audio_tag)
 
         # Ensure Original Audio entry exists in dubs list if dubs are present
         if dubs:
-            has_orig_entry = any(bool(d.get("original")) or str(d.get("subject_id")) == original_subject_id for d in dubs)
+            has_orig_entry = any(bool(d.get("original")) or d.get("lang_name") == "Original Audio" or str(d.get("subject_id")) == original_subject_id for d in dubs)
             if not has_orig_entry and original_subject_id:
                 orig_lang = data.get("language") or "en"
                 dubs.insert(0, {
@@ -2375,6 +2417,24 @@ def get_detail(subject_id: str, title: Optional[str] = Query(None), _bust: Optio
                                 "dubs": [],
                                 "seasons": []
                             }
+                            # Also harvest any available dubs for this title from MovieBox
+                            try:
+                                mbox_hits = engine.search(c_meta.get("name"), per_page=10)
+                                tt_dubs = []
+                                for hit in mbox_hits:
+                                    h_sid = str(hit.get("subject_id") or "")
+                                    if not h_sid or h_sid.startswith("tt"):
+                                        continue
+                                    for hd in hit.get("dubs", []):
+                                        if not any(x.get("subject_id") == hd.get("subject_id") for x in tt_dubs):
+                                            tt_dubs.append(hd)
+                                    h_tag = _audio_label_from_title(hit.get("title") or "")
+                                    if h_tag and not any(x.get("subject_id") == h_sid for x in tt_dubs):
+                                        _append_dub(tt_dubs, h_sid, h_tag)
+                                if tt_dubs:
+                                    res["dubs"] = tt_dubs
+                            except Exception:
+                                pass
                             app_cache.set(f"details:{subject_id}", res, ttl=86400)
                             break
                 except Exception:
@@ -2877,6 +2937,24 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
                                     "dubs": [],
                                     "seasons": []
                                 }
+                                # Also harvest any available dubs for this title from MovieBox
+                                try:
+                                    mbox_hits = engine.search(c_meta.get("name"), per_page=10)
+                                    tt_dubs = []
+                                    for hit in mbox_hits:
+                                        h_sid = str(hit.get("subject_id") or "")
+                                        if not h_sid or h_sid.startswith("tt"):
+                                            continue
+                                        for hd in hit.get("dubs", []):
+                                            if not any(x.get("subject_id") == hd.get("subject_id") for x in tt_dubs):
+                                                tt_dubs.append(hd)
+                                        h_tag = _audio_label_from_title(hit.get("title") or "")
+                                        if h_tag and not any(x.get("subject_id") == h_sid for x in tt_dubs):
+                                            _append_dub(tt_dubs, h_sid, h_tag)
+                                    if tt_dubs:
+                                        det["dubs"] = tt_dubs
+                                except Exception:
+                                    pass
                                 app_cache.set(f"details:{sid}", det, ttl=86400)
                                 return det
                     except Exception:
@@ -3544,10 +3622,9 @@ def get_hero_trending():
     for it in candidates:
         sid = it.get("subject_id")
         raw_title = it.get("raw_title") or it.get("title") or ""
-        clean = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
-        lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_title)
-        tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
-        norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+        clean = _audio_base_title(raw_title) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
+        audio_tag = _audio_label_from_title(raw_title)
+        norm_tag = audio_tag.lower() if audio_tag else 'orig'
         dedup_key = f"{clean.lower()}:{norm_tag}"
         if not clean or dedup_key in seen:
             continue
@@ -3612,10 +3689,9 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
             if it.get("subject_type") == 2 or it.get("type") in ["Series", "TV Series"]:
                 continue
             raw_t = it.get("title") or ""
-            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
-            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_t)
-            tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
-            norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+            clean_base = _audio_base_title(raw_t) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
+            audio_tag = _audio_label_from_title(raw_t)
+            norm_tag = audio_tag.lower() if audio_tag else 'orig'
             dedup_key = f"{clean_base}:{norm_tag}"
             if it["subject_id"] not in seen and dedup_key not in seen:
                 seen.add(it["subject_id"])
@@ -3665,10 +3741,9 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
                 continue
             sid = str(s.get("subjectId"))
             raw_t = s.get("title") or ""
-            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
-            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_t)
-            tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
-            norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+            clean_base = _audio_base_title(raw_t) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
+            audio_tag = _audio_label_from_title(raw_t)
+            norm_tag = audio_tag.lower() if audio_tag else 'orig'
             dedup_key = f"{clean_base}:{norm_tag}"
             if sid not in seen and dedup_key not in seen:
                 seen.add(sid)
@@ -3724,10 +3799,9 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
             if it.get("subject_type") == 1 or it.get("type") == "Movie":
                 continue
             raw_t = it.get("title") or ""
-            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
-            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_t)
-            tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
-            norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+            clean_base = _audio_base_title(raw_t) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
+            audio_tag = _audio_label_from_title(raw_t)
+            norm_tag = audio_tag.lower() if audio_tag else 'orig'
             dedup_key = f"{clean_base}:{norm_tag}"
             if it["subject_id"] not in seen and dedup_key not in seen:
                 seen.add(it["subject_id"])
@@ -3789,10 +3863,9 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
                 continue
             sid = str(s.get("subjectId"))
             raw_t = s.get("title") or ""
-            clean_base = re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
-            lang_match = re.search(r'\[(.*?)\]|\((.*?)\)', raw_t)
-            tag = (lang_match.group(1) or lang_match.group(2) or '').strip().lower() if lang_match else ''
-            norm_tag = tag if (tag and tag not in ['1080p', '720p', 'cam', 'hd', 'rip', '480p']) else 'orig'
+            clean_base = _audio_base_title(raw_t) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
+            audio_tag = _audio_label_from_title(raw_t)
+            norm_tag = audio_tag.lower() if audio_tag else 'orig'
             dedup_key = f"{clean_base}:{norm_tag}"
             if sid not in seen and dedup_key not in seen:
                 seen.add(sid)

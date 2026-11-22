@@ -549,6 +549,21 @@ sudo ss -tulpn | grep -E '80|443|8000'
 * **Problem**: OpenSubtitles `.srt.gz` files were blocked by browser CORS policy or failed to parse due to gzip compression.
 * **Solution**: Added `/api/proxy/online-caption?url={encoded}` endpoint which downloads the remote subtitle, decompresses gzip archives in-memory, converts encoding to UTF-8, and serves plain text with `Access-Control-Allow-Origin: *`.
 
+### 9.6 Multi-Language Audio Dubs & Search Resolution Fix
+* **Problem**: Language dub versions of titles (e.g. *Avengers: Endgame [Hindi]*, *Sherlock Holmes [Hindi]*, *[SpanishLatam]*) stopped appearing in search results and catalogs, and player audio switcher only showed "Original Audio".
+* **Root Causes**:
+  1. A `NameError: name 'lang_match' is not defined` in `MovieBoxEngine.search()` caused all searches to crash silently and fall back to Cinemeta, returning IMDb `tt*` IDs without MovieBox audio dubs.
+  2. Sibling dub harvesting in `get_details()` was also calling `self.search()`, failing and discarding sibling dubs.
+  3. `_AUDIO_LANG_RE` omitted Latin American Spanish (`SpanishLatam`, `esla`, `espn`), Portuguese Brazil (`ptbr`), and related regional tags.
+  4. Catalog deduplication in `/movies`, `/tv-series`, and `hero_trending` matched the first bracket group `(2019)` as language tag instead of skipping year tags, discarding dubbed versions as duplicates of the original.
+* **Solution**:
+  * Fixed `lang_match` reference with `audio_tag = _audio_label_from_title(raw_title)`.
+  * Expanded `_AUDIO_LANG_RE` and `_dub_display_label()` to support `SpanishLatam`, `esla`, `espn`, `ptbr`, etc.
+  * Cross-linked sibling dubs across cards in `search()` so all variants contain the full multi-dub audio list.
+  * Enhanced `get_details()` to accurately match sibling base titles and populate all dub options.
+  * Added MovieBox dub harvesting for Cinemeta `tt*` titles in detail and stream endpoints.
+  * Standardized feed deduplication with `_audio_base_title()` and `_audio_label_from_title()`.
+
 ---
 
 ## 10. Summary Checklist for Any Future AI Agent

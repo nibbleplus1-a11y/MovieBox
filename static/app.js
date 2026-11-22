@@ -3440,7 +3440,8 @@ function _cleanDubDisplayName(rawName) {
     if (!rawName) return 'Audio Track';
     let n = String(rawName).trim();
     const low = n.toLowerCase();
-    if (low === 'esla' || low === 'esla dub' || low === 'es-la') return 'Spanish (Latin America)';
+    if (low === 'esla' || low === 'esla dub' || low === 'es-la' || low === 'spanishlatam' || low === 'spanish latam' || low === 'espn' || low === 'latino') return 'Spanish (Latin America)';
+    if (low === 'es' || low === 'espanol' || low === 'español' || low === 'spanish' || low === 'castellano') return 'Spanish Dub';
     if (low === 'ptbr' || low === 'ptbr dub' || low === 'pt-br') return 'Portuguese (Brazil)';
     if (low === 'en' || low === 'en dub' || low === 'eng') return 'English Dub';
     if (low === 'ja' || low === 'ja dub' || low === 'jpn') return 'Japanese Original';
@@ -3456,7 +3457,7 @@ function _getAudioLangFlag(name) {
     if (n.includes('tamil') || n.includes('telugu') || n.includes('bengali') || n.includes('malayalam') || n.includes('kannada') || n.includes('punjabi')) return '🇮🇳';
     if (n.includes('japanese') || n.includes('ja')) return '🇯🇵';
     if (n.includes('english') || n.includes('en')) return '🇺🇸';
-    if (n.includes('spanish') || n.includes('esla') || n.includes('es')) return '🇪🇸';
+    if (n.includes('spanish') || n.includes('esla') || n.includes('espn') || n.includes('es') || n.includes('latino')) return '🇪🇸';
     if (n.includes('portuguese') || n.includes('ptbr') || n.includes('pt')) return '🇧🇷';
     if (n.includes('french') || n.includes('fr')) return '🇫🇷';
     if (n.includes('german') || n.includes('de')) return '🇩🇪';
