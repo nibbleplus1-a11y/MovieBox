@@ -254,7 +254,8 @@ _bg_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="bg_imdb")
 SECRET_KEY_DEFAULT_B64 = "NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw=="
 SECRET_KEY_ALT_B64 = "WHFuMm5uTzQxL0w5Mm8xaXVYaFNMSFRiWHZZNFo1Wlo2Mm04bVNMQQ=="
 MODERN_USER_AGENT = "com.community.mbox.in/50020130 (Linux; U; Android 14; en_IN; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)"
-WEB_USER_AGENT = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Mobile Safari/537.36"
+WEB_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+DEFAULT_WEB_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOjU0MjU2MTE3OTA0MDExMjgyNjQsImF0cCI6MywiZXh0IjoiMTc5NTM2NjA1MCIsImV4cCI6MTgwMzE0MjA1MCwiaWF0IjoxNzk1MzY1NzUwfQ.-3citGwVXCQ2QoETzv1wh6A0c_SfTlXGFPxdT-m4aOE"
 API_BASE = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
 NATIVE_API_HOSTS = [
     "https://api3.aoneroom.com",
@@ -603,7 +604,7 @@ class MovieBoxEngine:
     def __init__(self):
         self.device_id = generate_device_id()
         self.bearer_token: Optional[str] = None
-        self.web_token: Optional[str] = None
+        self.web_token: Optional[str] = DEFAULT_WEB_TOKEN
         # Always use httpx.Client for native mobile API requests so browser pseudo-headers are not injected
         self.session = httpx.Client(timeout=25, follow_redirects=True)
 
@@ -643,7 +644,7 @@ class MovieBoxEngine:
         }
         for host in ["movie-box.co", "movieboxonline.net", "sflix.film"]:
             try:
-                r = self.session.get(f"https://h5-api.aoneroom.com/wefeed-h5api-bff/home?host={host}", headers=headers, timeout=10)
+                r = self.session.get(f"https://h5-api.aoneroom.com/wefeed-h5api-bff/home?host={host}", headers=headers, timeout=4)
                 print(f"[bootstrap_web_token] {host} status: {r.status_code}, x-user: {bool(r.headers.get('x-user'))}", flush=True)
                 if r.status_code == 200:
                     x_user = r.headers.get("x-user")
@@ -652,7 +653,9 @@ class MovieBoxEngine:
                         return self.web_token
             except Exception as e:
                 print(f"[bootstrap_web_token] {host} error: {e}", flush=True)
-        return None
+        # Fallback to seeded token if live token retrieval is blocked on datacenter IP
+        self.web_token = DEFAULT_WEB_TOKEN
+        return self.web_token
 
     def search_h5(self, query: str, page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
         token = self.bootstrap_web_token()
