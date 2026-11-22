@@ -1,7 +1,8 @@
 # CineScope / MovieBox — Master Project Roadmap & Architecture Documentation
 
 > **Notice for Future AI Sessions & Developers:**
-> This document is the single source of truth for the MovieBox / CineScope streaming ecosystem. It documents the core architecture, requirements, all past and recent fixes, known bugs and their solutions, API specifications, and roadmap. If starting a new chat or workflow, review this file first to understand the state of the project.
+> The primary, fully-exhaustive master documentation containing all secrets, keys, models from top to bottom, CI/CD deployment pipelines, and server runbooks is located at:
+> 📄 **[`MOVIEVERSE.md`](./MOVIEVERSE.md)** — *Read `MOVIEVERSE.md` first for complete operational context.*
 
 ---
 
