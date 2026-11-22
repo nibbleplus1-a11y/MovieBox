@@ -644,18 +644,20 @@ class MovieBoxEngine:
         for host in ["movie-box.co", "movieboxonline.net", "sflix.film"]:
             try:
                 r = self.session.get(f"https://h5-api.aoneroom.com/wefeed-h5api-bff/home?host={host}", headers=headers, timeout=10)
+                print(f"[bootstrap_web_token] {host} status: {r.status_code}, x-user: {bool(r.headers.get('x-user'))}", flush=True)
                 if r.status_code == 200:
                     x_user = r.headers.get("x-user")
                     if x_user:
                         self.web_token = json.loads(x_user).get("token")
                         return self.web_token
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[bootstrap_web_token] {host} error: {e}", flush=True)
         return None
 
     def search_h5(self, query: str, page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
         token = self.bootstrap_web_token()
         if not token:
+            print("[search_h5] Failed to obtain web_token", flush=True)
             return []
         headers = {
             "Accept": "application/json",
@@ -672,13 +674,14 @@ class MovieBoxEngine:
         ]:
             try:
                 r = self.session.post(endpoint, headers=headers, json=body, timeout=12)
+                print(f"[search_h5] {endpoint} status: {r.status_code}", flush=True)
                 if r.status_code == 200:
                     data = r.json().get("data", {})
                     items = data.get("items") or data.get("list") or []
                     if items:
                         return items
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[search_h5] {endpoint} error: {e}", flush=True)
         return []
 
     def api_request(self, method: str, path_or_url: str, body_dict: Optional[Dict[str, Any]] = None, use_token: bool = True, retry_auth: bool = True, client_ip: Optional[str] = None) -> Dict[str, Any]:
@@ -3234,6 +3237,16 @@ def debug_upstream(
         diag["raw_search_items_len"] = len((raw_s.get("data") or {}).get("items") or [])
     except Exception as s_err:
         diag["search_error"] = str(s_err)
+
+    # 2.7 Test H5 web token and search
+    try:
+        diag["h5_token"] = bool(engine.bootstrap_web_token())
+        h5_items = engine.search_h5("Avatar", page=1, per_page=5)
+        diag["h5_items_len"] = len(h5_items)
+        if h5_items:
+            diag["h5_first_title"] = (h5_items[0].get("subject") or h5_items[0]).get("title")
+    except Exception as h5e:
+        diag["h5_error"] = str(h5e)
 
     # 3. Test direct web domains using engine.session (httpx) WITH token, WITHOUT token, and WITH X-Forwarded-For
     web_httpx = {}
