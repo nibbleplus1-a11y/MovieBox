@@ -531,8 +531,11 @@ def _is_ugc_fake_upload(sub: dict) -> bool:
     title = (sub.get("title") or "").strip()
     post_title = (sub.get("postTitle") or "").lower()
 
-    # Never filter dubbed versions or titles with language tags
-    if _audio_label_from_title(title) or (sub.get("lanName") and _AUDIO_LANG_RE.search(str(sub.get("lanName")))):
+    # Never filter dubbed versions or titles with language tags.
+    # Also check the `language` metadata field directly so that subjects
+    # whose only language signal is a metadata field are never discarded.
+    lang_signal = (sub.get("lanName") or sub.get("language") or sub.get("lanCode") or "").strip()
+    if _audio_label_from_title(title) or (lang_signal and _AUDIO_LANG_RE.search(lang_signal)):
         return False
 
     # Reject known fake sequel title patterns
@@ -795,10 +798,23 @@ def _is_sibling_title_match(title1: str, title2: str) -> bool:
         return True
     return False
 
+# Language values that mean "this IS the original / English-language version",
+# not a dubbed copy.  Any subject whose only language signal matches one of these
+# receives the "Original Audio" label instead of an "X Dub" label.
+_ORIG_LANG_VALUES: frozenset = frozenset({
+    "original", "orig", "original audio", "default",
+    "english", "en", "eng",   # English is always the upstream original
+})
+
 def _extract_subject_audio(sub: Optional[Dict[str, Any]], raw_title: str = "") -> Tuple[Optional[str], Optional[str]]:
     """
     Extract (audio_display_label, language_code) from subject metadata and title.
-    Returns e.g. ('Hindi Dub', 'hi') or ('Spanish (Latin) Dub', 'esla') or ('Original Audio', 'en') or (None, None).
+    Returns e.g. ('Hindi Dub', 'hi') or ('Spanish (Latin) Dub', 'esla') or
+    ('Original Audio', 'en') or (None, None).
+
+    Key invariant: a subject whose sole language signal is English is treated as
+    Original Audio, not as 'English Dub'.  This prevents the deduplication key
+    from treating a plain English subject and a dubbed sibling as the same entry.
     """
     if not sub and not raw_title:
         return None, None
@@ -808,6 +824,9 @@ def _extract_subject_audio(sub: Optional[Dict[str, Any]], raw_title: str = "") -
     # 1. Check title for explicit language tags [Hindi], (Hindi), Hindi Dub, etc.
     from_title = _audio_label_from_title(title)
     if from_title:
+        # If the only tag in the title is "english" treat it as original, not a dub
+        if from_title.lower() in _ORIG_LANG_VALUES:
+            return "Original Audio", "en"
         label = _dub_display_label(from_title)
         return label, from_title.lower()
 
@@ -817,9 +836,10 @@ def _extract_subject_audio(sub: Optional[Dict[str, Any]], raw_title: str = "") -
         if not val:
             continue
         val_lower = val.lower()
-        if val_lower in ("original", "orig", "original audio", "default"):
+        # English and other "original" markers → Original Audio
+        if val_lower in _ORIG_LANG_VALUES:
             return "Original Audio", "en"
-        # Check if mapped by _dub_display_label
+        # Mapped by _dub_display_label
         label = _dub_display_label(val)
         if label and label.lower() != val_lower:
             return label, val_lower
@@ -1118,6 +1138,21 @@ class MovieBoxEngine:
                         existing["dubs"] = []
                     _append_dub(existing["dubs"], sid_str, audio_tag)
                     app_cache.set(f"dub_parent:{sid_str}", existing["subject_id"], ttl=7200)
+                else:
+                    # Even without a title-derived audio tag, the subject's language
+                    # metadata might reveal a distinct dub.  Check it and preserve it
+                    # so that siblings with language-only metadata are never silently
+                    # discarded.
+                    for lang_field in ("lanName", "lanCode", "langCode", "language"):
+                        lang_val = str(sub.get(lang_field) or "").strip()
+                        if not lang_val:
+                            continue
+                        if lang_val.lower() not in _ORIG_LANG_VALUES:
+                            if "dubs" not in existing:
+                                existing["dubs"] = []
+                            _append_dub(existing["dubs"], sid_str, lang_val)
+                            app_cache.set(f"dub_parent:{sid_str}", existing["subject_id"], ttl=7200)
+                        break
                 continue
 
             is_cs = False
@@ -1275,46 +1310,66 @@ class MovieBoxEngine:
         raw_title = data.get("title") or ""
         clean_title = _clean_base_title(raw_title)
         subject_type = data.get("subjectType")
+        rel_year = str(data.get("releaseDate") or "")[:4]
 
         if clean_title:
+            # Always probe base title + common dub language queries so that
+            # subjects that only differ by their `language` metadata field (and
+            # have no language word in their title) are found.
             search_queries = [clean_title]
-            if len(collected_dubs) <= 2:
-                search_queries.append(f"{clean_title} hindi")
+            if len(collected_dubs) <= 3:
+                # Only add language-specific probes when the native+web sources
+                # returned a thin result set — avoids hammering the API needlessly.
+                search_queries += [
+                    f"{clean_title} hindi",
+                    f"{clean_title} tamil",
+                    f"{clean_title} telugu",
+                ]
+            seen_sibling_sids: set = set()
             for sq in search_queries:
-                try:
-                    s_results = self.search(sq, page=1, per_page=20)
-                    for r in s_results:
-                        r_sid = str(r.get("subject_id") or "")
-                        if not r_sid or r_sid == main_id:
-                            continue
-                        r_type = r.get("subject_type")
-                        if subject_type and r_type and subject_type != r_type:
-                            continue
-                        r_title = r.get("title") or ""
-                        if not _is_sibling_title_match(raw_title, r_title):
-                            continue
-                        # Collect any inner dubs from sibling
-                        for idub in r.get("dubs", []):
-                            isid = str(idub.get("subject_id") or "")
-                            if isid and isid not in collected_dubs:
-                                collected_dubs[isid] = idub
-                        # Extract audio tag for this sibling item itself
-                        r_audio, r_code = _extract_subject_audio(r, r_title)
-                        if r_audio and r_audio != "Original Audio":
-                            if r_sid not in collected_dubs:
-                                collected_dubs[r_sid] = {
-                                    "subject_id": r_sid,
-                                    "lang_name": r_audio,
-                                    "language": r_code or "dub",
-                                    "original": False,
-                                    "type": 0
-                                }
-                                app_cache.set(f"dub_parent:{r_sid}", original_subject_id, ttl=7200)
-                        elif not r_audio or r_audio == "Original Audio":
-                            if original_subject_id == main_id and not any(d.get("original") for d in collected_dubs.values()):
-                                original_subject_id = r_sid
-                except Exception:
-                    pass
+                # Scan two pages so we don't miss dubs that fall outside the first 20.
+                for pg in (1, 2):
+                    try:
+                        s_results = self.search(sq, page=pg, per_page=20)
+                        if not s_results:
+                            break  # No more pages for this query
+                        for r in s_results:
+                            r_sid = str(r.get("subject_id") or "")
+                            if not r_sid or r_sid == main_id or r_sid in seen_sibling_sids:
+                                continue
+                            seen_sibling_sids.add(r_sid)
+                            r_type = r.get("subject_type")
+                            if subject_type and r_type and subject_type != r_type:
+                                continue
+                            r_title = r.get("title") or ""
+                            if not _is_sibling_title_match(raw_title, r_title):
+                                continue
+                            # Optional year guard: skip if years are known and differ by >1
+                            r_year = str(r.get("release_date") or "")[:4]
+                            if rel_year and r_year and abs(int(rel_year) - int(r_year)) > 1:
+                                continue
+                            # Collect any inner dubs from sibling
+                            for idub in r.get("dubs", []):
+                                isid = str(idub.get("subject_id") or "")
+                                if isid and isid not in collected_dubs:
+                                    collected_dubs[isid] = idub
+                            # Extract audio tag for this sibling item itself
+                            r_audio, r_code = _extract_subject_audio(r, r_title)
+                            if r_audio and r_audio != "Original Audio":
+                                if r_sid not in collected_dubs:
+                                    collected_dubs[r_sid] = {
+                                        "subject_id": r_sid,
+                                        "lang_name": r_audio,
+                                        "language": r_code or "dub",
+                                        "original": False,
+                                        "type": 0
+                                    }
+                                    app_cache.set(f"dub_parent:{r_sid}", original_subject_id, ttl=7200)
+                            elif not r_audio or r_audio == "Original Audio":
+                                if original_subject_id == main_id and not any(d.get("original") for d in collected_dubs.values()):
+                                    original_subject_id = r_sid
+                    except Exception:
+                        pass
 
         # --- SOURCE 4: Parent Relationship Link ---
         parent_id = app_cache.get(f"dub_parent:{main_id}")
@@ -1386,6 +1441,10 @@ class MovieBoxEngine:
     def get_details(self, subject_id: str) -> Dict[str, Any]:
         cache_key = f"details:{subject_id}"
         cached = app_cache.get(cache_key)
+        # Treat cached results as incomplete when the dubs list is empty OR
+        # contains only the original-audio placeholder (len==1). This forces a
+        # rediscovery pass that merges all sources and prevents 30-minute
+        # caching of a dub list that was populated from a single source.
         if cached is not None and cached.get("dubs") and len(cached.get("dubs", [])) > 1:
             return cached
 
