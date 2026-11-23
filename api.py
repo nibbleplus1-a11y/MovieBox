@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
@@ -13,7 +14,7 @@ import re
 import secrets
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 import urllib.request
 from urllib.parse import urlsplit, urlparse, parse_qs, quote
