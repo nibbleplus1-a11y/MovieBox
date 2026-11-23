@@ -3485,29 +3485,30 @@ function renderSettingsAudioList(dubs) {
         fetch(`/detail/${sid}`)
             .then(r => r.json())
             .then(d => {
-                if (d && d.dubs && d.dubs.length > 0) {
-                    window[`_dubsLock_${sid}`] = false;
+                if (d && d.dubs && d.dubs.length > 1) {
                     activeDubsList = d.dubs;
                     currentTitleDubs = d.dubs;
                     renderSettingsAudioList(d.dubs);
                     renderInPlayerAudioPopover();
+                } else if (d && d.dubs && d.dubs.length === 1 && !activeDubsList) {
+                    activeDubsList = d.dubs;
+                    currentTitleDubs = d.dubs;
                 } else {
                     // Secondary fallback: query /api/stream endpoint which resolves raw upstream dubs
                     fetch(`/api/stream/${sid}?se=1&ep=1`)
                         .then(r => r.json())
                         .then(st => {
-                            window[`_dubsLock_${sid}`] = false;
-                            if (st && st.dubs && st.dubs.length > 0) {
+                            if (st && st.dubs && st.dubs.length > 1) {
                                 activeDubsList = st.dubs;
                                 currentTitleDubs = st.dubs;
                                 renderSettingsAudioList(st.dubs);
                                 renderInPlayerAudioPopover();
                             }
                         })
-                        .catch(() => { window[`_dubsLock_${sid}`] = false; });
+                        .catch(() => {});
                 }
             })
-            .catch(() => { window[`_dubsLock_${sid}`] = false; });
+            .catch(() => {});
     }
 
     const originalSubId = activeOriginalSubjectId ||

@@ -766,6 +766,70 @@ def _dub_display_label(tag: str) -> str:
         return f"{t_clean.title()} Dub"
     return t_clean.title() if "dub" in t_lower else t_clean
 
+def _clean_base_title(title: str) -> str:
+    """Title with brackets, language keywords, quality words, and punctuation removed."""
+    if not title:
+        return ""
+    base = re.sub(r'\[.*?\]|\(.*?\)', ' ', title)
+    base = _AUDIO_LANG_RE.sub(" ", base)
+    base = re.sub(r'\b(dubbed|dub|audio|dual|multi|extended|remastered|theatrical|uncut|edition|complete|season\s*\d+|s\d{1,2}|series)\b', ' ', base, flags=re.IGNORECASE)
+    base = re.sub(r'[^\w\s]', ' ', base)
+    return re.sub(r'\s+', ' ', base).strip().lower()
+
+def _is_sibling_title_match(title1: str, title2: str) -> bool:
+    """Check if title1 and title2 represent the same underlying movie or series."""
+    if not title1 or not title2:
+        return False
+    b1 = _clean_base_title(title1)
+    b2 = _clean_base_title(title2)
+    if b1 == b2 and b1:
+        return True
+    def _strip_art(t: str) -> str:
+        return re.sub(r'^(the|a|an)\s+', '', t).strip()
+    s1, s2 = _strip_art(b1), _strip_art(b2)
+    if s1 == s2 and s1:
+        return True
+    p1 = b1.split(':')[0].strip() if ':' in title1 else b1
+    p2 = b2.split(':')[0].strip() if ':' in title2 else b2
+    if p1 and p2 and _strip_art(p1) == _strip_art(p2) and len(_strip_art(p1)) >= 4:
+        return True
+    return False
+
+def _extract_subject_audio(sub: Optional[Dict[str, Any]], raw_title: str = "") -> Tuple[Optional[str], Optional[str]]:
+    """
+    Extract (audio_display_label, language_code) from subject metadata and title.
+    Returns e.g. ('Hindi Dub', 'hi') or ('Spanish (Latin) Dub', 'esla') or ('Original Audio', 'en') or (None, None).
+    """
+    if not sub and not raw_title:
+        return None, None
+    sub_dict = sub if isinstance(sub, dict) else {}
+    title = raw_title or sub_dict.get("title") or ""
+
+    # 1. Check title for explicit language tags [Hindi], (Hindi), Hindi Dub, etc.
+    from_title = _audio_label_from_title(title)
+    if from_title:
+        label = _dub_display_label(from_title)
+        return label, from_title.lower()
+
+    # 2. Check metadata fields: lanName, lanCode, langCode, language
+    for field in ("lanName", "lanCode", "langCode", "language"):
+        val = str(sub_dict.get(field) or "").strip()
+        if not val:
+            continue
+        val_lower = val.lower()
+        if val_lower in ("original", "orig", "original audio", "default"):
+            return "Original Audio", "en"
+        # Check if mapped by _dub_display_label
+        label = _dub_display_label(val)
+        if label and label.lower() != val_lower:
+            return label, val_lower
+        if _AUDIO_LANG_RE.search(val):
+            m = _AUDIO_LANG_RE.search(val)
+            matched = m.group(1).capitalize()
+            return f"{matched} Dub", val_lower
+
+    return None, None
+
 def _append_dub(dubs: List[Dict[str, Any]], subject_id: str, tag: str) -> None:
     if not subject_id or not tag:
         return
@@ -879,7 +943,7 @@ class MovieBoxEngine:
         self.web_token = DEFAULT_WEB_TOKEN
         return self.web_token
 
-    def search_h5(self, query: str, page: int = 1, per_page: int = 20) -> List[Dict[str, Any]]:
+    def search_h5(self, query: str, page: int = 1, per_page: int = 20, client_ip: Optional[str] = None) -> List[Dict[str, Any]]:
         token = self.bootstrap_web_token()
         if not token:
             print("[search_h5] Failed to obtain web_token", flush=True)
@@ -892,10 +956,15 @@ class MovieBoxEngine:
             "X-Request-Lang": "en",
             "Authorization": f"Bearer {token}",
         }
+        if client_ip:
+            headers["X-Forwarded-For"] = client_ip
+            headers["X-Real-IP"] = client_ip
+            headers["Client-IP"] = client_ip
         body = {"keyword": query, "page": page, "perPage": per_page, "subjectType": 0}
         for endpoint in [
             "https://h5-api.aoneroom.com/wefeed-h5api-bff/subject/search",
             "https://movie-box.co/wefeed-h5api-bff/subject/search",
+            "https://moviebox01.com/wefeed-h5api-bff/subject/search",
         ]:
             try:
                 r = self.session.post(endpoint, headers=headers, json=body, timeout=12)
@@ -986,12 +1055,12 @@ class MovieBoxEngine:
         # If native mobile API failed or returned 0 results (e.g. 406 geo-block on datacenter/VPS IPs), fallback to H5 web search API
         if not raw_items:
             print(f"[search] Native search empty or 406 for '{query}', falling back to H5 web search", flush=True)
-            h5_items = self.search_h5(query, page=page, per_page=safe_per_page)
+            h5_items = self.search_h5(query, page=page, per_page=safe_per_page, client_ip=client_ip)
             if not h5_items and _AUDIO_LANG_RE.search(query):
                 base_query = _AUDIO_LANG_RE.sub("", query).strip()
                 base_query = re.sub(r'\s{2,}', ' ', base_query).strip(" :-,")
                 if base_query and base_query.lower() != query.lower():
-                    h5_items = self.search_h5(base_query, page=page, per_page=safe_per_page)
+                    h5_items = self.search_h5(base_query, page=page, per_page=safe_per_page, client_ip=client_ip)
             if h5_items:
                 raw_items = h5_items
         results = []
@@ -1019,12 +1088,8 @@ class MovieBoxEngine:
             # Base title ignores year/quality brackets AND language words, so
             # "Avengers (2019)" and "Avengers (2019) [Hindi]" compare as the same film.
             # The language tag is kept in the key so each audio version stays its own result.
-            clean_base = _audio_base_title(raw_title)
-            audio_tag = _audio_label_from_title(raw_title)
-            if not audio_tag:
-                lan_name = str(sub.get("lanName") or "").strip()
-                if lan_name and _AUDIO_LANG_RE.search(lan_name):
-                    audio_tag = lan_name
+            clean_base = _clean_base_title(raw_title)
+            audio_tag, lang_code = _extract_subject_audio(sub, raw_title)
 
             rel_date = sub.get("releaseDate") or ""
             year_tag = str(rel_date)[:4] if rel_date else ""
@@ -1107,131 +1172,249 @@ class MovieBoxEngine:
         app_cache.set(cache_key, results, ttl=600)
         return results
 
+    def discover_all_audio_versions(self, subject_id: str, data: Optional[Dict[str, Any]] = None, detail_path: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Unified dub discovery pipeline:
+        1. Collects upstream native dubs from data['dubs'].
+        2. Scrapes web details (__NUXT_DATA__) and ALWAYS MERGES all discovered dubs.
+        3. Searches multi-page sibling subjects, matching normalized titles and content types.
+        4. Deduplicates by subject_id, ensures Original Audio entry, and caches parent relationships.
+        """
+        if not subject_id or subject_id == "None":
+            return []
+
+        main_id = str(subject_id)
+        if data is None:
+            data = {}
+            try:
+                raw_resp = self.api_request("GET", f"/wefeed-mobile-bff/subject-api/get?subjectId={main_id}")
+                data = raw_resp.get("data", {}) or {}
+            except Exception:
+                pass
+
+        collected_dubs: Dict[str, Dict[str, Any]] = {}
+        original_subject_id = main_id
+
+        # --- SOURCE 1: Native MovieBox details ---
+        native_dubs = data.get("dubs", [])
+        if isinstance(native_dubs, list):
+            for d in native_dubs:
+                if not isinstance(d, dict):
+                    continue
+                sid = str(d.get("subjectId") or d.get("subject_id") or "")
+                if not sid:
+                    continue
+                is_orig = bool(d.get("original"))
+                raw_lang = d.get("lanName") or d.get("language") or d.get("lanCode") or ""
+                lang_code = d.get("lanCode") or d.get("language") or raw_lang or "en"
+                if is_orig:
+                    disp = "Original Audio"
+                    original_subject_id = sid
+                else:
+                    disp = _dub_display_label(raw_lang) or _dub_display_label(lang_code) or f"{str(raw_lang).capitalize()} Dub"
+                collected_dubs[sid] = {
+                    "subject_id": sid,
+                    "lang_name": disp,
+                    "language": str(lang_code).lower(),
+                    "original": is_orig,
+                    "type": d.get("type", 0)
+                }
+
+        # --- SOURCE 2: Web Details (__NUXT_DATA__) ---
+        d_path = detail_path or data.get("detailPath")
+        if not d_path:
+            det_url = data.get("detailUrl", "")
+            if "/" in det_url:
+                d_path = det_url.split("/")[-1]
+            elif det_url:
+                d_path = det_url
+        if not d_path:
+            d_path = app_cache.get(f"detail_path:{main_id}")
+        if not d_path:
+            card = app_cache.get(f"card:{main_id}")
+            if card and card.get("detail_path"):
+                d_path = card["detail_path"]
+
+        if d_path:
+            try:
+                web_sub, web_dubs = _fetch_web_details(d_path)
+                if web_sub and not data.get("title"):
+                    for k, v in web_sub.items():
+                        if k not in data or not data[k]:
+                            data[k] = v
+                if isinstance(web_dubs, list):
+                    for wd in web_dubs:
+                        if not isinstance(wd, dict):
+                            continue
+                        wsid = str(wd.get("subjectId") or wd.get("subject_id") or "")
+                        if not wsid:
+                            continue
+                        is_orig = bool(wd.get("original"))
+                        raw_lang = wd.get("lanName") or wd.get("language") or wd.get("lanCode") or ""
+                        lang_code = wd.get("lanCode") or wd.get("language") or raw_lang or "en"
+                        if is_orig:
+                            disp = "Original Audio"
+                            original_subject_id = wsid
+                        else:
+                            disp = _dub_display_label(raw_lang) or _dub_display_label(lang_code) or f"{str(raw_lang).capitalize()} Dub"
+                        if wsid not in collected_dubs:
+                            collected_dubs[wsid] = {
+                                "subject_id": wsid,
+                                "lang_name": disp,
+                                "language": str(lang_code).lower(),
+                                "original": is_orig,
+                                "type": wd.get("type", 0)
+                            }
+            except Exception:
+                pass
+
+        # --- SOURCE 3: Sibling Search Discovery ---
+        raw_title = data.get("title") or ""
+        clean_title = _clean_base_title(raw_title)
+        subject_type = data.get("subjectType")
+
+        if clean_title:
+            search_queries = [clean_title]
+            if len(collected_dubs) <= 2:
+                search_queries.append(f"{clean_title} hindi")
+            for sq in search_queries:
+                try:
+                    s_results = self.search(sq, page=1, per_page=20)
+                    for r in s_results:
+                        r_sid = str(r.get("subject_id") or "")
+                        if not r_sid or r_sid == main_id:
+                            continue
+                        r_type = r.get("subject_type")
+                        if subject_type and r_type and subject_type != r_type:
+                            continue
+                        r_title = r.get("title") or ""
+                        if not _is_sibling_title_match(raw_title, r_title):
+                            continue
+                        # Collect any inner dubs from sibling
+                        for idub in r.get("dubs", []):
+                            isid = str(idub.get("subject_id") or "")
+                            if isid and isid not in collected_dubs:
+                                collected_dubs[isid] = idub
+                        # Extract audio tag for this sibling item itself
+                        r_audio, r_code = _extract_subject_audio(r, r_title)
+                        if r_audio and r_audio != "Original Audio":
+                            if r_sid not in collected_dubs:
+                                collected_dubs[r_sid] = {
+                                    "subject_id": r_sid,
+                                    "lang_name": r_audio,
+                                    "language": r_code or "dub",
+                                    "original": False,
+                                    "type": 0
+                                }
+                                app_cache.set(f"dub_parent:{r_sid}", original_subject_id, ttl=7200)
+                        elif not r_audio or r_audio == "Original Audio":
+                            if original_subject_id == main_id and not any(d.get("original") for d in collected_dubs.values()):
+                                original_subject_id = r_sid
+                except Exception:
+                    pass
+
+        # --- SOURCE 4: Parent Relationship Link ---
+        parent_id = app_cache.get(f"dub_parent:{main_id}")
+        if parent_id and parent_id != main_id and parent_id not in collected_dubs:
+            try:
+                p_resp = self.api_request("GET", f"/wefeed-mobile-bff/subject-api/get?subjectId={parent_id}")
+                p_data = p_resp.get("data", {}) or {}
+                for pd in p_data.get("dubs", []):
+                    if isinstance(pd, dict):
+                        psid = str(pd.get("subjectId") or pd.get("subject_id") or "")
+                        if psid and psid not in collected_dubs:
+                            is_orig = bool(pd.get("original"))
+                            rlang = pd.get("lanName") or pd.get("language") or ""
+                            collected_dubs[psid] = {
+                                "subject_id": psid,
+                                "lang_name": "Original Audio" if is_orig else _dub_display_label(rlang),
+                                "language": pd.get("lanCode") or pd.get("language") or "en",
+                                "original": is_orig,
+                                "type": pd.get("type", 0)
+                            }
+            except Exception:
+                pass
+
+        # --- Self Audio Tag Check ---
+        self_audio, self_code = _extract_subject_audio(data, raw_title)
+        if self_audio and self_audio != "Original Audio":
+            if main_id not in collected_dubs:
+                collected_dubs[main_id] = {
+                    "subject_id": main_id,
+                    "lang_name": self_audio,
+                    "language": self_code or "dub",
+                    "original": False,
+                    "type": 0
+                }
+        else:
+            if main_id not in collected_dubs and not any(d.get("original") for d in collected_dubs.values()):
+                collected_dubs[main_id] = {
+                    "subject_id": main_id,
+                    "lang_name": "Original Audio",
+                    "language": data.get("language") or "en",
+                    "original": True,
+                    "type": 0
+                }
+
+        # Ensure Original Audio is present
+        has_orig = any(bool(d.get("original")) or d.get("lang_name") == "Original Audio" for d in collected_dubs.values())
+        if not has_orig and original_subject_id:
+            collected_dubs[original_subject_id] = {
+                "subject_id": original_subject_id,
+                "lang_name": "Original Audio",
+                "language": "en",
+                "original": True,
+                "type": 0
+            }
+
+        # Build clean final list: Original Audio first, then other dubs
+        orig_entries = [d for d in collected_dubs.values() if d.get("original") or d.get("lang_name") == "Original Audio"]
+        other_entries = [d for d in collected_dubs.values() if not (d.get("original") or d.get("lang_name") == "Original Audio")]
+        other_entries.sort(key=lambda x: str(x.get("lang_name", "")))
+
+        final_dubs = orig_entries[:1] + other_entries
+        for d in final_dubs:
+            if d.get("subject_id") and d["subject_id"] != original_subject_id:
+                app_cache.set(f"dub_parent:{d['subject_id']}", original_subject_id, ttl=7200)
+
+        app_cache.set(f"unified_dubs:{main_id}", final_dubs, ttl=1800)
+        return final_dubs
+
     def get_details(self, subject_id: str) -> Dict[str, Any]:
         cache_key = f"details:{subject_id}"
         cached = app_cache.get(cache_key)
-        if cached is not None:
+        if cached is not None and cached.get("dubs") and len(cached.get("dubs", [])) > 1:
             return cached
+
         url = f"/wefeed-mobile-bff/subject-api/get?subjectId={subject_id}"
         data = self.api_request("GET", url).get("data", {})
         detail_url_str = data.get("detailUrl", "")
         detail_path = detail_url_str.split("/")[-1] if "/" in detail_url_str else detail_url_str
-        raw_dubs = data.get("dubs", [])
 
         # Fallback to web scraping if native mobile API returned 406 or empty data on datacenter VPS IP
-        if not data or not data.get("title") or not raw_dubs:
+        if not data or not data.get("title"):
             d_path = detail_path or app_cache.get(f"detail_path:{subject_id}")
             if not d_path:
                 card = app_cache.get(f"card:{subject_id}")
                 if card and card.get("detail_path"):
                     d_path = card["detail_path"]
             if d_path:
-                web_sub, web_dubs = _fetch_web_details(d_path)
-                if web_sub and (not data or not data.get("title")):
+                web_sub, _ = _fetch_web_details(d_path)
+                if web_sub:
                     data = web_sub
                     detail_path = d_path
-                if web_dubs and not raw_dubs:
-                    raw_dubs = web_dubs
 
-        dubs = []
-        for d in raw_dubs:
-            if not isinstance(d, dict):
-                continue
-            is_orig = bool(d.get("original"))
-            raw_lang_name = d.get("lanName") or d.get("language") or ""
-            lang_code = d.get("lanCode") or d.get("language") or d.get("lanName") or ""
-            # Normalize display name: use _dub_display_label to fix codes like
-            # 'esla dub' -> 'Spanish (Latin) Dub', 'ptbr dub' -> 'Portuguese (Brazil) Dub'
-            if is_orig:
-                display_name = "Original Audio"
-            else:
-                display_name = _dub_display_label(raw_lang_name) if raw_lang_name else _dub_display_label(lang_code)
-                if not display_name or display_name == raw_lang_name:
-                    display_name = _dub_display_label(lang_code) or raw_lang_name or "Dub"
-            dubs.append({
-                "subject_id": str(d.get("subjectId")),
-                "lang_name": display_name,
-                "language": lang_code,
-                "original": is_orig,
-                "type": d.get("type", 0)
-            })
-        
-        # Cache parent mapping for each child dub
+        # Discover all available audio dubs from all sources
+        dubs = self.discover_all_audio_versions(subject_id, data=data, detail_path=detail_path)
+        data["dubs"] = dubs
+
         main_id = str(data.get("subjectId") or subject_id or "")
-        original_subject_id = main_id  # Will be updated if this item is itself a dub
-        for d in dubs:
-            if d.get("subject_id") and d["subject_id"] != main_id:
-                app_cache.set(f"dub_parent:{d['subject_id']}", main_id, ttl=7200)
-
+        original_subject_id = next((d["subject_id"] for d in dubs if d.get("original") or d.get("lang_name") == "Original Audio"), main_id)
         raw_title = data.get("title") or ""
-        clean_title = _audio_base_title(raw_title) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
-        self_audio_tag = _audio_label_from_title(raw_title)
-        self_has_audio = bool(self_audio_tag)
+        clean_title = _clean_base_title(raw_title)
 
-        # If detail_path missing, derive slug from clean title
         if not detail_path and clean_title:
             detail_path = re.sub(r'[^a-z0-9]+', '-', clean_title.lower()).strip('-')
-
-        # Always harvest sibling dubs via parent link or clean title search so all languages are available
-        parent_id = app_cache.get(f"dub_parent:{subject_id}")
-        subject_type = data.get("subjectType")
-
-        if clean_title:
-            try:
-                search_results = self.search(clean_title, page=1, per_page=20)
-                for r in search_results:
-                    r_sid = str(r.get("subject_id") or "")
-                    if not r_sid or r_sid == main_id:
-                        continue
-                    r_type = r.get("subject_type")
-                    type_ok = (not subject_type or not r_type or subject_type == r_type)
-                    title_ok = not clean_title or (_audio_base_title(r.get("title") or "") == clean_title)
-                    if type_ok and title_ok:
-                        # Collect any dub objects discovered during search
-                        for d in r.get("dubs", []):
-                            if not any(existing_d.get("subject_id") == d.get("subject_id") for existing_d in dubs):
-                                dubs.append(d)
-                        r_title = r.get("title", "")
-                        r_audio_tag = _audio_label_from_title(r_title) or (r.get("language") if r.get("language") and _AUDIO_LANG_RE.fullmatch(str(r.get("language")).strip()) else None)
-                        # If this sibling is a dub variant, add it as a dub entry
-                        if r_audio_tag:
-                            _append_dub(dubs, r_sid, r_audio_tag)
-                            app_cache.set(f"dub_parent:{r_sid}", main_id, ttl=7200)
-                        elif not parent_id:
-                            # Clean-title result without language tag -> potential parent
-                            parent_id = r_sid
-            except Exception:
-                pass
-
-        if parent_id and parent_id != subject_id:
-            try:
-                p_details = self.get_details(parent_id)
-                p_dubs = p_details.get("dubs", [])
-                for pd in p_dubs:
-                    if not any(d.get("subject_id") == pd.get("subject_id") for d in dubs):
-                        dubs.append(pd)
-                original_subject_id = parent_id
-                app_cache.set(f"dub_parent:{main_id}", parent_id, ttl=7200)
-            except Exception:
-                pass
-
-        # If this subject itself is a dub variant, ensure it is added to dubs
-        if self_audio_tag:
-            if not any(d.get("subject_id") == main_id for d in dubs):
-                _append_dub(dubs, main_id, self_audio_tag)
-
-        # Ensure Original Audio entry exists in dubs list if dubs are present
-        if dubs:
-            has_orig_entry = any(bool(d.get("original")) or d.get("lang_name") == "Original Audio" or str(d.get("subject_id")) == original_subject_id for d in dubs)
-            if not has_orig_entry and original_subject_id:
-                orig_lang = data.get("language") or "en"
-                dubs.insert(0, {
-                    "subject_id": original_subject_id,
-                    "lang_name": "Original Audio",
-                    "language": orig_lang,
-                    "original": True,
-                    "type": 0
-                })
 
         # Extract director and cast from staffList
         staff_list = data.get("staffList") or []
@@ -1817,108 +2000,40 @@ class MovieBoxEngine:
             except Exception:
                 pass
 
-        # Parallel backfill for rich shelves using ThreadPoolExecutor
-        sparse_tasks = []
-        if len(feed["trending"]) < 30:
-            for kw in ["Dune", "Deadpool & Wolverine", "Inside Out 2", "Oppenheimer", "The Substance", "Civil War", "The Wild Robot", "Gladiator 2", "Smile 2", "Moana 2", "Terrifier 3", "Alien Romulus", "Barbie", "Poor Things", "Challengers", "Nosferatu"]:
-                sparse_tasks.append(("trending", kw))
-        if len(feed["cinema"]) < 30:
-            for kw in ["Inside Out 2", "Deadpool & Wolverine", "Dune", "Furiosa", "Kingdom of the Planet of the Apes", "Twisters", "Alien Romulus", "Beetlejuice", "Venom", "Moana 2", "Wicked", "Gladiator 2", "Captain America", "A Minecraft Movie", "Superman"]:
-                sparse_tasks.append(("cinema", kw))
-        if len(feed["hollywood"]) < 35:
-            for kw in ["Avengers: Endgame", "Avengers: Infinity War", "The Dark Knight", "Inception", "Interstellar", "Spider-Man", "Oppenheimer", "Deadpool", "Gladiator", "Dune", "Avatar", "John Wick", "Mission Impossible", "Fast and Furious", "Black Panther", "Iron Man", "Captain America", "Thor", "Pulp Fiction", "The Matrix"]:
-                sparse_tasks.append(("hollywood", kw))
-        if len(feed["series"]) < 35:
-            for kw in ["The Lord of the Rings: The Rings of Power", "House of the Dragon", "Stranger Things", "Game of Thrones", "Breaking Bad", "The Boys", "Fallout", "Severance", "The Last of Us", "Shogun", "The Penguin", "Squid Game", "Loki", "Wednesday", "Reacher", "Peaky Blinders", "Better Call Saul", "Succession", "The Bear", "Yellowstone"]:
-                sparse_tasks.append(("series", kw))
-        if len(feed["anime"]) < 40:
-            for kw in ["Solo Leveling", "Jujutsu Kaisen", "Attack on Titan", "Demon Slayer", "Chainsaw Man", "Bleach", "One Piece", "Naruto", "Dragon Ball", "Death Note", "Fullmetal Alchemist", "Spy x Family", "Vinland Saga", "Hunter x Hunter", "Frieren", "Kaiju No. 8", "Dan Da Dan", "Tokyo Ghoul", "Cyberpunk: Edgerunners"]:
-                sparse_tasks.append(("anime", kw))
-        if len(feed["bollywood"]) < 30:
-            for kw in ["Kalki", "Jawan", "Animal", "Fighter", "Stree 2", "Pathaan", "Dunki", "Shaitaan", "Tiger 3", "Brahmastra", "War", "Dangal", "PK", "Bajrangi Bhaijaan", "Kabir Singh", "Sanju"]:
-                sparse_tasks.append(("bollywood", kw))
-        if len(feed["south_indian"]) < 30:
-            for kw in ["Pushpa", "Salaar", "Devara", "Leo", "KGF", "RRR", "Baahubali", "Vikram", "Kantara", "Jailer", "Master", "HanuMan", "Dasara", "Varisu"]:
-                sparse_tasks.append(("south_indian", kw))
-        if len(feed["asian_drama"]) < 25:
-            for kw in ["Queen of Tears", "Squid Game", "Crash Landing on You", "All of Us Are Dead", "The Glory", "Goblin", "Vincenzo", "Descendants of the Sun", "Alchemy of Souls", "Business Proposal", "Itaewon Class"]:
-                sparse_tasks.append(("asian_drama", kw))
-        # Backfill anime_movies
-        if len(feed["anime_movies"]) < 25:
-            for kw in ["Spirited Away", "Your Name", "Princess Mononoke", "Howl's Moving Castle", "My Neighbor Totoro", "The Boy and the Heron", "Ghost in the Shell", "Weathering With You", "Suzume", "A Silent Voice"]:
-                sparse_tasks.append(("anime_movies", kw))
-        # Backfill anime_classic
-        if len(feed["anime_classic"]) < 20:
-            for kw in ["Akira 1988", "Ghost in the Shell 1995", "Grave of the Fireflies", "Cowboy Bebop", "Neon Genesis Evangelion", "Dragon Ball Z", "Sailor Moon", "Fullmetal Alchemist Brotherhood", "Death Note", "Code Geass", "Trigun", "Yu Yu Hakusho"]:
-                sparse_tasks.append(("anime_classic", kw))
-        # Backfill cartoons shelf
-        if len(feed["cartoons"]) < 20:
-            for kw in ["Tom and Jerry", "Looney Tunes", "Scooby-Doo", "The Simpsons", "SpongeBob SquarePants", "Adventure Time", "Gravity Falls", "Teen Titans", "Spider-Man Animated", "Batman The Animated Series", "Rick and Morty", "Ben 10"]:
-                sparse_tasks.append(("cartoons", kw))
-
-        if sparse_tasks:
-            def _fetch_kw(category, kw):
+        # Gentle backfill using standard category filters (prevents upstream 429 rate-limiting)
+        for tab_id, shelves, stype_expected in [
+            (2, ["trending", "cinema", "hollywood"], 1),
+            (5, ["series", "asian_drama"], 2),
+        ]:
+            if any(len(feed[k]) < 12 for k in shelves):
                 try:
-                    return category, kw, self.search(kw, per_page=8)
+                    f_url = f"{API_BASE}/subject/filter"
+                    payload = {"tabId": tab_id, "page": 1, "perPage": 36}
+                    resp = self.session.post(f_url, headers={"User-Agent": WEB_USER_AGENT, "Referer": "https://movieboxhd.net/"}, json=payload, timeout=8)
+                    if resp.status_code == 200:
+                        f_items = resp.json().get("data", {}).get("items") or []
+                        for s in f_items:
+                            if s.get("subjectType") == 6 or is_adult_content(s):
+                                continue
+                            raw_t = s.get("title") or ""
+                            sid = str(s.get("subjectId"))
+                            cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
+                            item = {
+                                "title": raw_t,
+                                "subject_id": sid,
+                                "subject_type": s.get("subjectType", stype_expected),
+                                "detail_path": s.get("detailPath"),
+                                "cover": cover_url,
+                                "rating": s.get("imdbRatingValue") or "N/A",
+                                "genre": s.get("genre"),
+                                "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
+                                "type": classify_content_type(s.get("subjectType", stype_expected), raw_t)
+                            }
+                            for sh in shelves:
+                                if len(feed[sh]) < 24 and not any(x["subject_id"] == sid for x in feed[sh]):
+                                    feed[sh].append(item)
                 except Exception:
-                    return category, kw, []
-
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                futures = [executor.submit(_fetch_kw, cat, kw) for cat, kw in sparse_tasks]
-                for fut in as_completed(futures):
-                    try:
-                        cat, kw, items = fut.result()
-                        for it in items:
-                            sid = it.get("subject_id")
-                            if not sid:
-                                continue
-                            # Skip coming_soon entries (unreleased titles) in feed shelves
-                            if it.get("coming_soon"):
-                                continue
-                            # Dedup by subject_id only — dubbed releases have distinct IDs
-                            already_in = any(x["subject_id"] == sid for x in feed[cat])
-                            if not already_in and len(feed[cat]) < 36:
-                                feed[cat].append(it)
-                                # Backfill anime sub-shelves too
-                                if cat == "anime":
-                                    stype = it.get("subject_type")
-                                    item_type = it.get("type", "")
-                                    title_low_it = _base_title(it.get("title") or "")
-                                    is_cartoon_it = any(ct in title_low_it for ct in _CARTOON_SHOW_TITLES)
-                                    is_classic_it = any(cl in title_low_it for cl in _ANIME_CLASSIC_TITLES)
-                                    is_anime_series = stype == 2 or item_type == "TV Series"
-                                    if is_cartoon_it:
-                                        if not any(x["subject_id"] == sid for x in feed["cartoons"]):
-                                            feed["cartoons"].append(it)
-                                    elif is_classic_it:
-                                        if not any(x["subject_id"] == sid for x in feed["anime_classic"]):
-                                            feed["anime_classic"].append(it)
-                                        if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
-                                            feed["anime_movies"].append(it)
-                                    elif is_anime_series:
-                                        if not any(x["subject_id"] == sid for x in feed["anime_series"]):
-                                            feed["anime_series"].append(it)
-                                    else:
-                                        if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
-                                            feed["anime_movies"].append(it)
-                                # Direct anime_movies backfill tasks
-                                elif cat == "anime_movies":
-                                    if not any(x["subject_id"] == sid for x in feed["anime_movies"]):
-                                        feed["anime_movies"].append(it)
-                                        if not any(x["subject_id"] == sid for x in feed["anime"]):
-                                            feed["anime"].append(it)
-                                # anime_classic backfill
-                                elif cat == "anime_classic":
-                                    if not any(x["subject_id"] == sid for x in feed["anime_classic"]):
-                                        feed["anime_classic"].append(it)
-                                    if not any(x["subject_id"] == sid for x in feed["anime"]):
-                                        feed["anime"].append(it)
-                                # cartoons backfill
-                                elif cat == "cartoons":
-                                    if not any(x["subject_id"] == sid for x in feed["cartoons"]):
-                                        feed["cartoons"].append(it)
-                    except Exception:
-                        pass
+                    pass
 
         # Derive rich genre and highlight shelves for complete site catalog
         all_collected = []
@@ -3133,35 +3248,12 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
             if details and is_adult_content(details):
                 raise HTTPException(status_code=404, detail="Title not found")
             dubs = details.get("dubs", []) if details else []
-            if not dubs:
+            if not dubs or len(dubs) <= 1:
                 try:
-                    raw_sub = engine.api_request("GET", f"/wefeed-mobile-bff/subject-api/get?subjectId={subject_id}")
-                    raw_dubs = raw_sub.get("data", {}).get("dubs", [])
-                    if not raw_dubs:
-                        d_path = detail_path or (details and details.get("detail_path")) or app_cache.get(f"detail_path:{subject_id}")
-                        if d_path:
-                            _, raw_dubs = _fetch_web_details(d_path)
-                    if raw_dubs:
-                        dubs = []
-                        for d in raw_dubs:
-                            if not isinstance(d, dict):
-                                continue
-                            is_orig = bool(d.get("original"))
-                            raw_lang_name = d.get("lanName") or d.get("language") or ""
-                            lang_code = d.get("lanCode") or d.get("language") or d.get("lanName") or ""
-                            if is_orig:
-                                display_name = "Original Audio"
-                            else:
-                                display_name = _dub_display_label(raw_lang_name) if raw_lang_name else _dub_display_label(lang_code)
-                                if not display_name or display_name == raw_lang_name:
-                                    display_name = _dub_display_label(lang_code) or raw_lang_name or "Dub"
-                            dubs.append({
-                                "subject_id": str(d.get("subjectId")),
-                                "lang_name": display_name,
-                                "language": lang_code,
-                                "original": is_orig,
-                                "type": d.get("type", 0)
-                            })
+                    d_path = detail_path or (details and details.get("detail_path")) or app_cache.get(f"detail_path:{subject_id}")
+                    discovered = engine.discover_all_audio_versions(subject_id, data=details, detail_path=d_path)
+                    if discovered and len(discovered) > len(dubs):
+                        dubs = discovered
                 except Exception:
                     pass
             title = details.get("title") if details else None
@@ -3843,8 +3935,8 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
             if it.get("subject_type") == 2 or it.get("type") in ["Series", "TV Series"]:
                 continue
             raw_t = it.get("title") or ""
-            clean_base = _audio_base_title(raw_t) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
-            audio_tag = _audio_label_from_title(raw_t)
+            clean_base = _clean_base_title(raw_t)
+            audio_tag, _ = _extract_subject_audio(it, raw_t)
             norm_tag = audio_tag.lower() if audio_tag else 'orig'
             dedup_key = f"{clean_base}:{norm_tag}"
             if it["subject_id"] not in seen and dedup_key not in seen:
@@ -3895,8 +3987,8 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
                 continue
             sid = str(s.get("subjectId"))
             raw_t = s.get("title") or ""
-            clean_base = _audio_base_title(raw_t) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
-            audio_tag = _audio_label_from_title(raw_t)
+            clean_base = _clean_base_title(raw_t)
+            audio_tag, _ = _extract_subject_audio(s, raw_t)
             norm_tag = audio_tag.lower() if audio_tag else 'orig'
             dedup_key = f"{clean_base}:{norm_tag}"
             if sid not in seen and dedup_key not in seen:
@@ -3953,8 +4045,8 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
             if it.get("subject_type") == 1 or it.get("type") == "Movie":
                 continue
             raw_t = it.get("title") or ""
-            clean_base = _audio_base_title(raw_t) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
-            audio_tag = _audio_label_from_title(raw_t)
+            clean_base = _clean_base_title(raw_t)
+            audio_tag, _ = _extract_subject_audio(it, raw_t)
             norm_tag = audio_tag.lower() if audio_tag else 'orig'
             dedup_key = f"{clean_base}:{norm_tag}"
             if it["subject_id"] not in seen and dedup_key not in seen:
@@ -4017,8 +4109,8 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
                 continue
             sid = str(s.get("subjectId"))
             raw_t = s.get("title") or ""
-            clean_base = _audio_base_title(raw_t) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_t).strip().lower()
-            audio_tag = _audio_label_from_title(raw_t)
+            clean_base = _clean_base_title(raw_t)
+            audio_tag, _ = _extract_subject_audio(s, raw_t)
             norm_tag = audio_tag.lower() if audio_tag else 'orig'
             dedup_key = f"{clean_base}:{norm_tag}"
             if sid not in seen and dedup_key not in seen:
@@ -4127,8 +4219,14 @@ def get_ads_config():
     }
 
 @app.post("/api/ads/config")
-async def update_ads_config(request: Request):
-    """Allows updating ad monetization configuration dynamically."""
+async def update_ads_config(request: Request, secret: Optional[str] = Query(None)):
+    """Allows updating ad monetization configuration dynamically (Admin only)."""
+    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
+    auth_header = request.headers.get("authorization", "")
+    bearer_token = auth_header.replace("Bearer ", "").strip() if auth_header.startswith("Bearer ") else None
+    token = bearer_token or secret
+    if not token or not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="Unauthorized")
     try:
         new_config = await request.json()
         config_path = os.path.join(os.path.dirname(__file__), "ad_config.json")
