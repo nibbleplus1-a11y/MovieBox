@@ -651,14 +651,58 @@ def _dub_display_label(tag: str) -> str:
     t_clean = tag.strip()
     t_lower = t_clean.lower()
     is_ad = bool(re.search(r'description|descriptive|\[ad\]|\(ad\)|visual', t_lower))
+    # Comprehensive language name map covering ISO 639-1 codes, ISO 639-2 codes,
+    # MovieBox-specific short codes, and common aliases
     lang_name_map = {
+        # MovieBox-specific codes
         "esla": "Spanish (Latin)",
         "spanishlatam": "Spanish (Latin)",
         "spanish latam": "Spanish (Latin)",
         "espanol": "Spanish",
         "español": "Spanish",
         "espn": "Spanish",
+        "castellano": "Spanish",
+        "latino": "Spanish (Latin)",
         "ptbr": "Portuguese (Brazil)",
+        "portugues": "Portuguese",
+        "português": "Portuguese",
+        # ISO 639-1 two-letter codes
+        "hi": "Hindi",
+        "en": "English",
+        "es": "Spanish",
+        "fr": "French",
+        "de": "German",
+        "ja": "Japanese",
+        "ko": "Korean",
+        "zh": "Chinese",
+        "ar": "Arabic",
+        "pt": "Portuguese",
+        "ru": "Russian",
+        "it": "Italian",
+        "tr": "Turkish",
+        "th": "Thai",
+        "pl": "Polish",
+        "nl": "Dutch",
+        "sv": "Swedish",
+        "el": "Greek",
+        "he": "Hebrew",
+        "cs": "Czech",
+        "ro": "Romanian",
+        "hu": "Hungarian",
+        "uk": "Ukrainian",
+        "id": "Indonesian",
+        "vi": "Vietnamese",
+        "fa": "Persian",
+        "ta": "Tamil",
+        "te": "Telugu",
+        "kn": "Kannada",
+        "ml": "Malayalam",
+        "bn": "Bengali",
+        "mr": "Marathi",
+        "pa": "Punjabi",
+        "gu": "Gujarati",
+        "ur": "Urdu",
+        # ISO 639-2 three-letter codes
         "hin": "Hindi",
         "tam": "Tamil",
         "tel": "Telugu",
@@ -667,15 +711,42 @@ def _dub_display_label(tag: str) -> str:
         "ben": "Bengali",
         "mar": "Marathi",
         "pun": "Punjabi",
+        "guj": "Gujarati",
+        "pan": "Punjabi",
+        "urd": "Urdu",
         "eng": "English",
         "jpn": "Japanese",
         "kor": "Korean",
         "chi": "Chinese",
+        "zho": "Chinese",
         "rus": "Russian",
         "ara": "Arabic",
         "fre": "French",
+        "fra": "French",
         "ger": "German",
+        "deu": "German",
         "ita": "Italian",
+        "spa": "Spanish",
+        "por": "Portuguese",
+        "tur": "Turkish",
+        "tha": "Thai",
+        "pol": "Polish",
+        "nld": "Dutch",
+        "swe": "Swedish",
+        "ell": "Greek",
+        "heb": "Hebrew",
+        "ces": "Czech",
+        "ron": "Romanian",
+        "hun": "Hungarian",
+        "ukr": "Ukrainian",
+        "ind": "Indonesian",
+        "vie": "Vietnamese",
+        "per": "Persian",
+        "fas": "Persian",
+        "fil": "Filipino",
+        "tgl": "Filipino",
+        "dual": "Dual Audio",
+        "multi": "Multi Audio",
     }
     base_t = re.sub(r'\s*dub(?:bed)?\s*', '', t_lower).strip()
     if base_t in lang_name_map:
@@ -994,17 +1065,29 @@ class MovieBoxEngine:
         detail_path = detail_url_str.split("/")[-1] if "/" in detail_url_str else detail_url_str
         
         raw_dubs = data.get("dubs", [])
-        dubs = [
-            {
+        dubs = []
+        for d in raw_dubs:
+            if not isinstance(d, dict):
+                continue
+            is_orig = bool(d.get("original"))
+            raw_lang_name = d.get("lanName") or d.get("language") or ""
+            lang_code = d.get("lanCode") or d.get("language") or d.get("lanName") or ""
+            # Normalize display name: use _dub_display_label to fix codes like
+            # 'esla dub' -> 'Spanish (Latin) Dub', 'ptbr dub' -> 'Portuguese (Brazil) Dub'
+            if is_orig:
+                display_name = "Original Audio"
+            else:
+                display_name = _dub_display_label(raw_lang_name) if raw_lang_name else _dub_display_label(lang_code)
+                if not display_name or display_name == raw_lang_name:
+                    # _dub_display_label didn't improve it; try with lang_code directly
+                    display_name = _dub_display_label(lang_code) or raw_lang_name or "Dub"
+            dubs.append({
                 "subject_id": str(d.get("subjectId")),
-                "lang_name": d.get("lanName") or d.get("language") or "Dub",
-                "language": d.get("lanCode") or d.get("language") or d.get("lanName"),
-                "original": bool(d.get("original")),
+                "lang_name": display_name,
+                "language": lang_code,
+                "original": is_orig,
                 "type": d.get("type", 0)
-            }
-            for d in raw_dubs
-            if isinstance(d, dict)
-        ]
+            })
         
         # Cache parent mapping for each child dub
         main_id = str(data.get("subjectId") or subject_id or "")
@@ -2998,16 +3081,26 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
                     raw_sub = engine.api_request("GET", f"/wefeed-mobile-bff/subject-api/get?subjectId={subject_id}")
                     raw_dubs = raw_sub.get("data", {}).get("dubs", [])
                     if raw_dubs:
-                        dubs = [
-                            {
+                        dubs = []
+                        for d in raw_dubs:
+                            if not isinstance(d, dict):
+                                continue
+                            is_orig = bool(d.get("original"))
+                            raw_lang_name = d.get("lanName") or d.get("language") or ""
+                            lang_code = d.get("lanCode") or d.get("language") or d.get("lanName") or ""
+                            if is_orig:
+                                display_name = "Original Audio"
+                            else:
+                                display_name = _dub_display_label(raw_lang_name) if raw_lang_name else _dub_display_label(lang_code)
+                                if not display_name or display_name == raw_lang_name:
+                                    display_name = _dub_display_label(lang_code) or raw_lang_name or "Dub"
+                            dubs.append({
                                 "subject_id": str(d.get("subjectId")),
-                                "lang_name": d.get("lanName") or d.get("language") or "Dub",
-                                "language": d.get("lanCode") or d.get("language") or d.get("lanName"),
-                                "original": bool(d.get("original")),
+                                "lang_name": display_name,
+                                "language": lang_code,
+                                "original": is_orig,
                                 "type": d.get("type", 0)
-                            }
-                            for d in raw_dubs if isinstance(d, dict)
-                        ]
+                            })
                 except Exception:
                     pass
             title = details.get("title") if details else None
