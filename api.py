@@ -368,8 +368,10 @@ _VPS_IP = "154.208.51.69"
 def build_auth_headers(method: str, url: str, body: str | None = None, token: str | None = None, device_id: str | None = None, use_alt_key: bool = False, content_type: str = "application/json", accept: str = "application/json", client_ip: str | None = None) -> Dict[str, str]:
     ts = int(time.time() * 1000)
     dev_id = device_id or generate_device_id()
-    # Use real user IP when available so upstream geo-serves correct regional content
-    forwarded_ip = client_ip or _VPS_IP
+    # MovieBox/Aoneroom upstream blocks direct residential/datacenter user IPs in certain countries
+    # with 403 Forbidden ("Service not available in current region").
+    # Always use the trusted VPS IP for upstream requests to ensure consistent access worldwide.
+    forwarded_ip = _VPS_IP
     headers = {
         "user-agent": MODERN_USER_AGENT,
         "accept": accept,
@@ -528,6 +530,10 @@ def _is_ugc_fake_upload(sub: dict) -> bool:
     title = (sub.get("title") or "").strip()
     post_title = (sub.get("postTitle") or "").lower()
 
+    # Never filter dubbed versions or titles with language tags
+    if _audio_label_from_title(title) or (sub.get("lanName") and _AUDIO_LANG_RE.search(str(sub.get("lanName")))):
+        return False
+
     # Reject known fake sequel title patterns
     if _FAKE_SEQUEL_PATTERNS.search(title):
         return True
@@ -566,40 +572,41 @@ def _is_ugc_fake_upload(sub: dict) -> bool:
 def classify_content_type(subject_type: Optional[int], title: Optional[str] = None, upstream_type: Optional[str] = None) -> str:
     """
     Intelligently classify content as 'Movie' or 'TV Series'.
-    Prevents movies without subjectType or with subjectType=None from being incorrectly tagged as TV Series,
-    and prevents series (like Breaking Bad, The Mentalist) from being incorrectly tagged as Movie.
+    Respects explicit upstream subjectType (1=Movie, 2=TV Series).
     """
     clean_t = (title or "").strip()
     clean_low = clean_t.lower()
     
     # Explicit series patterns in title (e.g. 'Season 1', 'S02', 'The Series', 'Episode', 'Part 1')
     has_series_in_title = bool(re.search(r'\b(season\s*\d+|s\d{1,2}\b|tv\s*series|mini-series|complete\s*series|episode\s*\d+)\b', clean_t, re.IGNORECASE))
-    
-    # Known flagship TV series that might have ambiguous subject_type from upstream
-    _KNOWN_SERIES = (
-        "breaking bad", "better call saul", "game of thrones", "house of the dragon",
-        "stranger things", "the mentalist", "the boys", "the last of us", "succession",
-        "peaky blinders", "the sopranos", "the wire", "chernobyl", "fargo", "true detective",
-        "sherlock", "dexter", "friends", "the office", "vikings", "prison break", "narcos",
-        "money heist", "squid game", "dark", "westworld", "black mirror", "rick and morty",
-        "attack on titan", "death note", "jujutsu kaisen", "demon slayer", "naruto", "one piece",
-        "bleach", "my hero academia", "chainsaw man", "solo leveling", "vinland saga", "arcane",
-        "the mandalorian", "loki", "wandavision", "daredevil", "the walking dead", "severance"
-    )
-    is_known_series = any(ks in clean_low for ks in _KNOWN_SERIES)
-    if is_known_series or has_series_in_title:
+    if has_series_in_title:
         return "TV Series"
 
-    if subject_type == 2:
-        return "TV Series"
+    # Upstream explicitly specifies subject_type (1=Movie, 2=TV Series)
     if subject_type == 1:
         return "Movie"
+    if subject_type == 2:
+        return "TV Series"
         
-    # If upstream explicitly specified type
+    # If upstream explicitly specified type string
     if upstream_type in ["Series", "TV Series"]:
         return "TV Series"
     if upstream_type == "Movie":
         return "Movie"
+
+    # Known flagship TV series that might have ambiguous subject_type from upstream (e.g. subject_type is None/0)
+    _KNOWN_SERIES_EXACT = {
+        "breaking bad", "better call saul", "game of thrones", "house of the dragon",
+        "stranger things", "the mentalist", "the boys", "the last of us", "succession",
+        "peaky blinders", "the sopranos", "the wire", "chernobyl", "true detective",
+        "dexter", "friends", "the office", "vikings", "prison break", "narcos",
+        "money heist", "squid game", "westworld", "black mirror", "rick and morty",
+        "attack on titan", "death note", "jujutsu kaisen", "demon slayer", "naruto", "one piece",
+        "bleach", "my hero academia", "chainsaw man", "solo leveling", "vinland saga", "arcane",
+        "the mandalorian", "loki", "wandavision", "the walking dead", "severance"
+    }
+    if clean_low in _KNOWN_SERIES_EXACT:
+        return "TV Series"
 
     # Default is Movie (vast majority of unclassified cinema items are movies)
     return "Movie"
@@ -899,10 +906,10 @@ class MovieBoxEngine:
         if last_resp is not None and last_resp.status_code in (400, 401, 403, 441) and retry_auth:
             print(f"[api_request] status {last_resp.status_code} - re-bootstrapping token and retrying", flush=True)
             self.bootstrap_token(force=True)
-            return self.api_request(method, path_or_url, body_dict, use_token, retry_auth=False, client_ip=client_ip)
+            return self.api_request(method, path_or_url, body_dict, use_token, retry_auth=False, client_ip=None)
 
-        if last_resp is not None and last_resp.status_code == 406:
-            return {"code": 406, "data": {}}
+        if last_resp is not None and last_resp.status_code in (403, 406):
+            return {"code": last_resp.status_code, "data": {}}
 
         status_code = last_resp.status_code if last_resp else 502
         raise HTTPException(status_code=502, detail=f"API returned HTTP {status_code}")
@@ -920,6 +927,8 @@ class MovieBoxEngine:
         payload = {"keyword": query, "page": page, "perPage": safe_per_page}
         url = "/wefeed-mobile-bff/subject-api/search"
         raw_resp = self.api_request("POST", url, body_dict=payload, client_ip=client_ip)
+        if raw_resp.get("code") in (403, 406) and client_ip:
+            raw_resp = self.api_request("POST", url, body_dict=payload, client_ip=None)
         data = raw_resp.get("data", {})
         # If all hosts 406'd and query contains a language keyword, retry with base title
         if raw_resp.get("code") == 406 and _AUDIO_LANG_RE.search(query):
@@ -2348,7 +2357,7 @@ def _search_cinemeta_fallback(query: str, limit: int = 20) -> List[Dict[str, Any
     results = []
     seen_ids = set()
     encoded = urllib.parse.quote(clean_q)
-    for cat in ("series", "movie"):
+    for cat in ("movie", "series"):
         try:
             url = f"https://v3-cinemeta.strem.io/catalog/{cat}/top/search={encoded}.json"
             r = httpx.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
