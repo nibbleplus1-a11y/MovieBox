@@ -830,6 +830,17 @@ def _extract_subject_audio(sub: Optional[Dict[str, Any]], raw_title: str = "") -
 
     return None, None
 
+def _extract_detail_path(sub: Any) -> Optional[str]:
+    if not sub or not isinstance(sub, dict):
+        return None
+    dp = sub.get("detail_path") or sub.get("detailPath")
+    if dp and isinstance(dp, str):
+        return dp.split("/")[-1].strip() if "/" in dp else dp.strip()
+    du = sub.get("detailUrl") or sub.get("detail_url")
+    if du and isinstance(du, str):
+        return du.split("/")[-1].strip() if "/" in du else du.strip()
+    return None
+
 def _append_dub(dubs: List[Dict[str, Any]], subject_id: str, tag: str) -> None:
     if not subject_id or not tag:
         return
@@ -1137,7 +1148,7 @@ class MovieBoxEngine:
                 "imdb_rating": sub.get("imdbRatingValue"),
                 "genre": sub.get("genre"),
                 "cover": sub.get("cover", {}).get("url") if isinstance(sub.get("cover"), dict) else None,
-                "detail_path": sub.get("detailPath"),
+                "detail_path": _extract_detail_path(sub),
                 "language": sub.get("language"),
                 "dubs": entry_dubs
             }
@@ -1221,15 +1232,7 @@ class MovieBoxEngine:
                 }
 
         # --- SOURCE 2: Web Details (__NUXT_DATA__) ---
-        d_path = detail_path or data.get("detailPath")
-        if not d_path:
-            det_url = data.get("detailUrl", "")
-            if "/" in det_url:
-                d_path = det_url.split("/")[-1]
-            elif det_url:
-                d_path = det_url
-        if not d_path:
-            d_path = app_cache.get(f"detail_path:{main_id}")
+        d_path = detail_path or _extract_detail_path(data) or app_cache.get(f"detail_path:{main_id}")
         if not d_path:
             card = app_cache.get(f"card:{main_id}")
             if card and card.get("detail_path"):
@@ -1393,11 +1396,21 @@ class MovieBoxEngine:
 
         # Fallback to web scraping if native mobile API returned 406 or empty data on datacenter VPS IP
         if not data or not data.get("title"):
-            d_path = detail_path or app_cache.get(f"detail_path:{subject_id}")
+            d_path = detail_path or _extract_detail_path(data) or app_cache.get(f"detail_path:{subject_id}")
             if not d_path:
                 card = app_cache.get(f"card:{subject_id}")
                 if card and card.get("detail_path"):
                     d_path = card["detail_path"]
+            if not d_path and subject_id:
+                try:
+                    h5_hits = self.search_h5(subject_id, per_page=3)
+                    for hh in h5_hits:
+                        h_sub = hh.get("subject", hh)
+                        if str(h_sub.get("subjectId")) == str(subject_id):
+                            d_path = _extract_detail_path(h_sub)
+                            break
+                except Exception:
+                    pass
             if d_path:
                 web_sub, _ = _fetch_web_details(d_path)
                 if web_sub:
@@ -2680,12 +2693,12 @@ def get_detail(subject_id: str, title: Optional[str] = Query(None), _bust: Optio
                                     h_sid = str(hit.get("subject_id") or "")
                                     if not h_sid or h_sid.startswith("tt"):
                                         continue
-                                    for hd in hit.get("dubs", []):
-                                        if not any(x.get("subject_id") == hd.get("subject_id") for x in tt_dubs):
-                                            tt_dubs.append(hd)
-                                    h_tag = _audio_label_from_title(hit.get("title") or "")
-                                    if h_tag and not any(x.get("subject_id") == h_sid for x in tt_dubs):
-                                        _append_dub(tt_dubs, h_sid, h_tag)
+                                    d_list = engine.discover_all_audio_versions(h_sid, data=hit, detail_path=hit.get("detail_path"))
+                                    if d_list and len(d_list) > len(tt_dubs):
+                                        tt_dubs = d_list
+                                        if hit.get("detail_path"):
+                                            res["detail_path"] = hit.get("detail_path")
+                                        break
                                 if tt_dubs:
                                     res["dubs"] = tt_dubs
                             except Exception:
