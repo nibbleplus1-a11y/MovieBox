@@ -776,6 +776,49 @@ def _append_dub(dubs: List[Dict[str, Any]], subject_id: str, tag: str) -> None:
         "language": tag,
     })
 
+def _fetch_web_details(detail_path: str) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    if not detail_path:
+        return None, []
+    headers = {
+        "User-Agent": WEB_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    for domain in ["https://moviebox01.com", "https://movie-box.co", "https://movieboxonline.net"]:
+        url = f"{domain}/detail/{detail_path}"
+        try:
+            r = httpx.get(url, headers=headers, follow_redirects=True, timeout=8)
+            if r.status_code != 200:
+                continue
+            m = re.search(r'<script[^>]*id="__NUXT_DATA__"[^>]*>(.*?)</script>', r.text)
+            if not m:
+                continue
+            nuxt_data = json.loads(m.group(1))
+            subject = None
+            for item in nuxt_data:
+                if isinstance(item, dict) and "subjectId" in item and "dubs" in item:
+                    resolved = {}
+                    for k, v in item.items():
+                        resolved[k] = nuxt_data[v] if isinstance(v, int) and 0 <= v < len(nuxt_data) else v
+                    subject = resolved
+                    break
+            if subject:
+                raw_dubs = subject.get("dubs", [])
+                if isinstance(raw_dubs, int) and 0 <= raw_dubs < len(nuxt_data):
+                    raw_dubs = nuxt_data[raw_dubs]
+                resolved_dubs = []
+                if isinstance(raw_dubs, list):
+                    for d_ref in raw_dubs:
+                        d_obj = nuxt_data[d_ref] if isinstance(d_ref, int) and 0 <= d_ref < len(nuxt_data) else d_ref
+                        if isinstance(d_obj, dict):
+                            res_d = {}
+                            for dk, dv in d_obj.items():
+                                res_d[dk] = nuxt_data[dv] if isinstance(dv, int) and 0 <= dv < len(nuxt_data) else dv
+                            resolved_dubs.append(res_d)
+                return subject, resolved_dubs
+        except Exception:
+            pass
+    return None, []
+
 class MovieBoxEngine:
     _instance = None
 
@@ -986,8 +1029,8 @@ class MovieBoxEngine:
             year_tag = str(rel_date)[:4] if rel_date else ""
             type_tag = str(sub.get("subjectType", 1))
             norm_tag = audio_tag.lower() if audio_tag else "orig"
-            canonical_key = f"{clean_base}:{year_tag}:{type_tag}:{norm_tag}"
-            base_key = f"{clean_base}:{year_tag}:{type_tag}"
+            canonical_key = f"{clean_base}:{type_tag}:{norm_tag}"
+            base_key = f"{clean_base}:{type_tag}"
 
             # Same film, same language, same year: fold the clone onto the first card.
             # A different language has a different key and is returned on its own.
@@ -1072,8 +1115,23 @@ class MovieBoxEngine:
         data = self.api_request("GET", url).get("data", {})
         detail_url_str = data.get("detailUrl", "")
         detail_path = detail_url_str.split("/")[-1] if "/" in detail_url_str else detail_url_str
-        
         raw_dubs = data.get("dubs", [])
+
+        # Fallback to web scraping if native mobile API returned 406 or empty data on datacenter VPS IP
+        if not data or not data.get("title") or not raw_dubs:
+            d_path = detail_path or app_cache.get(f"detail_path:{subject_id}")
+            if not d_path:
+                card = app_cache.get(f"card:{subject_id}")
+                if card and card.get("detail_path"):
+                    d_path = card["detail_path"]
+            if d_path:
+                web_sub, web_dubs = _fetch_web_details(d_path)
+                if web_sub and (not data or not data.get("title")):
+                    data = web_sub
+                    detail_path = d_path
+                if web_dubs and not raw_dubs:
+                    raw_dubs = web_dubs
+
         dubs = []
         for d in raw_dubs:
             if not isinstance(d, dict):
@@ -1088,7 +1146,6 @@ class MovieBoxEngine:
             else:
                 display_name = _dub_display_label(raw_lang_name) if raw_lang_name else _dub_display_label(lang_code)
                 if not display_name or display_name == raw_lang_name:
-                    # _dub_display_label didn't improve it; try with lang_code directly
                     display_name = _dub_display_label(lang_code) or raw_lang_name or "Dub"
             dubs.append({
                 "subject_id": str(d.get("subjectId")),
@@ -1114,63 +1171,53 @@ class MovieBoxEngine:
         if not detail_path and clean_title:
             detail_path = re.sub(r'[^a-z0-9]+', '-', clean_title.lower()).strip('-')
 
-        # Always harvest sibling dubs via parent link or clean title search if dubs list is incomplete,
-        # or if the current item has a language tag, or if fewer than 2 dubs exist
-        if len(dubs) <= 1 or self_has_audio:
-            parent_id = app_cache.get(f"dub_parent:{subject_id}")
-            rel_date = str(data.get("releaseDate") or "")[:4]
-            subject_type = data.get("subjectType")
+        # Always harvest sibling dubs via parent link or clean title search so all languages are available
+        parent_id = app_cache.get(f"dub_parent:{subject_id}")
+        subject_type = data.get("subjectType")
 
-            # Broad search: fetch up to 20 results for the base title to harvest all dub siblings
-            if clean_title:
-                try:
-                    search_results = self.search(clean_title, page=1, per_page=20)
-                    for r in search_results:
-                        r_sid = str(r.get("subject_id") or "")
-                        if not r_sid or r_sid == main_id:
-                            continue
-                        r_year = str(r.get("release_date") or "")[:4]
-                        r_type = r.get("subject_type")
-                        # Year tolerance: allow 0-1 year difference to cover multi-year series
-                        try:
-                            year_ok = (not rel_date or not r_year or abs(int(rel_date) - int(r_year)) <= 1)
-                        except Exception:
-                            year_ok = True
-                        type_ok = (not subject_type or not r_type or subject_type == r_type)
-                        title_ok = not clean_title or (_audio_base_title(r.get("title") or "") == clean_title)
-                        if year_ok and type_ok and title_ok:
-                            # Collect any dub objects discovered during search
-                            for d in r.get("dubs", []):
-                                if not any(existing_d.get("subject_id") == d.get("subject_id") for existing_d in dubs):
-                                    dubs.append(d)
-                            r_title = r.get("title", "")
-                            r_audio_tag = _audio_label_from_title(r_title) or (r.get("language") if r.get("language") and _AUDIO_LANG_RE.fullmatch(str(r.get("language")).strip()) else None)
-                            # If this sibling is a dub variant, add it as a dub entry
-                            if r_audio_tag:
-                                _append_dub(dubs, r_sid, r_audio_tag)
-                                app_cache.set(f"dub_parent:{r_sid}", main_id, ttl=7200)
-                            elif not parent_id:
-                                # Clean-title result without language tag -> potential parent
-                                parent_id = r_sid
-                except Exception:
-                    pass
+        if clean_title:
+            try:
+                search_results = self.search(clean_title, page=1, per_page=20)
+                for r in search_results:
+                    r_sid = str(r.get("subject_id") or "")
+                    if not r_sid or r_sid == main_id:
+                        continue
+                    r_type = r.get("subject_type")
+                    type_ok = (not subject_type or not r_type or subject_type == r_type)
+                    title_ok = not clean_title or (_audio_base_title(r.get("title") or "") == clean_title)
+                    if type_ok and title_ok:
+                        # Collect any dub objects discovered during search
+                        for d in r.get("dubs", []):
+                            if not any(existing_d.get("subject_id") == d.get("subject_id") for existing_d in dubs):
+                                dubs.append(d)
+                        r_title = r.get("title", "")
+                        r_audio_tag = _audio_label_from_title(r_title) or (r.get("language") if r.get("language") and _AUDIO_LANG_RE.fullmatch(str(r.get("language")).strip()) else None)
+                        # If this sibling is a dub variant, add it as a dub entry
+                        if r_audio_tag:
+                            _append_dub(dubs, r_sid, r_audio_tag)
+                            app_cache.set(f"dub_parent:{r_sid}", main_id, ttl=7200)
+                        elif not parent_id:
+                            # Clean-title result without language tag -> potential parent
+                            parent_id = r_sid
+            except Exception:
+                pass
 
-            if parent_id and parent_id != subject_id:
-                try:
-                    p_details = self.get_details(parent_id)
-                    p_dubs = p_details.get("dubs", [])
-                    for pd in p_dubs:
-                        if not any(d.get("subject_id") == pd.get("subject_id") for d in dubs):
-                            dubs.append(pd)
-                    original_subject_id = parent_id
-                    app_cache.set(f"dub_parent:{main_id}", parent_id, ttl=7200)
-                except Exception:
-                    pass
+        if parent_id and parent_id != subject_id:
+            try:
+                p_details = self.get_details(parent_id)
+                p_dubs = p_details.get("dubs", [])
+                for pd in p_dubs:
+                    if not any(d.get("subject_id") == pd.get("subject_id") for d in dubs):
+                        dubs.append(pd)
+                original_subject_id = parent_id
+                app_cache.set(f"dub_parent:{main_id}", parent_id, ttl=7200)
+            except Exception:
+                pass
 
-            # If this subject itself is a dub variant, ensure it is added to dubs
-            if self_audio_tag:
-                if not any(d.get("subject_id") == main_id for d in dubs):
-                    _append_dub(dubs, main_id, self_audio_tag)
+        # If this subject itself is a dub variant, ensure it is added to dubs
+        if self_audio_tag:
+            if not any(d.get("subject_id") == main_id for d in dubs):
+                _append_dub(dubs, main_id, self_audio_tag)
 
         # Ensure Original Audio entry exists in dubs list if dubs are present
         if dubs:
@@ -3089,6 +3136,10 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
                 try:
                     raw_sub = engine.api_request("GET", f"/wefeed-mobile-bff/subject-api/get?subjectId={subject_id}")
                     raw_dubs = raw_sub.get("data", {}).get("dubs", [])
+                    if not raw_dubs:
+                        d_path = detail_path or (details and details.get("detail_path")) or app_cache.get(f"detail_path:{subject_id}")
+                        if d_path:
+                            _, raw_dubs = _fetch_web_details(d_path)
                     if raw_dubs:
                         dubs = []
                         for d in raw_dubs:
