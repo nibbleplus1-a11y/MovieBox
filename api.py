@@ -3320,6 +3320,26 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
             if details and is_adult_content(details):
                 raise HTTPException(status_code=404, detail="Title not found")
             dubs = details.get("dubs", []) if details else []
+
+            # KEY FIX: if this subject_id is a dub child of another subject,
+            # the details/dubs list from get_details() will only have itself
+            # (or at most the siblings it discovered for itself).  Look up the
+            # parent's unified dubs list which was built when the original title
+            # was first opened, and return that instead.
+            parent_id = app_cache.get(f"dub_parent:{subject_id}")
+            if parent_id and parent_id != subject_id:
+                parent_dubs = app_cache.get(f"unified_dubs:{parent_id}")
+                if parent_dubs and len(parent_dubs) > len(dubs):
+                    dubs = parent_dubs
+                elif not parent_dubs:
+                    # Parent dubs not cached yet — trigger discovery from parent details
+                    try:
+                        p_det = app_cache.get(f"details:{parent_id}")
+                        if p_det and p_det.get("dubs") and len(p_det["dubs"]) > len(dubs):
+                            dubs = p_det["dubs"]
+                    except Exception:
+                        pass
+
             if not dubs or len(dubs) <= 1:
                 try:
                     d_path = detail_path or (details and details.get("detail_path")) or app_cache.get(f"detail_path:{subject_id}")

@@ -1275,15 +1275,17 @@ async function switchAudioDub(dubSubjectId, langName) {
         const res = await fetch(`/api/stream/${dubSubjectId}?se=${currentSeason}&ep=${currentEpisode}`).then(r => r.json());
         activeStreamList = res.streams || [];
 
-        // MERGE dubs: preserve the full list, only ADD new entries from dub's response
-        // Never replace — switching to Hindi should still show Tamil, English, etc.
+        // MERGE dubs: preserve the full list, only ADD new entries from dub's response.
+        // NEVER replace the full list with a shorter one — switching to French should
+        // still show Hindi, Tamil, English, etc.
         const mergedDubs = [...preservedDubsList];
         for (const nd of (res.dubs || [])) {
             if (nd && nd.subject_id && !mergedDubs.some(d => d.subject_id === nd.subject_id)) {
                 mergedDubs.push(nd);
             }
         }
-        if (mergedDubs.length > 0) {
+        // Only upgrade — never downgrade the dubs list length
+        if (mergedDubs.length >= (activeDubsList || []).length) {
             activeDubsList = mergedDubs;
             currentTitleDubs = mergedDubs;
         }
@@ -3485,7 +3487,8 @@ function renderSettingsAudioList(dubs) {
         fetch(`/detail/${sid}`)
             .then(r => r.json())
             .then(d => {
-                if (d && d.dubs && d.dubs.length > 1) {
+                window[`_dubsLock_${sid}`] = false;
+                if (d && d.dubs && d.dubs.length > (activeDubsList || []).length) {
                     activeDubsList = d.dubs;
                     currentTitleDubs = d.dubs;
                     renderSettingsAudioList(d.dubs);
@@ -3498,7 +3501,7 @@ function renderSettingsAudioList(dubs) {
                     fetch(`/api/stream/${sid}?se=1&ep=1`)
                         .then(r => r.json())
                         .then(st => {
-                            if (st && st.dubs && st.dubs.length > 1) {
+                            if (st && st.dubs && st.dubs.length > (activeDubsList || []).length) {
                                 activeDubsList = st.dubs;
                                 currentTitleDubs = st.dubs;
                                 renderSettingsAudioList(st.dubs);
@@ -3508,7 +3511,7 @@ function renderSettingsAudioList(dubs) {
                         .catch(() => {});
                 }
             })
-            .catch(() => {});
+            .catch(() => { window[`_dubsLock_${sid}`] = false; });
     }
 
     const originalSubId = activeOriginalSubjectId ||
@@ -3594,8 +3597,8 @@ function renderInPlayerAudioPopover() {
         fetch(`/detail/${sid}`)
             .then(r => r.json())
             .then(d => {
-                if (d && d.dubs && d.dubs.length > 0) {
-                    window[`_dubsLock_${sid}`] = false;
+                window[`_dubsLock_${sid}`] = false;
+                if (d && d.dubs && d.dubs.length > (activeDubsList || []).length) {
                     activeDubsList = d.dubs;
                     currentTitleDubs = d.dubs;
                     renderSettingsAudioList(d.dubs);
@@ -3605,7 +3608,7 @@ function renderInPlayerAudioPopover() {
                         .then(r => r.json())
                         .then(st => {
                             window[`_dubsLock_${sid}`] = false;
-                            if (st && st.dubs && st.dubs.length > 0) {
+                            if (st && st.dubs && st.dubs.length > (activeDubsList || []).length) {
                                 activeDubsList = st.dubs;
                                 currentTitleDubs = st.dubs;
                                 renderSettingsAudioList(st.dubs);
