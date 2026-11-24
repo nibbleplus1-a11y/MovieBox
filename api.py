@@ -1105,7 +1105,7 @@ class MovieBoxEngine:
             if h5_items:
                 raw_items = h5_items
         results = []
-        seen_canonical = {}
+        seen_sids = set()
         siblings_by_base = {}
 
         for item in raw_items:
@@ -1119,36 +1119,21 @@ class MovieBoxEngine:
                 continue
 
             sid_str = str(sub.get("subjectId") or "")
-            if not sid_str:
+            if not sid_str or sid_str in seen_sids:
                 continue
+            seen_sids.add(sid_str)
 
             # --- Filter fake/unreleased UGC uploads (e.g. Salaar 2, salar 3 fan-made YouTube rips) ---
             if _is_ugc_fake_upload(sub):
                 continue
 
-            # Base title ignores year/quality brackets AND language words, so
-            # "Avengers (2019)" and "Avengers (2019) [Hindi]" compare as the same film.
-            # The language tag is kept in the key so each audio version stays its own result.
             clean_base = _clean_base_title(raw_title)
             audio_tag, lang_code = _extract_subject_audio(sub, raw_title)
 
             rel_date = sub.get("releaseDate") or ""
             year_tag = str(rel_date)[:4] if rel_date else ""
             type_tag = str(sub.get("subjectType", 1))
-            norm_tag = "orig" if (not audio_tag or audio_tag == "Original Audio") else audio_tag.lower()
-            canonical_key = f"{clean_base}:{type_tag}:{norm_tag}"
             base_key = f"{clean_base}:{type_tag}"
-
-            # Same film, same language, same year: fold the clone onto the first card.
-            # A different language has a different key and is returned on its own.
-            if canonical_key in seen_canonical:
-                existing = seen_canonical[canonical_key]
-                if audio_tag and audio_tag != "Original Audio":
-                    if "dubs" not in existing:
-                        existing["dubs"] = []
-                    _append_dub(existing["dubs"], sid_str, audio_tag)
-                    app_cache.set(f"dub_parent:{sid_str}", existing["subject_id"], ttl=7200)
-                continue
 
             is_cs = False
             if rel_date:
@@ -1182,7 +1167,6 @@ class MovieBoxEngine:
                 "language": sub.get("language"),
                 "dubs": entry_dubs
             }
-            seen_canonical[canonical_key] = entry
             siblings_by_base.setdefault(base_key, []).append((entry, sid_str, audio_tag))
             results.append(entry)
             s_sid = entry.get("subject_id")
@@ -3960,14 +3944,11 @@ def get_hero_trending():
     candidates = feed.get("trending", []) + feed.get("new_releases", []) + feed.get("hollywood", [])
     for it in candidates:
         sid = it.get("subject_id")
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
         raw_title = it.get("raw_title") or it.get("title") or ""
         clean = _audio_base_title(raw_title) or re.sub(r'\[.*?\]|\(.*?\)', '', raw_title).strip()
-        audio_tag = _audio_label_from_title(raw_title)
-        norm_tag = audio_tag.lower() if audio_tag else 'orig'
-        dedup_key = f"{clean.lower()}:{norm_tag}"
-        if not clean or dedup_key in seen:
-            continue
-        seen.add(dedup_key)
 
         backdrop = it.get("cover")
         rating = it.get("rating") or "7.5"
@@ -4027,19 +4008,15 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
             # Strict filter: ONLY movies belong in the movie catalog!
             if it.get("subject_type") == 2 or it.get("type") in ["Series", "TV Series"]:
                 continue
-            raw_t = it.get("title") or ""
-            clean_base = _clean_base_title(raw_t)
-            audio_tag, _ = _extract_subject_audio(it, raw_t)
-            norm_tag = audio_tag.lower() if audio_tag else 'orig'
-            dedup_key = f"{clean_base}:{norm_tag}"
-            if it["subject_id"] not in seen and dedup_key not in seen:
-                seen.add(it["subject_id"])
-                seen.add(dedup_key)
-                c = dict(it)
-                c["raw_title"] = raw_t
-                c["title"] = raw_t
-                c["type"] = "Movie"
-                curated_pool.append(c)
+            sid = str(it.get("subject_id") or "")
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            c = dict(it)
+            c["raw_title"] = raw_t
+            c["title"] = raw_t
+            c["type"] = "Movie"
+            curated_pool.append(c)
 
     cache_key = f"movies:{page}:{per_page}:{sort}:{category}:{genre}"
     cached = app_cache.get(cache_key)
@@ -4079,27 +4056,23 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
             if not s.get("title"):
                 continue
             sid = str(s.get("subjectId"))
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
             raw_t = s.get("title") or ""
-            clean_base = _clean_base_title(raw_t)
-            audio_tag, _ = _extract_subject_audio(s, raw_t)
-            norm_tag = audio_tag.lower() if audio_tag else 'orig'
-            dedup_key = f"{clean_base}:{norm_tag}"
-            if sid not in seen and dedup_key not in seen:
-                seen.add(sid)
-                seen.add(dedup_key)
-                cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
-                items.append({
-                    "title": raw_t,
-                    "raw_title": raw_t,
-                    "subject_id": sid,
-                    "subject_type": 1,
-                    "detail_path": s.get("detailPath"),
-                    "cover": cover_url,
-                    "rating": s.get("imdbRatingValue") or "N/A",
-                    "genre": s.get("genre") or "Cinema",
-                    "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
-                    "type": "Movie"
-                })
+            cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
+            items.append({
+                "title": raw_t,
+                "raw_title": raw_t,
+                "subject_id": sid,
+                "subject_type": 1,
+                "detail_path": s.get("detailPath"),
+                "cover": cover_url,
+                "rating": s.get("imdbRatingValue") or "N/A",
+                "genre": s.get("genre") or "Cinema",
+                "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
+                "type": "Movie"
+            })
             if len(items) >= per_page:
                 break
     except Exception:
@@ -4137,19 +4110,15 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
             # Strict filter: ONLY TV Series belong in the TV series catalog!
             if it.get("subject_type") == 1 or it.get("type") == "Movie":
                 continue
-            raw_t = it.get("title") or ""
-            clean_base = _clean_base_title(raw_t)
-            audio_tag, _ = _extract_subject_audio(it, raw_t)
-            norm_tag = audio_tag.lower() if audio_tag else 'orig'
-            dedup_key = f"{clean_base}:{norm_tag}"
-            if it["subject_id"] not in seen and dedup_key not in seen:
-                seen.add(it["subject_id"])
-                seen.add(dedup_key)
-                c = dict(it)
-                c["raw_title"] = raw_t
-                c["title"] = raw_t
-                c["type"] = "TV Series"
-                curated_series.append(c)
+            sid = str(it.get("subject_id") or "")
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            c = dict(it)
+            c["raw_title"] = raw_t
+            c["title"] = raw_t
+            c["type"] = "TV Series"
+            curated_series.append(c)
 
     if category in ["series", "anime", "asian_drama"]:
         items = feed.get(category, [])
@@ -4201,27 +4170,23 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
             if not s.get("title"):
                 continue
             sid = str(s.get("subjectId"))
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
             raw_t = s.get("title") or ""
-            clean_base = _clean_base_title(raw_t)
-            audio_tag, _ = _extract_subject_audio(s, raw_t)
-            norm_tag = audio_tag.lower() if audio_tag else 'orig'
-            dedup_key = f"{clean_base}:{norm_tag}"
-            if sid not in seen and dedup_key not in seen:
-                seen.add(sid)
-                seen.add(dedup_key)
-                cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
-                items.append({
-                    "title": raw_t,
-                    "raw_title": raw_t,
-                    "subject_id": sid,
-                    "subject_type": 2,
-                    "detail_path": s.get("detailPath"),
-                    "cover": cover_url,
-                    "rating": s.get("imdbRatingValue") or "N/A",
-                    "genre": s.get("genre") or "TV Series",
-                    "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
-                    "type": "TV Series"
-                })
+            cover_url = s.get("cover", {}).get("url") if isinstance(s.get("cover"), dict) else None
+            items.append({
+                "title": raw_t,
+                "raw_title": raw_t,
+                "subject_id": sid,
+                "subject_type": 2,
+                "detail_path": s.get("detailPath"),
+                "cover": cover_url,
+                "rating": s.get("imdbRatingValue") or "N/A",
+                "genre": s.get("genre") or "TV Series",
+                "year": s.get("releaseDate", "")[:4] if s.get("releaseDate") else "2026",
+                "type": "TV Series"
+            })
             if len(items) >= per_page:
                 break
     except Exception:
