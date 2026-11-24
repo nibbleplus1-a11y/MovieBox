@@ -4012,6 +4012,7 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
             if not sid or sid in seen:
                 continue
             seen.add(sid)
+            raw_t = it.get("title") or ""
             c = dict(it)
             c["raw_title"] = raw_t
             c["title"] = raw_t
@@ -4114,6 +4115,7 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
             if not sid or sid in seen:
                 continue
             seen.add(sid)
+            raw_t = it.get("title") or ""
             c = dict(it)
             c["raw_title"] = raw_t
             c["title"] = raw_t
