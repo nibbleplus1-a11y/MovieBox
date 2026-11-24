@@ -1109,7 +1109,11 @@ async function executeResolver() {
         const cleanStreams = rawStreams.filter(s => !isNoticeStream(s));
         activeStreamList  = cleanStreams.length > 0 ? cleanStreams : rawStreams;
         activeCaptionList = captionData.captions || [];
-        activeDubsList    = streamData.dubs || (detail ? detail.dubs : []) || [];
+        // Always take the LARGEST dubs list from stream or detail response
+        const _sDubs = streamData.dubs || [];
+        const _dDubs = (detail && detail.dubs) ? detail.dubs : [];
+        activeDubsList    = (_sDubs.length >= _dDubs.length && _sDubs.length > 0) ? _sDubs : (_dDubs.length > 0 ? _dDubs : []);
+        currentTitleDubs  = activeDubsList;
         activeMediaMeta   = detail;
         // Track the true original language subject_id (may differ from current subject if this is a dub entry)
         activeOriginalSubjectId = (detail && detail.original_subject_id) ? String(detail.original_subject_id) : String(subjectId);
@@ -3040,7 +3044,9 @@ async function quickPlay(subjectId, title, startTime = 0) {
     _drawerEpisodeData = null;
     _directStreamWorked = false;
     _directStreamFailed = false;
-    window._fetchingDubsLock = false;  // Always reset dubs lock for every new title
+    window._fetchingDubsLock = false;
+    // Clear ALL per-SID dubs locks so the background fetch can fire again for this title
+    Object.keys(window).forEach(k => { if (k.startsWith('_dubsLock_')) delete window[k]; });
 
     // Reset iframe immediately
     const iframe = document.getElementById('cinemaIframe');
@@ -3122,12 +3128,20 @@ async function quickPlay(subjectId, title, startTime = 0) {
         activeStreamList   = cleanStreams.length > 0 ? cleanStreams : rawStreams;
         activeCaptionList  = captionData.captions || [];
 
-        // Collect dubs from all sources — stream endpoint, detail fetch, existing meta
+        // Collect dubs from ALL sources — merge stream endpoint + detail fetch + existing meta.
+        // Always prefer the longest list; never replace a full list with a shorter one.
         let dubs = [];
-        if (streamData && streamData.dubs && streamData.dubs.length > 0) dubs = streamData.dubs;
-        else if (detail && detail.dubs && detail.dubs.length > 0) dubs = detail.dubs;
+        const streamDubs = (streamData && streamData.dubs) ? streamData.dubs : [];
+        const detailDubs = (detail && detail.dubs) ? detail.dubs : [];
+        // Pick the larger of stream dubs vs detail dubs
+        if (streamDubs.length >= detailDubs.length && streamDubs.length > 0) dubs = streamDubs;
+        else if (detailDubs.length > 0) dubs = detailDubs;
         activeDubsList = dubs;
         currentTitleDubs = dubs;
+        // Also save original subject ID for the dubs lock system
+        activeOriginalSubjectId = (detail && detail.original_subject_id)
+            ? String(detail.original_subject_id)
+            : (streamData && streamData.subject_id ? String(streamData.subject_id) : String(subjectId));
         activeMediaMeta = detail || { title, cover: streamData.cover };
         // Also collect pre-resolved fallback servers from stream endpoint (avoids a second API call)
         if (streamData.fallback_servers && streamData.fallback_servers.length > 0) {
@@ -3480,25 +3494,25 @@ function renderSettingsAudioList(dubs) {
                 ? activeDubsList
                 : ((activeMediaMeta && activeMediaMeta.dubs) || [])));
 
-    // If dubs list is incomplete, fetch details or stream endpoint in background
-    const sid = currentPlayingSubjectId;
-    if ((!dubsList || dubsList.length <= 1) && sid && !window[`_dubsLock_${sid}`]) {
-        window[`_dubsLock_${sid}`] = true;
-        fetch(`/detail/${sid}`)
+    // If dubs list is incomplete, fetch details from the ORIGINAL subject (not the current dub SID).
+    // Using currentPlayingSubjectId here is wrong when the user has switched to a dub:
+    // the dub's own detail only has 1 entry, overwriting the full list.
+    const origSid = activeOriginalSubjectId ||
+        (activeMediaMeta && activeMediaMeta.subject_id ? String(activeMediaMeta.subject_id) : currentPlayingSubjectId);
+    if ((!dubsList || dubsList.length <= 1) && origSid && !window[`_dubsLock_${origSid}`]) {
+        window[`_dubsLock_${origSid}`] = true;
+        fetch(`/detail/${origSid}`)
             .then(r => r.json())
             .then(d => {
-                window[`_dubsLock_${sid}`] = false;
+                window[`_dubsLock_${origSid}`] = false;
                 if (d && d.dubs && d.dubs.length > (activeDubsList || []).length) {
                     activeDubsList = d.dubs;
                     currentTitleDubs = d.dubs;
                     renderSettingsAudioList(d.dubs);
                     renderInPlayerAudioPopover();
-                } else if (d && d.dubs && d.dubs.length === 1 && !activeDubsList) {
-                    activeDubsList = d.dubs;
-                    currentTitleDubs = d.dubs;
                 } else {
-                    // Secondary fallback: query /api/stream endpoint which resolves raw upstream dubs
-                    fetch(`/api/stream/${sid}?se=1&ep=1`)
+                    // Secondary fallback: /api/stream on the ORIGINAL SID
+                    fetch(`/api/stream/${origSid}?se=1&ep=1`)
                         .then(r => r.json())
                         .then(st => {
                             if (st && st.dubs && st.dubs.length > (activeDubsList || []).length) {
@@ -3511,7 +3525,7 @@ function renderSettingsAudioList(dubs) {
                         .catch(() => {});
                 }
             })
-            .catch(() => { window[`_dubsLock_${sid}`] = false; });
+            .catch(() => { window[`_dubsLock_${origSid}`] = false; });
     }
 
     const originalSubId = activeOriginalSubjectId ||
@@ -3590,24 +3604,25 @@ function renderInPlayerAudioPopover() {
             ? activeDubsList
             : ((activeMediaMeta && activeMediaMeta.dubs) || []));
 
-    // If dubs list is not populated yet, actively fetch details in background
-    const sid = currentPlayingSubjectId;
-    if ((!dubsToUse || dubsToUse.length <= 1) && sid && !window[`_dubsLock_${sid}`]) {
-        window[`_dubsLock_${sid}`] = true;
-        fetch(`/detail/${sid}`)
+    // If dubs list is not populated yet, fetch details from ORIGINAL SID (not current dub SID)
+    const origSid2 = activeOriginalSubjectId ||
+        (activeMediaMeta && activeMediaMeta.subject_id ? String(activeMediaMeta.subject_id) : currentPlayingSubjectId);
+    if ((!dubsToUse || dubsToUse.length <= 1) && origSid2 && !window[`_dubsLock_${origSid2}`]) {
+        window[`_dubsLock_${origSid2}`] = true;
+        fetch(`/detail/${origSid2}`)
             .then(r => r.json())
             .then(d => {
-                window[`_dubsLock_${sid}`] = false;
+                window[`_dubsLock_${origSid2}`] = false;
                 if (d && d.dubs && d.dubs.length > (activeDubsList || []).length) {
                     activeDubsList = d.dubs;
                     currentTitleDubs = d.dubs;
                     renderSettingsAudioList(d.dubs);
                     renderInPlayerAudioPopover();
                 } else {
-                    fetch(`/api/stream/${sid}?se=1&ep=1`)
+                    fetch(`/api/stream/${origSid2}?se=1&ep=1`)
                         .then(r => r.json())
                         .then(st => {
-                            window[`_dubsLock_${sid}`] = false;
+                            window[`_dubsLock_${origSid2}`] = false;
                             if (st && st.dubs && st.dubs.length > (activeDubsList || []).length) {
                                 activeDubsList = st.dubs;
                                 currentTitleDubs = st.dubs;
@@ -3615,11 +3630,12 @@ function renderInPlayerAudioPopover() {
                                 renderInPlayerAudioPopover();
                             }
                         })
-                        .catch(() => { window[`_dubsLock_${sid}`] = false; });
+                        .catch(() => { window[`_dubsLock_${origSid2}`] = false; });
                 }
             })
-            .catch(() => { window[`_dubsLock_${sid}`] = false; });
+            .catch(() => { window[`_dubsLock_${origSid2}`] = false; });
     }
+
 
     const originalSubId = activeOriginalSubjectId ||
         ((activeMediaMeta && activeMediaMeta.subject_id) ? String(activeMediaMeta.subject_id) : '');
@@ -5792,9 +5808,13 @@ async function playDetailEpisode(subjectId, seasonNum, episodeNum, seekTime = 0)
         activeStreamList = streams.length > 0 ? streams : rawStreams;
         activeCaptionList = captionRes.captions || [];
 
-        if (streamRes.dubs && streamRes.dubs.length > 0) {
-            activeDubsList = streamRes.dubs;
-            currentTitleDubs = streamRes.dubs;
+        // Merge dubs from stream + meta, always keep the longest list
+        const _epSDubs = streamRes.dubs || [];
+        const _epMDubs = (metaRes && metaRes.dubs) ? metaRes.dubs : [];
+        const _epBest = (_epSDubs.length >= _epMDubs.length && _epSDubs.length > 0) ? _epSDubs : (_epMDubs.length > 0 ? _epMDubs : []);
+        if (_epBest.length > (activeDubsList || []).length) {
+            activeDubsList = _epBest;
+            currentTitleDubs = _epBest;
         }
 
         if (!activeMediaMeta) {
