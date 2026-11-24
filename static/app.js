@@ -1293,9 +1293,8 @@ async function switchAudioDub(dubSubjectId, langName) {
             activeDubsList = mergedDubs;
             currentTitleDubs = mergedDubs;
         }
-        currentPlayingSubjectId = dubSubjectId;
-
         if (activeStreamList.length > 0) {
+            currentPlayingSubjectId = dubSubjectId;
             const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
             const listToUse = playableStreams.length > 0 ? playableStreams : activeStreamList;
             const streamToPlay = listToUse.find(s => (s.quality === '1080p' || s.quality === '720p') && (!s.codec || s.codec.toLowerCase().includes('h264')))
@@ -1343,11 +1342,7 @@ async function switchAudioDub(dubSubjectId, langName) {
 
             showToast(`Switched to ${langName}`, 'success');
         } else {
-            // No direct streams for this dub variant — keep dubs list visible and show fallback hint
-            showToast(`No direct streams for ${langName} — try a fallback server`, 'warning');
-            safeText('inPlayerDubBadge', `${langName} ▾`);
-            safeText('inPlayerCurrentAudioText', `Audio: ${langName}`);
-            safeText('settingsValAudio', langName);
+            showToast(`No direct streams found for ${langName}`, 'warning');
             renderSettingsAudioList(activeDubsList);
             renderInPlayerAudioPopover();
         }
