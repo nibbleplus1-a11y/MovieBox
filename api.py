@@ -1648,6 +1648,22 @@ class MovieBoxEngine:
                 if card and card.get("detail_path"):
                     detail_path = card["detail_path"]
 
+        # KEY FIX: For dub child SIDs (e.g. Spanish Latin, French, Hindi dubs), the dub's own
+        # detail_path is usually not cached. Fall back to the PARENT subject's detail_path, since
+        # the web CDN play endpoint uses the parent's detailPath with the dub's subjectId to serve
+        # the dubbed stream. This fixes "No direct streams found for Spanish (Latin) Dub" etc.
+        if not detail_path:
+            parent_sid = app_cache.get(f"dub_parent:{subject_id}")
+            if parent_sid and parent_sid != subject_id:
+                detail_path = (
+                    app_cache.get(f"detail_path:{parent_sid}")
+                    or (app_cache.get(f"card:{parent_sid}") or {}).get("detail_path")
+                )
+                if not detail_path:
+                    parent_det = app_cache.get(f"details:{parent_sid}")
+                    if parent_det:
+                        detail_path = parent_det.get("detail_path")
+
         def _fetch_native():
             try:
                 native_url = f"/wefeed-mobile-bff/subject-api/play-info?subjectId={subject_id}&se={season}&ep={episode}"
@@ -1745,9 +1761,24 @@ class MovieBoxEngine:
             except Exception:
                 pass
 
+        # Second retry: if still no web results and this is a dub child, try fetching parent details
+        # to discover the detail_path, then retry the web CDN fetch with the parent's detail_path
+        if not web_results:
+            try:
+                parent_sid = app_cache.get(f"dub_parent:{subject_id}")
+                if parent_sid and parent_sid != subject_id:
+                    p_det = app_cache.get(f"details:{parent_sid}") or self.get_details(parent_sid)
+                    if p_det and p_det.get("detail_path"):
+                        parent_path = p_det["detail_path"]
+                        app_cache.set(f"detail_path:{subject_id}", parent_path, ttl=86400)
+                        web_results = _fetch_web(parent_path)
+            except Exception:
+                pass
+
         # Parse Native CDN streams
         for st in native_data.get("streams", []):
             raw_url = st.get("url") or ""
+
             if not raw_url:
                 continue
             if any(m in raw_url for m in ["b164fbfb4347792950bdfbfb563d39d9", "80da52722ee7de7a4303290af6783424", "/other/", "movieboxdownload"]):
