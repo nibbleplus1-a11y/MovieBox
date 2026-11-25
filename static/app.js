@@ -1908,10 +1908,6 @@ function initPlyr() {
     plyrInstance.on('error', (e) => {
         hideBuffering();
         console.warn('Plyr stream error event:', e);
-        if (activeFallbackServers && activeFallbackServers.length > 0) {
-            const srv = activeFallbackServers[0];
-            showToast(`Direct stream error — click Server menu to switch to ${srv.name}`, 'warning');
-        }
     });
 
     window._clearStreamWatchdog = () => clearStreamWatchdog();
@@ -1921,35 +1917,6 @@ function initPlyr() {
     window.triggerAutoStreamFallback = async function(reason = 'error') {
         const modal = document.getElementById('playerModal');
         if (!modal || !modal.classList.contains('active')) return;
-
-        // If fallback servers are not yet loaded in memory, fetch them on-demand
-        if (!activeFallbackServers || activeFallbackServers.length === 0) {
-            const title = (activeMediaMeta && activeMediaMeta.title) || document.getElementById('playerMediaTitle')?.textContent || '';
-            const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
-            const isSer = Boolean(currentEpisode > 0 || (activeMediaMeta && (activeMediaMeta.type === 'Series' || activeMediaMeta.type === 'TV Series')));
-            if (title) {
-                try {
-                    showToast('Switching to Backup Stream Server…', 'info');
-                    const fbRes = await fetch(`/api/fallback-sources?title=${encodeURIComponent(title)}&year=${year}&is_series=${isSer}&season=${currentSeason || 1}&episode=${currentEpisode || 1}`).then(r => r.json());
-                    if (fbRes.servers && fbRes.servers.length > 0) {
-                        activeFallbackServers = fbRes.servers;
-                        updatePlayerServerSelect();
-                    }
-                } catch {}
-            }
-        }
-
-        // If on an iframe server and it fails, cycle to next iframe server
-        if (currentSelectedServer !== 'direct' && activeFallbackServers && activeFallbackServers.length > 0) {
-            const curIdx = activeFallbackServers.findIndex(s => s.id === currentSelectedServer);
-            if (curIdx >= 0 && curIdx + 1 < activeFallbackServers.length) {
-                const nextServer = activeFallbackServers[curIdx + 1];
-                const srvName = nextServer.name.split('(')[1]?.replace(')', '') || nextServer.name;
-                showToast(`Switching to ${srvName}…`, 'info');
-                changePlayerServer(nextServer.id);
-                return;
-            }
-        }
 
         // S1 Direct fallback: try alternative MP4 resolution
         const playableStreams = (activeStreamList || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd') && s.url !== currentPlayingStream?.url);
@@ -1963,10 +1930,6 @@ function initPlyr() {
         // Re-fetch fresh streams for S1 Direct with cache-bust
         try {
             const freshData = await fetch(`/api/stream/${currentPlayingSubjectId}?se=${currentSeason}&ep=${currentEpisode}&_bust=${Date.now()}`).then(r => r.json());
-            if (freshData.fallback_servers && freshData.fallback_servers.length > 0) {
-                activeFallbackServers = freshData.fallback_servers;
-                updatePlayerServerSelect();
-            }
             const freshStreams = (freshData.streams || []).filter(s => s && s.format !== 'DASH' && !s.url.includes('.mpd'));
             if (freshStreams.length > 0) {
                 activeStreamList = freshData.streams;
@@ -1976,7 +1939,7 @@ function initPlyr() {
                 return;
             }
         } catch {}
-        showToast('Stream buffer interrupted. Click a backup server or reload to continue.', 'warning');
+        showToast('Stream buffer interrupted. Reload to continue.', 'warning');
     };
 
     video.addEventListener('error', () => {
@@ -2843,9 +2806,6 @@ async function probeAndSelectServer(subjectId, title, year, isSeries, season, ep
     if (chipsWrap) {
         chipsWrap.innerHTML = `
             <span class="probe-chip" id="chip-direct"><span class="chip-dot"></span>S1: Direct 1080p</span>
-            <span class="probe-chip" id="chip-vidlink"><span class="chip-dot"></span>S2: VidLink</span>
-            <span class="probe-chip" id="chip-autoembed"><span class="chip-dot"></span>S3: AutoEmbed</span>
-            <span class="probe-chip" id="chip-multiembed"><span class="chip-dot"></span>S4: MultiEmbed</span>
         `;
     }
 
@@ -4082,31 +4042,12 @@ function renderPlayerServerPills() {
     const wrap = document.getElementById('playerServerPills');
     if (!wrap) return;
 
-    let pills = [];
-    const isDirect = (currentSelectedServer === 'direct');
-    pills.push(`
-        <button type="button" class="server-pill-tab ${isDirect ? 'active' : ''}" onclick="changePlayerServer('direct')" title="Server 1: Direct 1080p Stream">
-            ${isDirect ? '<span class="server-pill-active-dot"></span>' : ''}
+    wrap.innerHTML = `
+        <button type="button" class="server-pill-tab active" onclick="changePlayerServer('direct')" title="Server 1: Direct 1080p Stream">
+            <span class="server-pill-active-dot"></span>
             <span>⚡ S1 Direct</span>
         </button>
-    `);
-
-    const servers = (activeFallbackServers && activeFallbackServers.length > 0)
-        ? activeFallbackServers
-        : (_testedServersList || []).filter(s => s.id !== 'direct');
-
-    servers.forEach(s => {
-        const isSel = (currentSelectedServer === s.id);
-        const label = s.name.replace('Server ', 'S').replace(' (', ' – ').replace(')', '');
-        pills.push(`
-            <button type="button" class="server-pill-tab ${isSel ? 'active' : ''}" onclick="changePlayerServer('${s.id}')" title="${escapeAttr(s.name)}">
-                ${isSel ? '<span class="server-pill-active-dot"></span>' : ''}
-                <span>☁ ${escapeHtml(label)}</span>
-            </button>
-        `);
-    });
-
-    wrap.innerHTML = pills.join('');
+    `;
 }
 
 function changePlayerServer(serverId) {

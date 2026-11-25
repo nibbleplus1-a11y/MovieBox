@@ -1,7 +1,9 @@
 from __future__ import annotations
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+import ipaddress
+import socket
 import asyncio
 import threading
 import base64
@@ -19,7 +21,7 @@ import urllib.parse
 import urllib.request
 from urllib.parse import urlsplit, urlparse, parse_qs, quote
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends, Header, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -52,10 +54,101 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=[
+        "https://movieverse.click",
+        "https://www.movieverse.click",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^https://([a-zA-Z0-9-]+\.)*movieverse\.click$",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
     allow_headers=["*"],
 )
+
+_file_state_lock = threading.Lock()
+_deploy_lock = threading.Lock()
+_last_deploy_time = 0
+
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy",
+        "service": "MovieVerse 1080p Cinema API",
+        "version": "2.5.0",
+        "timestamp": int(time.time())
+    }
+
+ALLOWED_PROXY_DOMAINS = {
+    "hakunaymatata.com",
+    "aoneroom.com",
+    "inmoviebox.com",
+    "movie-box.co",
+    "moviebox01.com",
+    "movieboxonline.net",
+    "sflix.film",
+    "123moviesfree.club",
+    "netnaija.film",
+    "moviebox.ph",
+    "movieboxhd.net",
+    "tmdb.org",
+    "themoviedb.org",
+    "image.tmdb.org",
+    "m.media-amazon.com",
+    "imdb.com",
+    "strem.io",
+    "cinemeta.strem.io",
+    "opensubtitles.org",
+    "googleapis.com",
+    "github.com",
+    "githubusercontent.com"
+}
+
+def is_safe_proxy_url(url: str) -> bool:
+    if not url or not (url.startswith("http://") or url.startswith("https://")):
+        return False
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        hostname = (parsed.hostname or "").lower().strip()
+        if not hostname:
+            return False
+        domain_match = any(
+            hostname == d or hostname.endswith("." + d)
+            for d in ALLOWED_PROXY_DOMAINS
+        )
+        if not domain_match:
+            return False
+        addr_info = socket.getaddrinfo(hostname, None)
+        for entry in addr_info:
+            ip_str = entry[4][0]
+            ip = ipaddress.ip_address(ip_str)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                return False
+        return True
+    except Exception:
+        return False
+
+def verify_admin_access(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    secret: Optional[str] = Query(None)
+):
+    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
+    token = None
+    if authorization:
+        scheme, _, param = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            token = param.strip()
+        else:
+            token = authorization.strip()
+    if not token and secret:
+        token = secret
+
+    if not token or not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="Unauthorized: invalid or missing admin token")
+    return token
+
+admin_router = APIRouter(prefix="/api/admin", dependencies=[Depends(verify_admin_access)])
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(STATIC_DIR):
@@ -173,46 +266,72 @@ def get_app_version():
         "force_update": True,
     }
 
-@app.post("/api/admin/set-version")
-async def set_app_version(request: Request, secret: Optional[str] = Query(None)):
-    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
-    if not secret or not secrets.compare_digest(secret, expected):
-        raise HTTPException(status_code=403, detail="Unauthorized")
+@admin_router.post("/set-version")
+async def set_app_version(request: Request):
     data = await request.json()
-    with open(APP_VERSION_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f)
+    with _file_state_lock:
+        with open(APP_VERSION_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
     return {"status": "ok", "data": data}
 
-@app.post("/api/admin/upload-apk")
-async def upload_apk(request: Request, secret: Optional[str] = Query(None)):
-    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
-    if not secret or not secrets.compare_digest(secret, expected):
-        raise HTTPException(status_code=403, detail="Unauthorized")
+@admin_router.post("/upload-apk")
+async def upload_apk(request: Request, x_sha256: Optional[str] = Header(None)):
     body = await request.body()
-    for name in ["movieverse.apk", "cinescope.apk"]:
-        with open(os.path.join(STATIC_DIR, name), "wb") as f:
-            f.write(body)
-    return {"status": "success", "size": len(body), "path": "/download/app", "filename": "MovieVerse.apk"}
+    if len(body) < 100 * 1024 or len(body) > 200 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Invalid APK file size")
+    if not body.startswith(b"PK\x03\x04"):
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid APK/ZIP archive")
+    sha256_hash = hashlib.sha256(body).hexdigest()
+    if x_sha256 and x_sha256.lower() != sha256_hash.lower():
+        raise HTTPException(status_code=400, detail="SHA-256 checksum mismatch")
+    with _file_state_lock:
+        for name in ["movieverse.apk", "cinescope.apk"]:
+            with open(os.path.join(STATIC_DIR, name), "wb") as f:
+                f.write(body)
+    return {
+        "status": "success",
+        "size": len(body),
+        "sha256": sha256_hash,
+        "path": "/download/app",
+        "filename": "MovieVerse.apk"
+    }
 
-@app.post("/api/admin/report-log")
-async def report_log(request: Request, secret: Optional[str] = Query(None)):
-    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
-    if not secret or not secrets.compare_digest(secret, expected):
-        raise HTTPException(status_code=403, detail="Unauthorized")
+@admin_router.post("/report-log")
+async def report_log(request: Request):
     body = await request.body()
+    if len(body) > 5 * 1024 * 1024:
+        body = body[:5 * 1024 * 1024]
     log_path = os.path.join(STATIC_DIR, "build_error.log")
-    with open(log_path, "wb") as f:
-        f.write(body)
+    with _file_state_lock:
+        with open(log_path, "wb") as f:
+            f.write(body)
     return {"status": "received", "size": len(body)}
+
+MAX_CRASH_LOG_BYTES = 2 * 1024 * 1024
 
 @app.post("/api/report-crash")
 async def report_crash(request: Request):
     body = await request.body()
+    if len(body) > 32 * 1024:
+        body = body[:32 * 1024]
     crash_path = os.path.join(STATIC_DIR, "app_crash.log")
-    with open(crash_path, "ab") as f:
-        f.write(f"\n--- {datetime.utcnow().isoformat()} ---\n".encode("utf-8"))
-        f.write(body)
-        f.write(b"\n")
+    with _file_state_lock:
+        try:
+            if os.path.exists(crash_path) and os.path.getsize(crash_path) > MAX_CRASH_LOG_BYTES:
+                old_path = crash_path + ".old"
+                if os.path.exists(old_path):
+                    try:
+                        os.remove(old_path)
+                    except Exception:
+                        pass
+                os.rename(crash_path, old_path)
+            with open(crash_path, "ab") as f:
+                ts = datetime.now(timezone.utc).isoformat()
+                f.write(f"\n--- {ts} ---\n".encode("utf-8"))
+                f.write(body)
+                f.write(b"\n")
+        except Exception:
+            pass
     return {"status": "ok"}
 
 class SimpleCache:
@@ -2402,6 +2521,9 @@ async def proxy_stream(request: Request, url: str = Query(...), referer: Optiona
             "Access-Control-Max-Age": "86400"
         })
 
+    if not is_safe_proxy_url(url):
+        raise HTTPException(status_code=400, detail="Stream host not permitted or untrusted")
+
     url_domain = urlparse(url).netloc
 
     # Smart candidate referers to prevent 429 rate-limiting from hakunaymatata CDN
@@ -2622,8 +2744,8 @@ def get_image_proxy_client() -> httpx.AsyncClient:
 @app.get("/api/proxy/image")
 async def proxy_image(url: str = Query(...)):
     """High-speed image proxy that forces image/jpeg and caches covers to prevent Android Fresco MIME decoder failures."""
-    if not url or not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="Invalid image URL")
+    if not is_safe_proxy_url(url):
+        raise HTTPException(status_code=400, detail="Image host not permitted or untrusted")
 
     cache_key = f"img:{hashlib.md5(url.encode()).hexdigest()}"
     cached_img = app_cache.get(cache_key)
@@ -3020,94 +3142,11 @@ def resolve_imdb_id(title: str, year: Optional[str] = None, is_series: bool = Fa
     return None
 
 def get_backup_servers(imdb_id: str, is_series: bool = False, season: int = 0, episode: int = 0) -> List[Dict[str, str]]:
-    if not imdb_id:
-        return []
-
-    clean_id = imdb_id.strip()
-
-    if is_series or season > 0 or episode > 0:
-        s = max(1, season)
-        e = max(1, episode)
-        return [
-            {
-                "name": "Server 2 (AutoEmbed Fast)",
-                "id": "autoembed",
-                "type": "iframe",
-                "url": f"https://autoembed.co/tv/imdb/{clean_id}-{s}-{e}",
-            },
-            {
-                "name": "Server 3 (MultiEmbed VIP)",
-                "id": "multiembed",
-                "type": "iframe",
-                "url": f"https://multiembed.mov/?video_id={clean_id}&s={s}&e={e}",
-            },
-            {
-                "name": "Server 4 (VidSrc Mirror)",
-                "id": "vidsrcme",
-                "type": "iframe",
-                "url": f"https://vidsrc.me/embed/tv?imdb={clean_id}&season={s}&episode={e}",
-            },
-            {
-                "name": "Server 5 (SmashyStream)",
-                "id": "smashystream",
-                "type": "iframe",
-                "url": f"https://embed.smashystream.com/playere.php?imdb={clean_id}&season={s}&episode={e}",
-            },
-            {
-                "name": "Server 6 (2Embed Cinema)",
-                "id": "twoembed",
-                "type": "iframe",
-                "url": f"https://www.2embed.cc/embedtv/{clean_id}&s={s}&e={e}",
-            },
-            {
-                "name": "Server 7 (VidSrc Pro)",
-                "id": "vidsrcto",
-                "type": "iframe",
-                "url": f"https://vidsrc.to/embed/tv/{clean_id}/{s}/{e}",
-            },
-        ]
-    else:
-        return [
-            {
-                "name": "Server 2 (AutoEmbed Fast)",
-                "id": "autoembed",
-                "type": "iframe",
-                "url": f"https://autoembed.co/movie/imdb/{clean_id}",
-            },
-            {
-                "name": "Server 3 (MultiEmbed VIP)",
-                "id": "multiembed",
-                "type": "iframe",
-                "url": f"https://multiembed.mov/?video_id={clean_id}",
-            },
-            {
-                "name": "Server 4 (VidSrc Mirror)",
-                "id": "vidsrcme",
-                "type": "iframe",
-                "url": f"https://vidsrc.me/embed/movie?imdb={clean_id}",
-            },
-            {
-                "name": "Server 5 (SmashyStream)",
-                "id": "smashystream",
-                "type": "iframe",
-                "url": f"https://embed.smashystream.com/playere.php?imdb={clean_id}",
-            },
-            {
-                "name": "Server 6 (2Embed Cinema)",
-                "id": "twoembed",
-                "type": "iframe",
-                "url": f"https://www.2embed.cc/embed/{clean_id}",
-            },
-            {
-                "name": "Server 7 (VidSrc Pro)",
-                "id": "vidsrcto",
-                "type": "iframe",
-                "url": f"https://vidsrc.to/embed/movie/{clean_id}",
-            },
-        ]
+    # Server 2-6 removed: MovieVerse exclusively uses high-speed Server 1 Direct 1080p CDN streams
+    return []
 
 @app.get("/api/fallback-sources")
-async def get_fallback_sources(
+def get_fallback_sources(
     title: str = Query(...),
     year: Optional[str] = Query(None),
     is_series: bool = Query(False),
@@ -3115,52 +3154,7 @@ async def get_fallback_sources(
     episode: int = Query(0),
     subject_id: Optional[str] = Query(None)
 ):
-    loop = asyncio.get_event_loop()
-    real_is_series = bool(is_series or season > 0 or episode > 0)
-    real_season = season
-    real_episode = episode
-
-    if subject_id and subject_id != "None":
-        card = app_cache.get(f"card:{subject_id}")
-        if card:
-            st = card.get("subject_type")
-            ctype = str(card.get("type") or "").lower()
-            if st == 2 or "series" in ctype or "show" in ctype or season > 0 or episode > 0:
-                real_is_series = True
-                real_season = max(1, season)
-                real_episode = max(1, episode)
-            elif (st == 1 or ctype == "movie") and season == 0 and episode == 0:
-                real_is_series = False
-                real_season = 0
-                real_episode = 0
-        else:
-            try:
-                details = await loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
-                if details:
-                    st = details.get("subject_type")
-                    if st == 1 or details.get("type") == "Movie":
-                        real_is_series = False
-                        real_season = 0
-                        real_episode = 0
-                    elif st == 2 or details.get("type") in ["Series", "TV Series"]:
-                        real_is_series = True
-                        if real_season == 0: real_season = 1
-                        if real_episode == 0: real_episode = 1
-            except Exception:
-                pass
-
-    imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(title, year=year, is_series=real_is_series))
-    if not imdb_id:
-        return {"title": title, "imdb_id": None, "servers": []}
-    servers = get_backup_servers(imdb_id, is_series=real_is_series, season=real_season, episode=real_episode)
-    return {
-        "title": title,
-        "imdb_id": imdb_id,
-        "is_series": real_is_series,
-        "season": real_season,
-        "episode": real_episode,
-        "servers": servers
-    }
+    return {"title": title, "servers": []}
 
 @app.get("/api/probe-servers")
 async def probe_stream_servers(
@@ -3172,121 +3166,35 @@ async def probe_stream_servers(
     episode: int = Query(0)
 ):
     """
-    Parallel server health test (3s timeout).
-    Tests Direct Stream and Fallback Servers concurrently.
-    Returns status for each candidate and identifies the fastest healthy server.
+    Direct Server 1 health test. Server 2-6 removed.
     """
     candidates = []
     loop = asyncio.get_event_loop()
 
-    # 1. Candidate: Direct CineScope / MovieBox Stream
-    direct_stream_url = None
     if subject_id and subject_id != "None":
         try:
             streams = await loop.run_in_executor(_bg_executor, lambda: engine.get_streams(subject_id, season=season, episode=episode))
             if streams:
-                # Find best direct stream
                 playable = [s for s in streams if s.get("format") != "DASH" and ".mpd" not in s.get("url", "")]
                 best_direct = playable[0] if playable else streams[0]
-                direct_stream_url = best_direct.get("url")
                 candidates.append({
                     "id": "direct",
                     "name": "Server 1 (Direct 1080p)",
                     "type": "direct",
-                    "url": direct_stream_url,
-                    "stream_meta": best_direct
+                    "url": best_direct.get("url"),
+                    "stream_meta": best_direct,
+                    "status": "healthy"
                 })
         except Exception:
             pass
 
-    # 2. Candidates: Fallback Servers (VidLink, AutoEmbed, MultiEmbed, EmbedSu, RiveStream)
-    resolved_title = title
-    if not resolved_title and subject_id:
-        try:
-            details = await loop.run_in_executor(_bg_executor, lambda: engine.get_details(subject_id))
-            resolved_title = details.get("title")
-            if not year:
-                year = str(details.get("release_date") or "")[:4] or None
-        except Exception:
-            pass
-
-    fallback_servers = []
-    if resolved_title:
-        imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(resolved_title, year=year, is_series=is_series))
-        if imdb_id:
-            fallback_servers = get_backup_servers(imdb_id, is_series=is_series, season=season, episode=episode)
-            for s in fallback_servers:
-                candidates.append(s)
-
-    # 3. Probe each candidate in parallel with a 3.0s timeout
-    async def _probe(candidate):
-        cid = candidate.get("id")
-        c_url = candidate.get("url")
-        c_type = candidate.get("type", "iframe")
-        if not c_url:
-            return {**candidate, "status": "failed", "error": "No URL"}
-
-        t_start = time.time()
-        try:
-            async with httpx.AsyncClient(timeout=3.0, follow_redirects=True, verify=False) as client:
-                if c_type == "direct":
-                    # Range probe on direct stream with authentic referer/origin
-                    meta_headers = candidate.get("stream_meta", {}).get("headers", {})
-                    ref = meta_headers.get("Referer", "https://123moviesfree.club/")
-                    origin = meta_headers.get("Origin", ref.rstrip("/"))
-                    r = await client.get(c_url, headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Referer": ref,
-                        "Origin": origin,
-                        "Range": "bytes=0-1024"
-                    })
-                    latency = round((time.time() - t_start) * 1000)
-                    if r.status_code in (200, 206, 302):
-                        return {**candidate, "status": "healthy", "latency_ms": latency}
-                    else:
-                        return {**candidate, "status": "failed", "error": f"HTTP {r.status_code}", "latency_ms": latency}
-                else:
-                    # Probe embed server
-                    r = await client.head(c_url, headers={"User-Agent": "Mozilla/5.0"})
-                    if r.status_code in (404, 405):
-                        r = await client.get(c_url, headers={"User-Agent": "Mozilla/5.0"})
-                    latency = round((time.time() - t_start) * 1000)
-                    if r.status_code < 400 or r.status_code in (301, 302, 307):
-                        return {**candidate, "status": "healthy", "latency_ms": latency}
-                    else:
-                        return {**candidate, "status": "failed", "error": f"HTTP {r.status_code}", "latency_ms": latency}
-        except Exception as e:
-            latency = round((time.time() - t_start) * 1000)
-            return {**candidate, "status": "failed", "error": str(e)[:50], "latency_ms": latency}
-
-    probe_tasks = [_probe(c) for c in candidates]
-    results = await asyncio.gather(*probe_tasks, return_exceptions=True)
-
-    tested_servers = []
-    for r in results:
-        if isinstance(r, dict):
-            tested_servers.append(r)
-
-    # Pick the fastest healthy server (preferring direct if healthy, else lowest latency fallback)
-    healthy_direct = [s for s in tested_servers if s.get("id") == "direct" and s.get("status") == "healthy"]
-    healthy_fallbacks = [s for s in tested_servers if s.get("id") != "direct" and s.get("status") == "healthy"]
-    healthy_fallbacks.sort(key=lambda s: s.get("latency_ms", 9999))
-
-    best_server = None
-    if healthy_direct:
-        best_server = healthy_direct[0]
-    elif healthy_fallbacks:
-        best_server = healthy_fallbacks[0]
-    elif tested_servers:
-        # Fallback to first candidate if all probes gave opaque / non-200 responses
-        best_server = tested_servers[0]
-
+    best = candidates[0] if candidates else None
     return {
-        "title": resolved_title,
+        "title": title,
         "subject_id": subject_id,
-        "best_server_id": best_server.get("id") if best_server else None,
-        "best_server": best_server,
-        "servers": tested_servers
+        "best_server_id": best.get("id") if best else None,
+        "best_server": best,
+        "servers": candidates
     }
 
 
@@ -3305,7 +3213,8 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
         client_ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for") or (request.client.host if request.client else None)
         if client_ip and "," in client_ip:
             client_ip = client_ip.split(",")[0].strip()
-        if not client_ip or client_ip in ("127.0.0.1", "localhost", "137.23.40.164") or client_ip.startswith("10.") or client_ip.startswith("192.168."):
+        server_ip_env = os.getenv("SERVER_IP", "")
+        if not client_ip or client_ip in ("127.0.0.1", "localhost", server_ip_env) or client_ip.startswith("10.") or client_ip.startswith("192.168."):
             client_ip = "154.208.51.69"
 
         loop = asyncio.get_event_loop()
@@ -3488,25 +3397,7 @@ async def get_streams(request: Request, subject_id: str, response: Response, se:
             if not imdb_id and details and str(details.get("imdb_id", "")).startswith("tt"):
                 imdb_id = details["imdb_id"]
                 app_cache.set(cache_key_imdb, imdb_id, ttl=86400)
-            if imdb_id:
-                # Cache hit or fast path — build servers immediately
-                fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
-            elif len(streams) == 0:
-                # Primary stream unavailable: resolve IMDB synchronously so backup servers work immediately!
-                try:
-                    imdb_id = await loop.run_in_executor(_bg_executor, lambda: resolve_imdb_id(title, year=det_release, is_series=is_ser))
-                    if imdb_id:
-                        fallback_servers = get_backup_servers(imdb_id, is_series=is_ser, season=local_se, episode=local_ep)
-                except Exception:
-                    fallback_servers = []
-            else:
-                # Primary stream exists: Kick off IMDB resolution in background
-                def _bg_resolve():
-                    try:
-                        return resolve_imdb_id(title, year=det_release, is_series=is_ser)
-                    except Exception:
-                        return None
-                _bg_executor.submit(_bg_resolve)
+        fallback_servers = []
 
         resolved_detail_path = detail_path or app_cache.get(f"detail_path:{subject_id}")
         if not resolved_detail_path:
@@ -3736,21 +3627,25 @@ def get_home_curated(_bust: Optional[str] = None):
         app_cache.delete("feed:home_curated")
     return engine.get_curated_feed()
 
-@app.post("/api/admin/deploy")
-async def trigger_server_deploy(secret: Optional[str] = Query(None)):
-    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
-    if not secret or not secrets.compare_digest(secret, expected):
-        raise HTTPException(status_code=403, detail="Unauthorized deploy secret")
+@admin_router.post("/deploy")
+async def trigger_server_deploy(request: Request):
+    global _last_deploy_time
+    with _deploy_lock:
+        now = time.time()
+        if now - _last_deploy_time < 20:
+            raise HTTPException(status_code=429, detail="Deploy rate limit exceeded. Please wait 20s between deployments.")
+        _last_deploy_time = now
 
     def _pull_and_restart():
         import subprocess
         log_lines = []
+        app_dir = os.getenv("APP_DIR", "/home/ubuntu/MovieBox")
         try:
-            r1 = subprocess.run(["git", "fetch", "origin", "main"], cwd="/home/ubuntu/MovieBox", capture_output=True, text=True, timeout=30)
+            r1 = subprocess.run(["git", "fetch", "origin", "main"], cwd=app_dir, capture_output=True, text=True, timeout=30)
             log_lines.append(f"fetch: {r1.stdout.strip()} {r1.stderr.strip()}")
-            r2 = subprocess.run(["git", "reset", "--hard", "origin/main"], cwd="/home/ubuntu/MovieBox", capture_output=True, text=True, timeout=30)
+            r2 = subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=app_dir, capture_output=True, text=True, timeout=30)
             log_lines.append(f"reset: {r2.stdout.strip()} {r2.stderr.strip()}")
-            r3 = subprocess.run(["./venv/bin/pip", "install", "-r", "requirements.txt"], cwd="/home/ubuntu/MovieBox", capture_output=True, text=True, timeout=60)
+            r3 = subprocess.run(["./venv/bin/pip", "install", "-r", "requirements.txt"], cwd=app_dir, capture_output=True, text=True, timeout=60)
             log_lines.append(f"pip: {r3.stdout.strip()} {r3.stderr.strip()}")
             # Schedule service restart cleanly
             pid = os.getpid()
@@ -3773,23 +3668,20 @@ async def trigger_server_deploy(secret: Optional[str] = Query(None)):
     return {"status": "success", "message": "Deployed latest GitHub commit", "log": res}
 
 
-@app.get("/api/admin/journal")
-async def get_journal(secret: Optional[str] = Query(None), lines: int = 60):
-    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
-    if not secret or not secrets.compare_digest(secret, expected):
-        raise HTTPException(status_code=403, detail="Unauthorized")
+@admin_router.get("/journal")
+async def get_journal(lines: int = 60):
     import subprocess
+    lines_safe = min(max(1, lines), 500)
     try:
-        r = subprocess.run(["journalctl", "-u", "moviebox", "-n", str(lines), "--no-pager"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["journalctl", "-u", "moviebox", "-n", str(lines_safe), "--no-pager"], capture_output=True, text=True, timeout=10)
         return PlainTextResponse(r.stdout + "\n" + r.stderr)
     except Exception as e:
         return PlainTextResponse(f"Error: {e}")
 
 
-@app.get("/api/admin/debug-upstream")
+@admin_router.get("/debug-upstream")
 def debug_upstream(
     request: Request,
-    secret: Optional[str] = Query(None),
     subject_id: Optional[str] = Query(None),
     detail_path: Optional[str] = Query(None),
 ):
@@ -3986,15 +3878,11 @@ def debug_upstream(
     return diag
 
 
-@app.post("/api/admin/setup-ssl")
+@admin_router.post("/setup-ssl")
 async def trigger_setup_ssl(
-    secret: Optional[str] = Query(None),
     domain: str = Query("movieverse.click"),
     email: Optional[str] = Query(None)
 ):
-    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
-    if not secret or not secrets.compare_digest(secret, expected):
-        raise HTTPException(status_code=403, detail="Unauthorized")
 
     def _execute_ssl_setup():
         import subprocess
@@ -4026,7 +3914,7 @@ async def trigger_setup_ssl(
     output = await loop.run_in_executor(_bg_executor, _execute_ssl_setup)
     return {"status": "completed", "domain": domain, "log": output}
 
-
+app.include_router(admin_router)
 
 @app.get("/api/hero-trending")
 def get_hero_trending():
@@ -4421,20 +4309,15 @@ def get_ads_config():
         }
     }
 
-@app.post("/api/ads/config")
-async def update_ads_config(request: Request, secret: Optional[str] = Query(None)):
+@app.post("/api/ads/config", dependencies=[Depends(verify_admin_access)])
+async def update_ads_config(request: Request):
     """Allows updating ad monetization configuration dynamically (Admin only)."""
-    expected = os.getenv("DEPLOY_SECRET", "moviebox_deploy_2026")
-    auth_header = request.headers.get("authorization", "")
-    bearer_token = auth_header.replace("Bearer ", "").strip() if auth_header.startswith("Bearer ") else None
-    token = bearer_token or secret
-    if not token or not secrets.compare_digest(token, expected):
-        raise HTTPException(status_code=403, detail="Unauthorized")
     try:
         new_config = await request.json()
         config_path = os.path.join(os.path.dirname(__file__), "ad_config.json")
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(new_config, f, indent=2)
+        with _file_state_lock:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(new_config, f, indent=2)
         return {"status": "success", "config": new_config}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

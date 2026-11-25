@@ -2,7 +2,7 @@
   "expo": {
     "name": "MovieVerse",
     "slug": "cinescope",
-    "version": "1.4.5",
+    "version": "1.4.6",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -24,7 +24,7 @@
         "backgroundColor": "#0A0A0F"
       },
       "package": "com.cinescope.guide",
-      "versionCode": 29,
+      "versionCode": 30,
       "permissions": [
         "INTERNET",
         "ACCESS_NETWORK_STATE",

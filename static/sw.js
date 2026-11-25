@@ -1,6 +1,13 @@
-self.options = {
-    "domain": "3nbf4.com",
-    "zoneId": 12207544
-}
-self.lary = ""
-importScripts('https://3nbf4.com/act/files/service-worker.min.js?r=sw')
+// MovieVerse Clean Service Worker (Offline cache & PWA support)
+self.addEventListener('install', (event) => {
+    self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+    event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener('fetch', (event) => {
+    return;
+});
+
