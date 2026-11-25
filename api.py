@@ -1288,14 +1288,20 @@ class MovieBoxEngine:
                             original_subject_id = wsid
                         else:
                             disp = _dub_display_label(raw_lang) or _dub_display_label(lang_code) or f"{str(raw_lang).capitalize()} Dub"
+                        w_dpath = wd.get("detailPath") or wd.get("detail_path") or ""
+                        if w_dpath:
+                            app_cache.set(f"detail_path:{wsid}", w_dpath, ttl=86400)
                         if wsid not in collected_dubs:
                             collected_dubs[wsid] = {
                                 "subject_id": wsid,
                                 "lang_name": disp,
                                 "language": str(lang_code).lower(),
                                 "original": is_orig,
-                                "type": 0
+                                "type": 0,
+                                "detail_path": w_dpath or None
                             }
+                        elif w_dpath and not collected_dubs[wsid].get("detail_path"):
+                            collected_dubs[wsid]["detail_path"] = w_dpath
             except Exception:
                 pass
 
@@ -1345,18 +1351,26 @@ class MovieBoxEngine:
                                 if idub.get("type") == 1:
                                     continue
                                 isid = str(idub.get("subject_id") or "")
-                                if isid and isid not in collected_dubs:
-                                    collected_dubs[isid] = idub
+                                if isid:
+                                    idub_path = idub.get("detail_path") or idub.get("detailPath")
+                                    if idub_path:
+                                        app_cache.set(f"detail_path:{isid}", idub_path, ttl=86400)
+                                    if isid not in collected_dubs:
+                                        collected_dubs[isid] = idub
                             if r_audio and r_audio != "Original Audio":
                                 if "(subtitles)" in r_audio.lower() or "sub dub" in r_audio.lower() or ("sub" in r_audio.lower() and "dub" not in r_audio.lower()):
                                     continue
+                                r_dpath = r.get("detail_path") or r.get("detailPath")
+                                if r_dpath:
+                                    app_cache.set(f"detail_path:{r_sid}", r_dpath, ttl=86400)
                                 if r_sid not in collected_dubs:
                                     collected_dubs[r_sid] = {
                                         "subject_id": r_sid,
                                         "lang_name": r_audio,
                                         "language": r_code or "dub",
                                         "original": False,
-                                        "type": 0
+                                        "type": 0,
+                                        "detail_path": r_dpath or None
                                     }
                                     app_cache.set(f"dub_parent:{r_sid}", original_subject_id, ttl=7200)
                             elif not r_audio or r_audio == "Original Audio":
@@ -1443,8 +1457,11 @@ class MovieBoxEngine:
 
         final_dubs = orig_entries[:1] + other_entries
         for d in final_dubs:
-            if d.get("subject_id") and d["subject_id"] != original_subject_id:
-                app_cache.set(f"dub_parent:{d['subject_id']}", original_subject_id, ttl=7200)
+            dsid = str(d.get("subject_id") or "")
+            if dsid and dsid != original_subject_id:
+                app_cache.set(f"dub_parent:{dsid}", original_subject_id, ttl=7200)
+                if d.get("detail_path"):
+                    app_cache.set(f"detail_path:{dsid}", d["detail_path"], ttl=86400)
 
         app_cache.set(f"unified_dubs:{main_id}", final_dubs, ttl=1800)
         return final_dubs
@@ -1648,21 +1665,36 @@ class MovieBoxEngine:
                 if card and card.get("detail_path"):
                     detail_path = card["detail_path"]
 
-        # KEY FIX: For dub child SIDs (e.g. Spanish Latin, French, Hindi dubs), the dub's own
-        # detail_path is usually not cached. Fall back to the PARENT subject's detail_path, since
-        # the web CDN play endpoint uses the parent's detailPath with the dub's subjectId to serve
-        # the dubbed stream. This fixes "No direct streams found for Spanish (Latin) Dub" etc.
+        # Resolve dub child's specific detail_path (NEVER fall back to parent's detail_path
+        # because the parent's detail_path forces the Web CDN to stream the original/English audio)
         if not detail_path:
             parent_sid = app_cache.get(f"dub_parent:{subject_id}")
             if parent_sid and parent_sid != subject_id:
-                detail_path = (
-                    app_cache.get(f"detail_path:{parent_sid}")
-                    or (app_cache.get(f"card:{parent_sid}") or {}).get("detail_path")
-                )
+                parent_det = app_cache.get(f"details:{parent_sid}")
+                if parent_det and parent_det.get("dubs"):
+                    for d in parent_det["dubs"]:
+                        if str(d.get("subject_id")) == str(subject_id) and d.get("detail_path"):
+                            detail_path = d["detail_path"]
+                            app_cache.set(f"detail_path:{subject_id}", detail_path, ttl=86400)
+                            break
                 if not detail_path:
-                    parent_det = app_cache.get(f"details:{parent_sid}")
-                    if parent_det:
-                        detail_path = parent_det.get("detail_path")
+                    parent_path = (
+                        app_cache.get(f"detail_path:{parent_sid}")
+                        or (app_cache.get(f"card:{parent_sid}") or {}).get("detail_path")
+                        or (parent_det.get("detail_path") if parent_det else None)
+                    )
+                    if parent_path:
+                        try:
+                            _, p_web_dubs = _fetch_web_details(parent_path)
+                            for pwd in p_web_dubs:
+                                pwd_sid = str(pwd.get("subjectId") or pwd.get("subject_id") or "")
+                                pwd_path = pwd.get("detailPath") or pwd.get("detail_path")
+                                if pwd_sid and pwd_path:
+                                    app_cache.set(f"detail_path:{pwd_sid}", pwd_path, ttl=86400)
+                                    if pwd_sid == str(subject_id):
+                                        detail_path = pwd_path
+                        except Exception:
+                            pass
 
         def _fetch_native():
             try:
@@ -1761,17 +1793,25 @@ class MovieBoxEngine:
             except Exception:
                 pass
 
-        # Second retry: if still no web results and this is a dub child, try fetching parent details
-        # to discover the detail_path, then retry the web CDN fetch with the parent's detail_path
+        # Second retry: if still no web results and this is a dub child, try resolving dub's specific detail_path
         if not web_results:
             try:
                 parent_sid = app_cache.get(f"dub_parent:{subject_id}")
                 if parent_sid and parent_sid != subject_id:
-                    p_det = app_cache.get(f"details:{parent_sid}") or self.get_details(parent_sid)
-                    if p_det and p_det.get("detail_path"):
-                        parent_path = p_det["detail_path"]
-                        app_cache.set(f"detail_path:{subject_id}", parent_path, ttl=86400)
-                        web_results = _fetch_web(parent_path)
+                    parent_path = app_cache.get(f"detail_path:{parent_sid}")
+                    if not parent_path:
+                        p_det = app_cache.get(f"details:{parent_sid}") or self.get_details(parent_sid)
+                        if p_det:
+                            parent_path = p_det.get("detail_path")
+                    if parent_path:
+                        _, p_web_dubs = _fetch_web_details(parent_path)
+                        for pwd in p_web_dubs:
+                            pwd_sid = str(pwd.get("subjectId") or pwd.get("subject_id") or "")
+                            pwd_path = pwd.get("detailPath") or pwd.get("detail_path")
+                            if pwd_sid and pwd_path:
+                                app_cache.set(f"detail_path:{pwd_sid}", pwd_path, ttl=86400)
+                                if pwd_sid == str(subject_id):
+                                    web_results = _fetch_web(pwd_path)
             except Exception:
                 pass
 
