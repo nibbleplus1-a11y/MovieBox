@@ -1625,8 +1625,7 @@ class MovieBoxEngine:
                 return {}
 
         def _fetch_web(d_path: str):
-            if not d_path:
-                return []
+            d_path = d_path or f"subject-{subject_id}"
             web_streams = []
             try:
                 token = ""
