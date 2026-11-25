@@ -3476,6 +3476,9 @@ function _cleanDubDisplayName(rawName) {
     if (!rawName) return 'Audio Track';
     let n = String(rawName).trim();
     const low = n.toLowerCase();
+    if (low.includes('sub dub')) {
+        n = n.replace(/sub\s*dub/gi, 'Dub').trim();
+    }
     if (low === 'esla' || low === 'esla dub' || low === 'es-la' || low === 'spanishlatam' || low === 'spanish latam' || low === 'espn' || low === 'latino') return 'Spanish (Latin America)';
     if (low === 'es' || low === 'espanol' || low === 'español' || low === 'spanish' || low === 'castellano') return 'Spanish Dub';
     if (low === 'ptbr' || low === 'ptbr dub' || low === 'pt-br') return 'Portuguese (Brazil)';
@@ -3513,6 +3516,14 @@ function renderSettingsAudioList(dubs) {
             : ((activeDubsList && activeDubsList.length > 0)
                 ? activeDubsList
                 : ((activeMediaMeta && activeMediaMeta.dubs) || [])));
+
+    // Defensively purge any subtitle-only releases (type == 1 or subtitles in name)
+    dubsList = (dubsList || []).filter(d => {
+        if (!d || d.type === 1) return false;
+        const ln = (d.lang_name || d.language || '').toLowerCase();
+        if (ln.includes('(subtitles)') || ln.includes('sub dub') || ln.includes('subtitle') || (ln.includes('sub') && !ln.includes('dub'))) return false;
+        return true;
+    });
 
     // If dubs list is incomplete, fetch details from the ORIGINAL subject (not the current dub SID).
     // Using currentPlayingSubjectId here is wrong when the user has switched to a dub:
@@ -3623,6 +3634,14 @@ function renderInPlayerAudioPopover() {
         : ((activeDubsList && activeDubsList.length > 0)
             ? activeDubsList
             : ((activeMediaMeta && activeMediaMeta.dubs) || []));
+
+    // Defensively purge any subtitle-only releases (type == 1 or subtitles in name)
+    dubsToUse = (dubsToUse || []).filter(d => {
+        if (!d || d.type === 1) return false;
+        const ln = (d.lang_name || d.language || '').toLowerCase();
+        if (ln.includes('(subtitles)') || ln.includes('sub dub') || ln.includes('subtitle') || (ln.includes('sub') && !ln.includes('dub'))) return false;
+        return true;
+    });
 
     // If dubs list is not populated yet, fetch details from ORIGINAL SID (not current dub SID)
     const origSid2 = activeOriginalSubjectId ||

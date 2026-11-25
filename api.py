@@ -1230,11 +1230,16 @@ class MovieBoxEngine:
             for d in native_dubs:
                 if not isinstance(d, dict):
                     continue
+                # Exclude subtitle-only versions (type == 1) from audio tracks
+                if d.get("type") == 1:
+                    continue
+                raw_lang = str(d.get("lanName") or d.get("language") or d.get("lanCode") or "")
+                if "sub" in raw_lang.lower() and "dub" not in raw_lang.lower():
+                    continue
                 sid = str(d.get("subjectId") or d.get("subject_id") or "")
                 if not sid:
                     continue
                 is_orig = bool(d.get("original"))
-                raw_lang = d.get("lanName") or d.get("language") or d.get("lanCode") or ""
                 lang_code = d.get("lanCode") or d.get("language") or raw_lang or "en"
                 if is_orig:
                     disp = "Original Audio"
@@ -1246,7 +1251,7 @@ class MovieBoxEngine:
                     "lang_name": disp,
                     "language": str(lang_code).lower(),
                     "original": is_orig,
-                    "type": d.get("type", 0)
+                    "type": 0
                 }
 
         # --- SOURCE 2: Web Details (__NUXT_DATA__) ---
@@ -1267,11 +1272,16 @@ class MovieBoxEngine:
                     for wd in web_dubs:
                         if not isinstance(wd, dict):
                             continue
+                        # Exclude subtitle-only versions (type == 1) from audio tracks
+                        if wd.get("type") == 1:
+                            continue
+                        raw_lang = str(wd.get("lanName") or wd.get("language") or wd.get("lanCode") or "")
+                        if "sub" in raw_lang.lower() and "dub" not in raw_lang.lower():
+                            continue
                         wsid = str(wd.get("subjectId") or wd.get("subject_id") or "")
                         if not wsid:
                             continue
                         is_orig = bool(wd.get("original"))
-                        raw_lang = wd.get("lanName") or wd.get("language") or wd.get("lanCode") or ""
                         lang_code = wd.get("lanCode") or wd.get("language") or raw_lang or "en"
                         if is_orig:
                             disp = "Original Audio"
@@ -1284,7 +1294,7 @@ class MovieBoxEngine:
                                 "lang_name": disp,
                                 "language": str(lang_code).lower(),
                                 "original": is_orig,
-                                "type": wd.get("type", 0)
+                                "type": 0
                             }
             except Exception:
                 pass
@@ -1330,12 +1340,16 @@ class MovieBoxEngine:
                             r_year = str(r.get("release_date") or "")[:4]
                             if rel_year and r_year and abs(int(rel_year) - int(r_year)) > 8 and (not r_audio or r_audio == "Original Audio"):
                                 continue
-                            # Collect any inner dubs from sibling
+                            # Collect any inner dubs from sibling (exclude subtitles)
                             for idub in r.get("dubs", []):
+                                if idub.get("type") == 1:
+                                    continue
                                 isid = str(idub.get("subject_id") or "")
                                 if isid and isid not in collected_dubs:
                                     collected_dubs[isid] = idub
                             if r_audio and r_audio != "Original Audio":
+                                if "(subtitles)" in r_audio.lower() or "sub dub" in r_audio.lower() or ("sub" in r_audio.lower() and "dub" not in r_audio.lower()):
+                                    continue
                                 if r_sid not in collected_dubs:
                                     collected_dubs[r_sid] = {
                                         "subject_id": r_sid,
@@ -1359,16 +1373,20 @@ class MovieBoxEngine:
                 p_data = p_resp.get("data", {}) or {}
                 for pd in p_data.get("dubs", []):
                     if isinstance(pd, dict):
+                        if pd.get("type") == 1:
+                            continue
+                        rlang = pd.get("lanName") or pd.get("language") or ""
+                        if "sub" in str(rlang).lower() and "dub" not in str(rlang).lower():
+                            continue
                         psid = str(pd.get("subjectId") or pd.get("subject_id") or "")
                         if psid and psid not in collected_dubs:
                             is_orig = bool(pd.get("original"))
-                            rlang = pd.get("lanName") or pd.get("language") or ""
                             collected_dubs[psid] = {
                                 "subject_id": psid,
                                 "lang_name": "Original Audio" if is_orig else _dub_display_label(rlang),
                                 "language": pd.get("lanCode") or pd.get("language") or "en",
                                 "original": is_orig,
-                                "type": pd.get("type", 0)
+                                "type": 0
                             }
             except Exception:
                 pass
@@ -1376,14 +1394,15 @@ class MovieBoxEngine:
         # --- Self Audio Tag Check ---
         self_audio, self_code = _extract_subject_audio(data, raw_title)
         if self_audio and self_audio != "Original Audio":
-            if main_id not in collected_dubs:
-                collected_dubs[main_id] = {
-                    "subject_id": main_id,
-                    "lang_name": self_audio,
-                    "language": self_code or "dub",
-                    "original": False,
-                    "type": 0
-                }
+            if "(subtitles)" not in self_audio.lower() and "sub dub" not in self_audio.lower() and not ("sub" in self_audio.lower() and "dub" not in self_audio.lower()):
+                if main_id not in collected_dubs:
+                    collected_dubs[main_id] = {
+                        "subject_id": main_id,
+                        "lang_name": self_audio,
+                        "language": self_code or "dub",
+                        "original": False,
+                        "type": 0
+                    }
         else:
             if main_id not in collected_dubs and not any(d.get("original") for d in collected_dubs.values()):
                 collected_dubs[main_id] = {
@@ -1405,9 +1424,21 @@ class MovieBoxEngine:
                 "type": 0
             }
 
+        # Final purge: strictly exclude any item with type == 1, (subtitles), sub dub, or subtitle tags
+        sanitized_dubs = {}
+        for k, v in collected_dubs.items():
+            if not v or not isinstance(v, dict):
+                continue
+            if v.get("type") == 1:
+                continue
+            lname = str(v.get("lang_name") or "").lower()
+            if "(subtitles)" in lname or "sub dub" in lname or ("sub" in lname and "dub" not in lname):
+                continue
+            sanitized_dubs[k] = v
+
         # Build clean final list: Original Audio first, then other dubs
-        orig_entries = [d for d in collected_dubs.values() if d.get("original") or d.get("lang_name") == "Original Audio"]
-        other_entries = [d for d in collected_dubs.values() if not (d.get("original") or d.get("lang_name") == "Original Audio")]
+        orig_entries = [d for d in sanitized_dubs.values() if d.get("original") or d.get("lang_name") == "Original Audio"]
+        other_entries = [d for d in sanitized_dubs.values() if not (d.get("original") or d.get("lang_name") == "Original Audio")]
         other_entries.sort(key=lambda x: str(x.get("lang_name", "")))
 
         final_dubs = orig_entries[:1] + other_entries
