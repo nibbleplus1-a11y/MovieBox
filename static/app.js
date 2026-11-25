@@ -380,7 +380,24 @@ async function fetchDailyHeroSlides() {
         if (res.ok) {
             const data = await res.json();
             if (data.items && data.items.length >= 3) {
-                heroSlidesList = data.items;
+                const seenSids = new Set();
+                const merged = [];
+                // Preserve curated HERO_SLIDES so featured Hindi & special titles (Sacrifice [Hindi], Masterplan [Hindi]) never disappear
+                for (const s of HERO_SLIDES) {
+                    const sid = String(s.subject_id || '');
+                    if (sid && !seenSids.has(sid)) {
+                        seenSids.add(sid);
+                        merged.push(s);
+                    }
+                }
+                for (const it of (data.items || [])) {
+                    const sid = String(it.subject_id || '');
+                    if (sid && !seenSids.has(sid)) {
+                        seenSids.add(sid);
+                        merged.push(it);
+                    }
+                }
+                heroSlidesList = merged.slice(0, 10);
                 renderHeroDots();
                 renderHeroSlide(0);
             }
@@ -656,11 +673,9 @@ function isMusicEntry(item) {
     if (item.subject_type === 6) return true;
     const t = item.title.toUpperCase();
     const musicPatterns = [
-        'OST', 'SOUNDTRACK', 'MUSIC VIDEO', ' SONG', 'ALBUM', 'EP -',
-        '(MUSIC)', 'OFFICIAL MV', '- MV', 'MV)', '(AUDIO)', 'VIDEO MIX',
-        'CLUB BANGER', 'BONGO MIX', 'REMIX', 'MIXTAPE', 'HIT SONGS',
-        'BEST OF ', 'TOP HITS', '(OFFICIAL AUDIO)', '(LYRICS VIDEO)',
-        'NAIJA MUSIC', 'AFROBEAT', 'AMAPIANO MIX', 'JUKEBOX'
+        'OFFICIAL MUSIC VIDEO', 'OFFICIAL MV', '- MV', 'MV)', 'VIDEO MIX',
+        'CLUB BANGER', 'BONGO MIX', 'NAIJA MUSIC', 'AFROBEAT', 'AMAPIANO MIX',
+        '(OFFICIAL AUDIO)', '(LYRICS VIDEO)', '(LYRIC VIDEO)', 'AUDIO SONG', 'VIDEO SONG'
     ];
     return musicPatterns.some(k => t.includes(k));
 }
@@ -1278,6 +1293,16 @@ async function switchAudioDub(dubSubjectId, langName) {
     try {
         const res = await fetch(`/api/stream/${dubSubjectId}?se=${currentSeason}&ep=${currentEpisode}`).then(r => r.json());
         activeStreamList = res.streams || [];
+
+        // If server returned 0 direct streams (e.g. geo-blocked regional dub on Oracle Cloud VPS), resolve directly from client!
+        if (activeStreamList.length === 0) {
+            const clientDetailPath = res.detail_path || '';
+            const clientToken = res.token || '';
+            const clientStreams = await clientResolveDirectStreams(dubSubjectId, currentSeason, currentEpisode, clientDetailPath, clientToken);
+            if (clientStreams && clientStreams.length > 0) {
+                activeStreamList = clientStreams;
+            }
+        }
 
         // MERGE dubs: preserve the full list, only ADD new entries from dub's response.
         // NEVER replace the full list with a shorter one — switching to French should

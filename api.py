@@ -3940,9 +3940,17 @@ def get_hero_trending():
     slides = []
     seen = set()
 
-    # Prefer trending and cinema first, then hollywood
-    candidates = feed.get("trending", []) + feed.get("new_releases", []) + feed.get("hollywood", [])
-    for it in candidates:
+    # Interleave trending, bollywood, new_releases, south_indian, and hollywood so Hindi & regional cinema are always featured
+    featured_cats = ["trending", "bollywood", "new_releases", "south_indian", "hollywood"]
+    cat_items = {c: feed.get(c, []) for c in featured_cats}
+    max_c_len = max((len(l) for l in cat_items.values()), default=0)
+    interleaved = []
+    for idx in range(max_c_len):
+        for c in featured_cats:
+            if idx < len(cat_items[c]):
+                interleaved.append(cat_items[c][idx])
+
+    for it in interleaved:
         sid = it.get("subject_id")
         if not sid or sid in seen:
             continue
@@ -3968,7 +3976,7 @@ def get_hero_trending():
             "cover": it.get("cover"),
             "type": it.get("type", "Movie")
         })
-        if len(slides) >= 7:
+        if len(slides) >= 10:
             break
 
     res = {
@@ -4001,42 +4009,60 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
             "items": items[start:end]
         }
 
-    curated_pool = []
-    seen = set()
-    for cat in ["trending", "new_releases", "top_rated", "hollywood", "action", "scifi", "comedy", "horror", "bollywood", "south_indian"]:
+    cat_order = ["trending", "bollywood", "new_releases", "south_indian", "hollywood", "action", "top_rated", "scifi", "comedy", "horror"]
+    cat_lists = {}
+    for cat in cat_order:
+        filtered = []
         for it in feed.get(cat, []):
-            # Strict filter: ONLY movies belong in the movie catalog!
             if it.get("subject_type") == 2 or it.get("type") in ["Series", "TV Series"]:
                 continue
             sid = str(it.get("subject_id") or "")
-            if not sid or sid in seen:
+            if not sid:
                 continue
-            seen.add(sid)
-            raw_t = it.get("title") or ""
-            c = dict(it)
-            c["raw_title"] = raw_t
-            c["title"] = raw_t
-            c["type"] = "Movie"
-            curated_pool.append(c)
+            filtered.append(it)
+        cat_lists[cat] = filtered
+
+    curated_pool = []
+    seen = set()
+    max_c_len = max((len(l) for l in cat_lists.values()), default=0)
+    for i in range(max_c_len):
+        for cat in cat_order:
+            if i < len(cat_lists[cat]):
+                it = cat_lists[cat][i]
+                sid = str(it.get("subject_id") or "")
+                if sid in seen:
+                    continue
+                seen.add(sid)
+                raw_t = it.get("title") or ""
+                c = dict(it)
+                c["raw_title"] = raw_t
+                c["title"] = raw_t
+                c["type"] = "Movie"
+                curated_pool.append(c)
 
     cache_key = f"movies:{page}:{per_page}:{sort}:{category}:{genre}"
     cached = app_cache.get(cache_key)
     if cached is not None:
         return cached
 
-    # If page 1, serve the top curated pool directly for instant 0ms response
-    if page == 1 and category == "all" and genre == "ALL":
-        res = {
-            "page": 1,
-            "per_page": per_page,
-            "total": 10000,
-            "has_more": True,
-            "category": category,
-            "genre": genre,
-            "items": curated_pool[:per_page]
-        }
-        app_cache.set(cache_key, res, ttl=300)
-        return res
+    # If within curated pool, serve the pool slice directly across pages for diverse multi-language cinema
+    if category == "all" and genre == "ALL":
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        if start_idx < len(curated_pool):
+            pool_slice = curated_pool[start_idx:end_idx]
+            if len(pool_slice) >= per_page or start_idx + len(pool_slice) >= len(curated_pool):
+                res = {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": 10000,
+                    "has_more": True,
+                    "category": category,
+                    "genre": genre,
+                    "items": pool_slice
+                }
+                app_cache.set(cache_key, res, ttl=300)
+                return res
 
     # For subsequent pages or specific queries, fetch from upstream filter API
     items = []
@@ -4104,23 +4130,36 @@ def get_movies(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", categ
 @app.get("/tv-series")
 def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", category: str = "all"):
     feed = engine.get_curated_feed()
-    curated_series = []
-    seen = set()
-    for cat in ["series", "anime", "asian_drama", "trending", "bollywood", "south_indian"]:
+    cat_order = ["series", "bollywood", "asian_drama", "south_indian", "anime", "trending"]
+    cat_lists = {}
+    for cat in cat_order:
+        filtered = []
         for it in feed.get(cat, []):
-            # Strict filter: ONLY TV Series belong in the TV series catalog!
             if it.get("subject_type") == 1 or it.get("type") == "Movie":
                 continue
             sid = str(it.get("subject_id") or "")
-            if not sid or sid in seen:
+            if not sid:
                 continue
-            seen.add(sid)
-            raw_t = it.get("title") or ""
-            c = dict(it)
-            c["raw_title"] = raw_t
-            c["title"] = raw_t
-            c["type"] = "TV Series"
-            curated_series.append(c)
+            filtered.append(it)
+        cat_lists[cat] = filtered
+
+    curated_series = []
+    seen = set()
+    max_c_len = max((len(l) for l in cat_lists.values()), default=0)
+    for i in range(max_c_len):
+        for cat in cat_order:
+            if i < len(cat_lists[cat]):
+                it = cat_lists[cat][i]
+                sid = str(it.get("subject_id") or "")
+                if sid in seen:
+                    continue
+                seen.add(sid)
+                raw_t = it.get("title") or ""
+                c = dict(it)
+                c["raw_title"] = raw_t
+                c["title"] = raw_t
+                c["type"] = "TV Series"
+                curated_series.append(c)
 
     if category in ["series", "anime", "asian_drama"]:
         items = feed.get(category, [])
@@ -4142,17 +4181,22 @@ def get_tv_series(page: int = 1, per_page: int = 24, sort: str = "RECOMMEND", ca
     if cached is not None:
         return cached
 
-    if page == 1 and category == "all":
-        res = {
-            "page": 1,
-            "per_page": per_page,
-            "total": 5000,
-            "has_more": True,
-            "category": category,
-            "items": curated_series[:per_page]
-        }
-        app_cache.set(cache_key, res, ttl=300)
-        return res
+    if category == "all":
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        if start_idx < len(curated_series):
+            series_slice = curated_series[start_idx:end_idx]
+            if len(series_slice) >= per_page or start_idx + len(series_slice) >= len(curated_series):
+                res = {
+                    "page": page,
+                    "per_page": per_page,
+                    "total": 5000,
+                    "has_more": True,
+                    "category": category,
+                    "items": series_slice
+                }
+                app_cache.set(cache_key, res, ttl=300)
+                return res
 
     items = []
     try:
