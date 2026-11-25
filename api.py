@@ -760,6 +760,10 @@ def _dub_display_label(tag: str) -> str:
         "multi": "Multi Audio",
     }
     base_t = re.sub(r'\s*dub(?:bed)?\s*', '', t_lower).strip()
+    if "sub" in t_lower and "dub" not in t_lower:
+        base_sub = re.sub(r'\s*sub(?:bed|title|titles)?\s*', '', t_lower).strip()
+        mapped = lang_name_map.get(base_sub) or base_sub.title()
+        return f"{mapped} (Subtitles)"
     if base_t in lang_name_map:
         mapped = lang_name_map[base_t]
         return f"{mapped} - Audio Description" if is_ad else f"{mapped} Dub"
@@ -1683,39 +1687,33 @@ class MovieBoxEngine:
                 pass
             return web_streams
 
-        # If detail_path is known, query Mobile Native CDN and Web CDNs concurrently!
+        # Query Mobile Native CDN and Web CDNs concurrently for maximum speed and 100% coverage
         native_data = {}
         web_results = []
-        if detail_path:
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                fut_native = pool.submit(_fetch_native)
-                fut_web = pool.submit(_fetch_web, detail_path)
-                try:
-                    native_data = fut_native.result()
-                except Exception:
-                    native_data = {}
-                try:
-                    web_results = fut_web.result()
-                except Exception:
-                    web_results = []
-        else:
-            # Query native and get_details in parallel to discover detail_path with zero delay
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                fut_native = pool.submit(_fetch_native)
-                fut_details = pool.submit(self.get_details, subject_id)
-                try:
-                    native_data = fut_native.result()
-                except Exception:
-                    native_data = {}
-                try:
-                    details = fut_details.result()
-                    detail_path = details.get("detail_path", "") or ""
-                    if detail_path:
-                        app_cache.set(f"detail_path:{subject_id}", detail_path, ttl=86400)
-                except Exception:
-                    detail_path = ""
-            if detail_path:
-                web_results = _fetch_web(detail_path)
+        d_path = detail_path or app_cache.get(f"detail_path:{subject_id}") or ""
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            fut_native = pool.submit(_fetch_native)
+            fut_web = pool.submit(_fetch_web, d_path)
+            try:
+                native_data = fut_native.result()
+            except Exception:
+                native_data = {}
+            try:
+                web_results = fut_web.result()
+            except Exception:
+                web_results = []
+
+        # If web returned 0 and d_path was not known, attempt rapid detail_path discovery and retry
+        if not web_results and not d_path:
+            try:
+                details = self.get_details(subject_id)
+                discovered_path = (details.get("detail_path", "") or "") if details else ""
+                if discovered_path:
+                    app_cache.set(f"detail_path:{subject_id}", discovered_path, ttl=86400)
+                    web_results = _fetch_web(discovered_path)
+            except Exception:
+                pass
 
         # Parse Native CDN streams
         for st in native_data.get("streams", []):
