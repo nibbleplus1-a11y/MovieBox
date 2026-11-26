@@ -12,6 +12,9 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CONFIG } from '../../config';
 
+import { adManager } from '../../services/adManager';
+import { AD_CAMPAIGNS, AdCampaign, AD_CONFIG } from '../../constants/ads';
+
 interface PlayerAdModalProps {
   visible: boolean;
   mode?: 'preroll' | 'postroll' | 'download';
@@ -19,9 +22,6 @@ interface PlayerAdModalProps {
   onComplete: () => void;
   onClose?: () => void;
 }
-
-const AD_COOLDOWN_MS = 3 * 60 * 1000; // Show at most once every 3 minutes
-const MONETAG_SPONSOR_URL = 'https://uplcm.com/4/12213398';
 
 export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   visible,
@@ -33,6 +33,8 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   const [secondsLeft, setSecondsLeft] = useState(3);
   const [canSkip, setCanSkip] = useState(false);
   const [shouldShow, setShouldShow] = useState(false);
+  const [campaign, setCampaign] = useState<AdCampaign>(AD_CAMPAIGNS[0]);
+  const [userCoins, setUserCoins] = useState(0);
   const timerRef = useRef<any>(null);
 
   useEffect(() => {
@@ -41,19 +43,29 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
       return;
     }
 
-    // Check frequency capping: only show ads if cooldown has elapsed (unless user explicitly initiated download ad)
     const checkCap = async () => {
       try {
+        const adFree = await adManager.isAdFree();
+        if (adFree) {
+          onComplete();
+          return;
+        }
+
         if (mode !== 'download') {
-          const lastTime = await AsyncStorage.getItem('cinescope_last_ad_time');
-          const now = Date.now();
-          if (lastTime && now - Number(lastTime) < AD_COOLDOWN_MS) {
-            // Cooldown active -> bypass ad immediately without interrupting user
+          const eligible = await adManager.canShowPreRoll();
+          if (!eligible) {
             onComplete();
             return;
           }
-          await AsyncStorage.setItem('cinescope_last_ad_time', String(now));
+          await adManager.recordPreRoll();
         }
+
+        const activeCampaign = adManager.selectCampaign();
+        setCampaign(activeCampaign);
+        adManager.recordImpression(activeCampaign.id);
+
+        const coins = await adManager.getCoins();
+        setUserCoins(coins);
 
         // Eligible to show
         setShouldShow(true);
@@ -97,7 +109,11 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
   };
 
   const handleOpenSponsor = () => {
-    Linking.openURL(MONETAG_SPONSOR_URL).catch(() => {});
+    adManager.recordClick(campaign.id);
+    adManager.earnCoins(AD_CONFIG.COINS_PER_SPONSOR_VISIT, 'sponsor_modal_click');
+    if (campaign.monetagUrl) {
+      Linking.openURL(campaign.monetagUrl).catch(() => {});
+    }
   };
 
   return (
@@ -106,15 +122,15 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
         <View style={styles.card}>
           {/* Top sponsor badge */}
           <View style={styles.badgeRow}>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>SPONSORED</Text>
+            <View style={[styles.badge, { backgroundColor: `${campaign.accentColor}25`, borderColor: `${campaign.accentColor}50` }]}>
+              <Text style={[styles.badgeText, { color: campaign.accentColor }]}>{campaign.badge}</Text>
             </View>
             <Text style={styles.hdText}>1080P CLOUD PARTNER</Text>
           </View>
 
           {/* Icon */}
-          <View style={styles.iconCircle}>
-            <Ionicons name="film" size={32} color={CONFIG.COLORS.accent} />
+          <View style={[styles.iconCircle, { backgroundColor: `${campaign.accentColor}15` }]}>
+            <Ionicons name={campaign.icon as any} size={32} color={campaign.accentColor} />
           </View>
 
           {/* Title */}
@@ -132,11 +148,11 @@ export const PlayerAdModal: React.FC<PlayerAdModalProps> = ({
             activeOpacity={0.85}
           >
             <View style={styles.sponsorInfo}>
-              <Text style={styles.sponsorTitle}>Shield VPN · 82% Off + 3 Mo Free</Text>
-              <Text style={styles.sponsorDesc}>Stream privately at full speed with zero throttling & bypass ISP blocks.</Text>
+              <Text style={styles.sponsorTitle}>{campaign.title}</Text>
+              <Text style={styles.sponsorDesc}>{campaign.subtitle}</Text>
             </View>
-            <View style={styles.sponsorCta}>
-              <Text style={styles.sponsorCtaText}>Claim ↗</Text>
+            <View style={[styles.sponsorCta, { backgroundColor: campaign.accentColor }]}>
+              <Text style={styles.sponsorCtaText}>{campaign.ctaText} ↗</Text>
             </View>
           </TouchableOpacity>
 

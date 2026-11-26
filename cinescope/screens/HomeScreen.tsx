@@ -14,6 +14,9 @@ import { CONFIG } from '../config';
 import { api, MovieCard as MovieCardData, Feed, resolvePoster } from '../services/api';
 import { WatchProgressService, WatchProgressItem } from '../services/watchProgress';
 import { AdBannerPlaceholder } from '../components/ads/AdBannerPlaceholder';
+import { SponsoredCard } from '../components/ads/SponsoredCard';
+import { CineCoinWidget } from '../components/ads/CineCoinWidget';
+import { adManager } from '../services/adManager';
 
 const { width } = Dimensions.get('window');
 const HERO_H = 430;
@@ -67,11 +70,32 @@ const ShelfSection = React.memo(({
   section: { id: string; title: string; icon: string; data: MovieCardData[] };
   onPressItem: (item: MovieCardData) => void;
 }) => {
+  // Seamlessly inject sponsored card into high-engagement shelves
+  const shelfData = useMemo(() => {
+    if (!section.data || section.data.length < 4) return section.data;
+    if (section.id === 'trending' || section.id === 'cinema' || section.id === 'action' || section.id === 'series') {
+      const campaign = adManager.selectCampaign(section.title);
+      const copy = [...section.data];
+      copy.splice(3, 0, {
+        subject_id: `sponsored_${section.id}_${campaign.id}`,
+        isSponsored: true,
+        campaign,
+      } as any);
+      return copy;
+    }
+    return section.data;
+  }, [section.data, section.id, section.title]);
+
   const renderItem = useCallback(
-    ({ item }: { item: MovieCardData }) => <ShelfCard item={item} onPress={onPressItem} />,
+    ({ item }: { item: any }) => {
+      if (item.isSponsored) {
+        return <SponsoredCard campaign={item.campaign} />;
+      }
+      return <ShelfCard item={item} onPress={onPressItem} />;
+    },
     [onPressItem]
   );
-  const keyExtractor = useCallback((item: MovieCardData) => item.subject_id, []);
+  const keyExtractor = useCallback((item: any) => item.subject_id, []);
 
   return (
     <View style={styles.section}>
@@ -84,7 +108,7 @@ const ShelfSection = React.memo(({
       </View>
       <FlatList
         horizontal
-        data={section.data}
+        data={shelfData}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         showsHorizontalScrollIndicator={false}
@@ -164,6 +188,9 @@ export default function HomeScreen() {
       // 2. Fetch fresh feed in background
       loadFeed(true);
     });
+
+    // Check daily CineCoins bonus
+    adManager.checkDailyBonus();
   }, []);
 
   // Auto-rotate hero spotlight every 4.5s
@@ -266,6 +293,9 @@ export default function HomeScreen() {
           </View>
           <Text style={styles.brandText}>MOVIE<Text style={{ color: '#E50914' }}>VERSE</Text></Text>
         </View>
+
+        {/* CineCoins Economy Widget */}
+        <CineCoinWidget />
       </View>
 
       {/* Category Pills Bar */}

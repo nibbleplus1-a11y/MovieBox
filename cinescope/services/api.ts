@@ -42,6 +42,9 @@ export interface StreamSource {
   size_mb?: number;
   codec?: string;
   headers?: Record<string, string>;
+  source?: string;
+  quality_value?: number;
+  resolution_tag?: string;
 }
 
 export interface DetailData {
@@ -76,6 +79,7 @@ export interface StreamData {
   streams: StreamSource[];
   fallback_servers?: FallbackServer[];
   dubs?: { subject_id: string; lang_name: string }[];
+  detail_path?: string;
 }
 
 export interface SearchResult {

@@ -17,6 +17,7 @@ import { PlayerControls } from '../components/player/PlayerControls';
 import { PlayerBottomSheet } from '../components/player/PlayerBottomSheet';
 import { PlayerDashboard } from '../components/player/PlayerDashboard';
 import { PlayerAdModal } from '../components/ads/PlayerAdModal';
+import { PreRollAdModal } from '../components/ads/PreRollAdModal';
 import { api, MovieCard as MovieCardData } from '../services/api';
 import { downloadManager } from '../services/downloadService';
 import { DownloadFloatingBar } from '../components/downloads/DownloadFloatingBar';
@@ -472,10 +473,10 @@ export default function PlayerScreen() {
       />
 
       {/* PRE-ROLL AD MODAL (Before Movie Starts) */}
-      <PlayerAdModal
+      <PreRollAdModal
         visible={showPrerollAd}
-        mode="preroll"
-        title={title || streamData?.title}
+        contentTitle={title || streamData?.title}
+        genre={route.params?.type || (isSeriesType ? 'TV Series' : 'Movie')}
         onComplete={onCompletePreroll}
       />
 
