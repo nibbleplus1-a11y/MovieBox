@@ -141,6 +141,8 @@ export function usePlayerState() {
   const fadeAnim                  = useRef(new Animated.Value(1)).current;
   const lastSaveTimeRef           = useRef<number>(0);
   const hasAppliedInitialSeekRef = useRef<boolean>(false);
+  /** Stores the playback position to resume after a dub/stream switch so the video doesn't restart from 0 */
+  const resumePositionRef = useRef<number>(0);
 
   const epLabel = isSeriesType && currentSeason > 0 ? `S${currentSeason} E${currentEpisode}` : null;
   const allStreams       = streamData?.streams || [];
@@ -448,6 +450,8 @@ export function usePlayerState() {
   };
 
   const switchDub = (dubId: string, dubName: string) => {
+    // Save position so the new stream can seek back to where the user was
+    if (currentTime > 0) resumePositionRef.current = currentTime;
     setSelectedDubName(dubName);
     setCurrentId(dubId);
     const raw = title || streamData?.title || '';
@@ -654,7 +658,12 @@ export function usePlayerState() {
             break;
           case 'canplay':
             setIsBuffering(false);
-            if (!hasAppliedInitialSeekRef.current && routeParamsInitialSeek && routeParamsInitialSeek > 10) {
+            // Resume position after a dub switch — seek to where the user was
+            if (resumePositionRef.current > 0) {
+              const seekTo = resumePositionRef.current;
+              resumePositionRef.current = 0; // clear so it only fires once
+              sendVideoCommand(`if(window.videoEl){ window.videoEl.currentTime = ${seekTo}; }`);
+            } else if (!hasAppliedInitialSeekRef.current && routeParamsInitialSeek && routeParamsInitialSeek > 10) {
               hasAppliedInitialSeekRef.current = true;
               sendVideoCommand(`if(window.videoEl){ window.videoEl.currentTime = ${routeParamsInitialSeek}; }`);
             }

@@ -500,17 +500,32 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
 }) => {
   const [iframeLoading, setIframeLoading] = useState(true);
 
-  // Capture initial seek time once per streamUrl, preventing timeupdate from causing WebView reloads!
+  // Capture initial seek time once per streamUrl change — subtitle/lang changes must NOT update this!
   const initialSeekRef = useRef(currentTime || 0);
   const prevStreamUrlRef = useRef(streamUrl);
   if (prevStreamUrlRef.current !== streamUrl) {
     prevStreamUrlRef.current = streamUrl;
+    // When a new stream loads (dub switch / quality switch), preserve the caller-supplied currentTime
+    // as the resume position so the new stream seeks back to where the user was.
     initialSeekRef.current = currentTime || 0;
   }
 
+  // Track whether this is the very first mount so we can inject the initial subtitle
+  // imperatively on subsequent changes without rebuilding the HTML (which would reload the video).
+  const isFirstMountRef = useRef(true);
+  const prevSubUrlRef = useRef(activeSubtitleUrl);
+  const prevSubLangRef = useRef(activeSubtitleLang);
+
   const refererBase = referer || 'https://movieboxonline.net/';
 
+  // ── playerHTML only depends on stream identity, NOT on subtitle state ──────
+  // Subtitle changes are handled imperatively below via webViewRef.injectJavaScript,
+  // which calls the already-loaded window.setSubtitleTrack() without touching <video>.
   const playerHTML = useMemo(() => {
+    // On a stream change, reset the mount flag so we pass the subtitle into the fresh HTML.
+    isFirstMountRef.current = true;
+    prevSubUrlRef.current = activeSubtitleUrl;
+    prevSubLangRef.current = activeSubtitleLang;
     return buildPlayerHTML(
       streamUrl,
       initialSeekRef.current,
@@ -519,7 +534,34 @@ export const PlayerWebView: React.FC<PlayerWebViewProps> = ({
       refererBase,
       isOffline
     );
-  }, [streamUrl, activeSubtitleUrl, activeSubtitleLang, refererBase, isOffline]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamUrl, refererBase, isOffline]);
+
+  // ── Inject subtitle changes without reloading the WebView ─────────────────
+  // When activeSubtitleUrl/Lang changes AFTER the HTML has already been loaded,
+  // push the update imperatively via injectJavaScript.
+  React.useEffect(() => {
+    if (isFirstMountRef.current) {
+      // First render after a stream load — subtitle is already baked into the HTML.
+      isFirstMountRef.current = false;
+      return;
+    }
+    if (
+      prevSubUrlRef.current === activeSubtitleUrl &&
+      prevSubLangRef.current === activeSubtitleLang
+    ) {
+      return; // nothing changed
+    }
+    prevSubUrlRef.current = activeSubtitleUrl;
+    prevSubLangRef.current = activeSubtitleLang;
+    if (webViewRef.current) {
+      const safeUrl = activeSubtitleUrl ? activeSubtitleUrl.replace(/'/g, "\\'") : '';
+      const safeLang = (activeSubtitleLang || 'Subtitles').replace(/'/g, "\\'");
+      webViewRef.current.injectJavaScript(
+        `if(window.setSubtitleTrack) window.setSubtitleTrack('${safeUrl}', '${safeLang}'); true;`
+      );
+    }
+  }, [activeSubtitleUrl, activeSubtitleLang, webViewRef]);
 
   if (loading) {
     return (

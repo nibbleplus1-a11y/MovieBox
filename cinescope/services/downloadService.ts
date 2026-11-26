@@ -310,11 +310,14 @@ class DownloadManager {
     this.tasks.set(taskId, task);
     this.notify();
 
-    // ── Concurrently download subtitle file (.vtt) if present ────────────
+    // ── Concurrently download subtitle file (.vtt / .srt) if present ────────
     if (subtitleUrl) {
-      const subFilename = safeFilename.replace(/\.mp4$/i, '.vtt');
+      // Use a stable filename derived from the movie filename — no timestamp prefix
+      // so it's predictable and can be found even after app restart.
+      const subExt = subtitleUrl.includes('.srt') ? '.srt' : '.vtt';
+      const subBaseName = safeFilename.replace(/\.mp4$/i, '') + subExt;
       const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
-      const subDestination = `${baseDir.endsWith('/') ? baseDir : baseDir + '/'}${timestamp}_${subFilename}`;
+      const subDestination = `${baseDir.endsWith('/') ? baseDir : baseDir + '/'}movieverse_sub_${subBaseName}`;
       FileSystem.downloadAsync(subtitleUrl, subDestination)
         .then(async (res) => {
           if (res?.uri) {

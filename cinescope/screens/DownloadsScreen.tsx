@@ -60,13 +60,42 @@ export default function DownloadsScreen({ navigation }: DownloadsScreenProps) {
       return;
     }
     const playableUri = await getPlayableLocalUri(task);
+
+    // ── Subtitle: convert stored file to a data: URI so Android WebView can
+    // load it without hitting file:// cross-origin restrictions. ────────────
+    let resolvedSubtitleUri: string | undefined;
+    if (task.subtitlePath) {
+      try {
+        const info = await FileSystem.getInfoAsync(task.subtitlePath);
+        if (info.exists) {
+          const content = await FileSystem.readAsStringAsync(task.subtitlePath);
+          // Detect SRT vs VTT — wrap SRT content in a minimal VTT header
+          let vttContent = content;
+          if (!content.trimStart().startsWith('WEBVTT')) {
+            // Convert SRT numbering & line-endings to VTT
+            vttContent = 'WEBVTT\n\n' + content
+              .replace(/\r\n/g, '\n')
+              .replace(/^\d+\s*$/gm, '') // remove cue index lines
+              .replace(/,/g, '.') // SRT uses comma for ms separator
+              .trim();
+          }
+          // Encode as data URI (avoids file:// CORS)
+          const b64 = btoa(unescape(encodeURIComponent(vttContent)));
+          resolvedSubtitleUri = `data:text/vtt;base64,${b64}`;
+        }
+      } catch {
+        // Fall back to raw path if encoding fails
+        resolvedSubtitleUri = task.subtitlePath;
+      }
+    }
+
     // Launch player with local file uri and offline subtitles
     navigation.navigate('Player', {
       title: task.episodeTitle ? `${task.title} - ${task.episodeTitle}` : task.title,
       streamUrl: playableUri,
       isOffline: true,
       poster: task.poster,
-      subtitleUrl: task.subtitlePath || task.subtitleUrl,
+      subtitleUrl: resolvedSubtitleUri,
       subtitleLang: task.subtitleLang || 'English',
     });
   };
