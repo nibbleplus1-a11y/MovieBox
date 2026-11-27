@@ -899,7 +899,7 @@ function createMediaCardHtml(item) {
     return `
         <div class="media-card" onclick="openDetailsModal('${safeId}')" id="card-${safeId}">
             <div class="poster-wrap">
-                <img class="card-poster" src="${poster}" alt="${escapeHtml(fullTitle)}" loading="lazy" onerror="this.src='${fallback}'">
+                <img class="card-poster" src="${poster}" alt="${escapeHtml(fullTitle)}" decoding="async" onerror="this.src='${fallback}'">
                 ${rating ? `<span class="card-badge-rating">★ ${rating}</span>` : ''}
                 <span class="card-badge-type">${type}</span>
                 ${dubBadgeText ? `<span class="card-badge-dub" title="${escapeAttr(dubBadgeText)}">🎙 ${escapeHtml(dubBadgeText)}</span>` : ''}
@@ -3167,15 +3167,11 @@ async function quickPlay(subjectId, title, startTime = 0) {
             return;
         }
 
-        // ─── STEP 4: Wait for ad to finish, then start playback ───────────────────
-        await adDonePromise;
-        if (loadingState) loadingState.style.display = 'none';
-
+        // ─── STEP 4: Start buffering IMMEDIATELY — do not block playback start on ad ─
         const year = (activeMediaMeta && activeMediaMeta.release_date) ? activeMediaMeta.release_date.slice(0, 4) : '';
 
         if (activeStreamList.length > 0) {
             const playable = activeStreamList.filter(s => s.format !== 'DASH' && !s.url.includes('.mpd'));
-            // Prefer 1080p / 720p H.264 for instant start and browser playback compatibility without 4K HEVC buffering stalls
             const bestStream = playable.find(s => (s.quality === '1080p' || s.quality === '720p') && (!s.codec || s.codec.toLowerCase().includes('h264')))
                 || playable.find(s => s.quality === '1080p')
                 || playable.find(s => s.quality === '720p')
@@ -3186,11 +3182,17 @@ async function quickPlay(subjectId, title, startTime = 0) {
             _testedServersList = [{ id: 'direct', name: '⚡ S1 Direct (1080p Ultra HD)', status: 'healthy', latency_ms: 0, type: 'direct', stream_meta: bestStream }];
             renderSettingsServerList(_testedServersList, 'direct');
 
+            // Begin video connection and buffering immediately!
             playInCinemaModal(encodeURIComponent(JSON.stringify(bestStream)), startTime);
 
             // Preload fallback servers immediately — non-blocking
             _loadFallbackServersInBackground(subjectId, title, year, isFinalSeries, targetSe, targetEp);
 
+            // When ad finishes or is dismissed, ensure playback is rolling and hide loading
+            adDonePromise.then(() => {
+                if (loadingState) loadingState.style.display = 'none';
+                ensurePlaybackStarted(startTime);
+            });
         } else {
             // No direct streams — use the pre-resolved fallback_servers returned by the stream endpoint
             // This avoids a second round-trip and immediately loads the best available server

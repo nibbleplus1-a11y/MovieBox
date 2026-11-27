@@ -21,6 +21,7 @@ import { PreRollAdModal } from '../components/ads/PreRollAdModal';
 import { api, MovieCard as MovieCardData } from '../services/api';
 import { downloadManager } from '../services/downloadService';
 import { DownloadFloatingBar } from '../components/downloads/DownloadFloatingBar';
+import { adManager } from '../services/adManager';
 
 const CACHE_KEY = 'movieverse_feed_cache_v2';
 
@@ -153,12 +154,22 @@ export default function PlayerScreen() {
     return () => { isMounted = false; };
   }, [currentId, isSeriesType]);
 
-  // ── Preroll Ad: Triggered non-intrusively on stream start (subject to 3m cooldown) ───
+  // ── Preroll Ad: Triggered non-intrusively on stream start (subject to cooldown) ───
   useEffect(() => {
     if ((streamUrl || useIframe) && !loading && !prerollShown) {
       setPrerollShown(true);
-      setShowPrerollAd(true);
-      sendVideoCommand('if(window.videoEl){ window.videoEl.pause(); }');
+      adManager.canShowPreRoll().then((canShow) => {
+        if (canShow) {
+          setShowPrerollAd(true);
+          sendVideoCommand('if(window.videoEl){ window.videoEl.pause(); }');
+        } else {
+          setShowPrerollAd(false);
+          sendVideoCommand('if(window.videoEl && window.videoEl.paused){ window.videoEl.play(); }');
+        }
+      }).catch(() => {
+        setShowPrerollAd(false);
+        sendVideoCommand('if(window.videoEl && window.videoEl.paused){ window.videoEl.play(); }');
+      });
     }
   }, [streamUrl, useIframe, loading, prerollShown, sendVideoCommand]);
 

@@ -368,17 +368,28 @@ export const buildPlayerHTML = (
       performSeek();
       var p = v.play();
       if (p !== undefined && p.catch) {
-        p.catch(function(err) {
-          v.muted = true;
-          v.play().then(function() {
-            setTimeout(function() { v.muted = false; }, 350);
+        if (p.then) {
+          p.then(function() {
             post({ type: 'playing' });
-          }).catch(function(err2) {
-            post({ type: 'waiting' });
+          }).catch(function(err) {
+            v.muted = true;
+            v.play().then(function() {
+              setTimeout(function() { v.muted = false; }, 350);
+              post({ type: 'playing' });
+            }).catch(function(err2) {
+              post({ type: 'waiting' });
+            });
           });
-        });
+        }
+      } else {
+        post({ type: 'playing' });
       }
     }
+
+    v.addEventListener('loadeddata', function() { performSeek(); tryPlay(); });
+    v.addEventListener('canplay', function() { performSeek(); tryPlay(); });
+    setTimeout(tryPlay, 350);
+    setTimeout(tryPlay, 1200);
 
     // Playback recovery watchdog
     var lastStuckTime = -1;

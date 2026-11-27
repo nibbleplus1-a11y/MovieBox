@@ -67,6 +67,8 @@ export const WatchProgressService = {
     const updated: WatchProgressItem = {
       ...existing,
       ...item,
+      cover: item.cover || existing.cover,
+      title: item.title || existing.title,
       subject_id: sid,
       savedAt: Date.now(),
     };

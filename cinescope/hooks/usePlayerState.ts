@@ -138,6 +138,16 @@ export function usePlayerState() {
   const webViewRef                = useRef<any>(null);
   const controlsTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadTokenRef              = useRef<symbol>(Symbol());
+  const coverRef                  = useRef<string>(cover || '');
+
+  // Ensure cover is always fetched for progress saving even if not passed in route
+  useEffect(() => {
+    if (!coverRef.current && currentId) {
+      api.detail(currentId).then((d) => {
+        if (d && d.cover) coverRef.current = d.cover;
+      }).catch(() => {});
+    }
+  }, [currentId]);
   const fadeAnim                  = useRef(new Animated.Value(1)).current;
   const lastSaveTimeRef           = useRef<number>(0);
   const hasAppliedInitialSeekRef = useRef<boolean>(false);
@@ -547,7 +557,7 @@ export function usePlayerState() {
     WatchProgressService.save({
       subject_id: currentId,
       title: (title || streamData?.title) as string,
-      cover: cover as string,
+      cover: (coverRef.current || cover || '') as string,
       type: 'TV Series',
       season: se,
       episode: ep,
@@ -608,7 +618,7 @@ export function usePlayerState() {
               WatchProgressService.save({
                 subject_id: currentId,
                 title: (title || streamData?.title) as string,
-                cover: cover as string,
+                cover: (coverRef.current || cover || '') as string,
                 type: isSeriesType ? 'TV Series' : 'Movie',
                 season: isSeriesType ? currentSeason : 0,
                 episode: isSeriesType ? currentEpisode : 0,
@@ -642,7 +652,7 @@ export function usePlayerState() {
               WatchProgressService.save({
                 subject_id: currentId,
                 title: (title || streamData?.title) as string,
-                cover: cover as string,
+                cover: (coverRef.current || cover || '') as string,
                 type: isSeriesType ? 'TV Series' : 'Movie',
                 season: isSeriesType ? currentSeason : 0,
                 episode: isSeriesType ? currentEpisode : 0,
@@ -674,7 +684,7 @@ export function usePlayerState() {
             WatchProgressService.save({
               subject_id: currentId,
               title: (title || streamData?.title) as string,
-              cover: cover as string,
+              cover: (coverRef.current || cover || '') as string,
               type: isSeriesType ? 'TV Series' : 'Movie',
               season: isSeriesType ? currentSeason : 0,
               episode: isSeriesType ? currentEpisode : 0,

@@ -16,6 +16,7 @@ import { WatchProgressService, WatchProgressItem } from '../services/watchProgre
 import { AdBannerPlaceholder } from '../components/ads/AdBannerPlaceholder';
 import { SponsoredCard } from '../components/ads/SponsoredCard';
 import { CineCoinWidget } from '../components/ads/CineCoinWidget';
+import { CineCoinModal } from '../components/ads/CineCoinModal';
 import { adManager } from '../services/adManager';
 
 const { width } = Dimensions.get('window');
@@ -113,10 +114,10 @@ const ShelfSection = React.memo(({
         keyExtractor={keyExtractor}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.shelf}
-        initialNumToRender={4}
-        maxToRenderPerBatch={6}
-        windowSize={3}
-        removeClippedSubviews={Platform.OS === 'android'}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        removeClippedSubviews={false}
       />
     </View>
   );
@@ -132,19 +133,62 @@ export default function HomeScreen() {
   const [heroIndex, setHeroIndex] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState<Category>('All');
   const [continueWatching, setContinueWatching] = useState<WatchProgressItem[]>([]);
+  const [rewardsModalVisible, setRewardsModalVisible] = useState(false);
+  const [userCoins, setUserCoins] = useState(0);
+  const [dailyBonusToast, setDailyBonusToast] = useState(false);
 
-  // Reload continue watching every time screen is focused
+  // Reload continue watching every time screen is focused — deduplicate & backfill posters
   useFocusEffect(
     useCallback(() => {
       let active = true;
       WatchProgressService.getAll()
         .then((items) => {
           if (!active) return;
-          const recent = (items || [])
-            .filter((p) => p && p.currentTime > 5)
-            .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
-            .slice(0, 10);
-          setContinueWatching(recent);
+          const valid = (items || []).filter((p) => p && p.currentTime > 5);
+          valid.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+
+          // 1. Deduplicate by clean title to avoid duplicate dub entries
+          const seen = new Set<string>();
+          const deduped: WatchProgressItem[] = [];
+          for (const item of valid) {
+            const normTitle = (item.title || '')
+              .replace(/\[.*?\]/g, '')
+              .replace(/\(.*?\)/g, '')
+              .trim()
+              .toLowerCase();
+            const key = normTitle || String(item.subject_id);
+            if (!seen.has(key)) {
+              seen.add(key);
+              deduped.push(item);
+            }
+          }
+
+          // 2. Poster backfill from feed if missing or placeholder
+          const allFeedCards: MovieCardData[] = [];
+          if (feed) {
+            Object.values(feed).forEach((val) => {
+              if (Array.isArray(val)) allFeedCards.push(...val);
+            });
+          }
+
+          const enriched = deduped.slice(0, 10).map((cw) => {
+            const hasPlaceholder = !cw.cover || cw.cover.includes('photo-1489599849927') || cw.cover.includes('placeholder');
+            if (hasPlaceholder) {
+              const normCwTitle = (cw.title || '').replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim().toLowerCase();
+              const match = allFeedCards.find(
+                (f) =>
+                  String(f.subject_id) === String(cw.subject_id) ||
+                  (f.title && f.title.trim().toLowerCase() === normCwTitle)
+              );
+              if (match && match.cover) {
+                cw.cover = match.cover;
+                WatchProgressService.save(cw).catch(() => {});
+              }
+            }
+            return cw;
+          });
+
+          setContinueWatching(enriched);
         })
         .catch(() => {
           if (active) setContinueWatching([]);
@@ -152,7 +196,7 @@ export default function HomeScreen() {
       return () => {
         active = false;
       };
-    }, [])
+    }, [feed])
   );
 
   const loadFeed = useCallback(async (isSilent = false) => {
@@ -189,8 +233,19 @@ export default function HomeScreen() {
       loadFeed(true);
     });
 
-    // Check daily CineCoins bonus
-    adManager.checkDailyBonus();
+    // Track coins and check daily CineCoins bonus
+    adManager.getCoins().then(setUserCoins);
+    const unsubscribeCoins = adManager.subscribe((c) => setUserCoins(c));
+    adManager.checkDailyBonus().then((claimed) => {
+      if (claimed) {
+        setDailyBonusToast(true);
+        setTimeout(() => setDailyBonusToast(false), 6000);
+      }
+    });
+
+    return () => {
+      unsubscribeCoins();
+    };
   }, []);
 
   // Auto-rotate hero spotlight every 4.5s
@@ -424,6 +479,59 @@ export default function HomeScreen() {
           </View>
         )}
 
+        {/* Daily Bonus Notification Banner */}
+        {dailyBonusToast && (
+          <TouchableOpacity
+            style={styles.dailyBonusToast}
+            onPress={() => setRewardsModalVisible(true)}
+            activeOpacity={0.88}
+          >
+            <View style={styles.dailyBonusContent}>
+              <Text style={styles.dailyBonusIcon}>🎉</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dailyBonusTitle}>+5 Daily CineCoins Added!</Text>
+                <Text style={styles.dailyBonusSub}>You logged in today. Tap to unlock 24h VIP Ad-Free streaming.</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="#FBBF24" />
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {/* Interactive CineCoins Rewards Hub Banner */}
+        <TouchableOpacity
+          style={styles.rewardsBanner}
+          onPress={() => setRewardsModalVisible(true)}
+          activeOpacity={0.88}
+        >
+          <LinearGradient
+            colors={['rgba(245, 158, 11, 0.22)', 'rgba(217, 119, 6, 0.08)', 'rgba(8, 10, 15, 0.6)']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.rewardsGradient}
+          >
+            <View style={styles.rewardsLeft}>
+              <View style={styles.rewardsCoinCircle}>
+                <Text style={styles.rewardsCoinEmoji}>🪙</Text>
+              </View>
+              <View style={styles.rewardsTextCol}>
+                <View style={styles.rewardsHeaderRow}>
+                  <Text style={styles.rewardsTitle}>CineCoins Rewards Hub</Text>
+                  <View style={styles.rewardsBadge}>
+                    <Text style={styles.rewardsBadgeText}>{userCoins} COINS</Text>
+                  </View>
+                </View>
+                <Text style={styles.rewardsSubtitle}>
+                  Earn free coins · Unlock 24h Ad-Free VIP & Instant Skips
+                </Text>
+              </View>
+            </View>
+            <View style={styles.rewardsCtaBtn}>
+              <Text style={styles.rewardsCtaText}>Redeem</Text>
+              <Ionicons name="chevron-forward" size={12} color="#080A0F" />
+            </View>
+          </LinearGradient>
+        </TouchableOpacity>
+
         {/* Continue Watching Section */}
         {continueWatching.length > 0 && (
           <View style={styles.section}>
@@ -518,6 +626,12 @@ export default function HomeScreen() {
 
         <View style={{ height: 80 }} />
       </ScrollView>
+
+      {/* Rewards & CineCoins Modal */}
+      <CineCoinModal
+        visible={rewardsModalVisible}
+        onClose={() => setRewardsModalVisible(false)}
+      />
     </View>
   );
 }
@@ -919,5 +1033,118 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: '#E50914',
     borderRadius: 2,
+  },
+  dailyBonusToast: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    backgroundColor: 'rgba(251, 191, 36, 0.14)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 191, 36, 0.4)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  dailyBonusContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  dailyBonusIcon: {
+    fontSize: 22,
+  },
+  dailyBonusTitle: {
+    color: '#FBBF24',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  dailyBonusSub: {
+    color: '#E2E8F0',
+    fontSize: 11,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  rewardsBanner: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 8,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+  },
+  rewardsGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  rewardsLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 12,
+  },
+  rewardsCoinCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(245, 158, 11, 0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rewardsCoinEmoji: {
+    fontSize: 18,
+  },
+  rewardsTextCol: {
+    flex: 1,
+  },
+  rewardsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  rewardsTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  rewardsBadge: {
+    backgroundColor: 'rgba(251, 191, 36, 0.2)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    borderWidth: 0.5,
+    borderColor: '#FBBF24',
+  },
+  rewardsBadgeText: {
+    color: '#FBBF24',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  rewardsSubtitle: {
+    color: '#94A3B8',
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  rewardsCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FBBF24',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    gap: 4,
+    marginLeft: 8,
+  },
+  rewardsCtaText: {
+    color: '#080A0F',
+    fontSize: 12,
+    fontWeight: '800',
   },
 });

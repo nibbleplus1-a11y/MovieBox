@@ -1,9 +1,9 @@
 {
-  "version": "1.4.7",
-  "version_code": 31,
+  "version": "1.4.8",
+  "version_code": 32,
   "download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
   "cdn_download_url": "https://github.com/nibbleplus1-a11y/MovieBox/releases/latest/download/MovieVerse.apk",
   "fallback_url": "https://movieverse.click/cinescope.apk",
-  "changelog": "🚀 v1.4.7: Added invisible native sponsor cards, YouTube-style 5s pre-roll, CineCoins rewards hub with 24h Ad-Free VIP mode, and audio/subtitle position preservation.",
+  "changelog": "🚀 v1.4.8: Fixed Continue Watching posters & duplicates, instant shelf & image loading without scrolling, instant autoplay without pause/resume stall, and prominent CineCoins Rewards Hub with daily login bonus.",
   "force_update": false
 }
